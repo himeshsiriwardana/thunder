@@ -18,4 +18,6 @@ APIs
 UIs
 iCloud
 hostname
+SDKs
+URIs
 

@@ -1,0 +1,75 @@
+---
+title: Create Your First User
+description: Step-by-step guide to create your first user in Thunder
+sidebar_position: 4
+---
+
+import {
+  Boxes,
+  UserPlus,
+  LogIn,
+  BookOpen,
+  Clock,
+  Server,
+  Hexagon,
+  FileCode,
+} from '@wso2/oxygen-ui-icons-react';
+
+# Create Your First User
+
+Welcome to Thunder! This guide will walk you through the steps to create your first user in Thunder's identity management platform.
+
+<TutorialHero>
+
+## What You Will Learn
+
+<TutorialHeroItem icon={<UserPlus />}>Create a new user in Thunder</TutorialHeroItem>
+<TutorialHeroItem icon={<LogIn />}>Assign roles and permissions</TutorialHeroItem>
+<TutorialHeroItem icon={<BookOpen />}>Test user login</TutorialHeroItem>
+
+## Prerequisites
+
+<TutorialHeroItem icon={<Clock />}>About 5 minutes</TutorialHeroItem>
+<TutorialHeroItem icon={<Server />}>Thunder server running locally or on a server</TutorialHeroItem>
+<TutorialHeroItem icon={<Hexagon />}>Admin credentials for Thunder</TutorialHeroItem>
+<TutorialHeroItem icon={<FileCode />}>A modern web browser</TutorialHeroItem>
+
+</TutorialHero>
+
+<Stepper stepNode="h2" as="h2">
+
+## Log in to the Thunder Console
+
+1. Open your browser and navigate to the Thunder console URL (e.g., `https://your-thunder-instance.com`).
+2. Enter your admin credentials and log in.
+
+## Navigate to the Users Section
+
+1. From the Thunder console dashboard, locate the **Users** section in the sidebar menu.
+2. Click on **Users** to view the list of existing users.
+
+## Create a New User
+
+1. Click the **Create User** button.
+2. Fill in the required details:
+   - **Username**: Enter a unique username for the user.
+   - **Email**: Provide the user's email address.
+   - **Password**: Set a secure password for the user.
+3. Assign roles to the user by selecting from the available roles.
+4. Click **Save** to create the user.
+
+## Test User Login
+
+1. Log out of the admin account.
+2. Attempt to log in using the newly created user's credentials.
+3. Verify that the user has access to the appropriate resources based on their assigned roles.
+
+</Stepper>
+
+:::tip Next Steps
+- **Manage Users**: Learn how to update user details, reset passwords, and deactivate accounts.
+- **Explore Roles**: Understand how to create and manage roles in Thunder.
+- **Read More Guides**: Check out other guides in the [documentation](../).
+
+For more help, visit our [community forums](https://community.thunder.com) or contact support.
+:::

@@ -1,0 +1,83 @@
+---
+title: Create Your First Application
+sidebar_position: 3
+description: Step-by-step guide to create your first application in Thunder
+---
+
+import {
+  Boxes,
+  Package,
+  LogIn,
+  BookOpen,
+  Clock,
+  Server,
+  Hexagon,
+  FileCode,
+} from '@wso2/oxygen-ui-icons-react';
+
+# Create Your First Application
+
+Welcome to Thunder! This guide will walk you through the steps to create your first application using Thunder's powerful user and identity management platform.
+
+<TutorialHero>
+
+## What You Will Learn
+
+<TutorialHeroItem icon={<Boxes />}>Create a new application in Thunder</TutorialHeroItem>
+<TutorialHeroItem icon={<LogIn />}>Configure authentication protocols</TutorialHeroItem>
+<TutorialHeroItem icon={<BookOpen />}>Retrieve application credentials</TutorialHeroItem>
+<TutorialHeroItem icon={<Package />}>Test your application</TutorialHeroItem>
+
+## Prerequisites
+
+<TutorialHeroItem icon={<Clock />}>About 10 minutes</TutorialHeroItem>
+<TutorialHeroItem icon={<Server />}>Thunder server running locally or on a server</TutorialHeroItem>
+<TutorialHeroItem icon={<Hexagon />}>Admin credentials for Thunder</TutorialHeroItem>
+<TutorialHeroItem icon={<FileCode />}>A modern web browser</TutorialHeroItem>
+
+</TutorialHero>
+
+<Stepper stepNode="h2" as="h2">
+
+## Log in to the Thunder Console
+
+1. Open your browser and navigate to the Thunder console URL (e.g., `https://your-thunder-instance.com`).
+2. Enter your admin credentials and log in.
+
+## Navigate to the Applications Section
+
+1. From the Thunder console dashboard, locate the **Applications** section in the sidebar menu.
+2. Click on **Applications** to view the list of existing applications.
+
+## Create a New Application
+
+1. Click the **Create Application** button.
+2. Fill in the required details:
+   - **Application Name**: Enter a unique name for your application.
+   - **Description**: Provide a brief description of the application (optional).
+   - **Redirect URIs**: Specify the redirect URIs for your application (e.g., `https://your-app.com/callback`).
+3. Configure additional settings as needed, such as:
+   - **Authentication Protocols**: Choose between OAuth2, OIDC, or other supported protocols.
+   - **Scopes**: Define the scopes required by your application.
+   - **Access Policies**: Set up access policies for the application.
+4. Click **Save** to create the application.
+
+## Retrieve Application Credentials
+
+1. After saving, you will be redirected to the application details page.
+2. Note down the **Client ID** and **Client Secret**. These credentials are required to integrate your application with Thunder.
+
+## Test Your Application
+
+1. Use the provided credentials to integrate Thunder's authentication and authorization into your application.
+2. Test the login flow to ensure everything is working as expected.
+
+</Stepper>
+
+:::tip Next Steps
+- **Explore More Features**: Learn about advanced features like role-based access control (RBAC), multi-factor authentication (MFA), and more.
+- **Integrate SDKs**: Use Thunder's SDKs to simplify integration with your application.
+- **Read More Guides**: Check out other guides in the [documentation](../).
+
+For more help, visit our [community forums](https://community.thunder.com) or contact support.
+:::

@@ -23,6 +23,8 @@ Follow these instructions when creating new documentation content for Thunder. A
 - Create content that is clear, concise, and actionable for the intended audience.
 - Ensure all technical details are accurate and up-to-date.
 - Use the provided templates and formatting rules consistently.
+- Do not broken links, missing images, or placeholders in the final output.
+- If there is no existing documentation for a next step, do not include it in the next steps section. Only link to existing documentation.
 
 ## Authoring Standards
 
@@ -294,6 +296,7 @@ Before finalizing output, ensure:
 - Use consistent section ordering and headings.
 - If assumptions are made, include an **Assumptions** section near the top.
 - End with a **Next steps** section when appropriate.
+- Do not include non-existent documentation to the next steps section. Only link to existing documentation.
 
 ### Vale Verification Requirement
 
