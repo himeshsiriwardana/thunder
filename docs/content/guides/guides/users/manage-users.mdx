@@ -1,0 +1,60 @@
+---
+title: Users
+sidebar_position: 2
+description: Create and manage users in Thunder, including profile attributes and group membership.
+---
+
+# Users
+
+A user in Thunder represents a person or account that belongs to an organization unit. Each user has a **type** (defined by a user schema) and a set of **attributes** that match the schema for that type.
+
+
+## Create a User
+
+1. Navigate to the **Users** section in the Thunder Console.
+2. Click **Add User** and select a **User Type**.
+3. Fill in the required attributes for that user type — for example, `username`, `email`, `given_name`, `family_name`, `password`.
+4. Click **Create User**.
+
+
+## View and Search Users
+
+Navigate to **Users** in the Thunder Console to see all users. Use the search bar and filter options to find specific users by attribute values.
+
+Click on any user to view their full profile and group memberships.
+
+
+## Update a User
+
+1. Open the user from the **Users** list.
+2. Edit the attributes you want to change.
+3. Click **Save**.
+
+
+## Delete a User
+
+1. Open the user from the **Users** list.
+2. Click **Delete** and confirm.
+
+:::warning
+Deleting a user is permanent and cannot be undone.
+:::
+
+
+## User Types and Organization Units
+
+Each user belongs to a **user type** that determines their profile schema, and an **organization unit** that acts as their container.
+
+| User Type | Description | Organization Unit | Self-Registration |
+|-----------|-------------|-------------------|-------------------|
+| **Customer** | End users who interact with your application | Customers | ✅ Allowed |
+| **Person** | Administrator-managed accounts | Default | ❌ Admin-managed only |
+
+To create custom user types, see [User Types](/guides/guides/user-types).
+
+
+## Related
+
+- [User Types](/guides/guides/user-types) — Define schemas and attribute rules for each user type
+- [Organization Units](/guides/guides/organization-units) — Manage the organizational hierarchy that contains users
+- [Quickstart](/guides/quick-start/quickstart) — Create your first user end to end

@@ -1,7 +1,70 @@
 ---
 title: Organization Units
-sidebar_position: 14
+sidebar_position: 11
+description: Create and manage organization units to structure your users and groups in Thunder.
 ---
 
-# 🚧 WIP
-## This page is under construction. Please check back later.
+# Organization Units
+
+An organization unit (OU) in Thunder is a container that groups users and groups together. Every user and group belongs to an OU. OUs form a hierarchy, so you can nest them to model your organizational structure.
+
+Thunder ships with two default organization units:
+
+| Organization Unit | Purpose |
+|-------------------|---------|
+| **Default** | Container for administrator-managed users (Person type) |
+| **Customers** | Container for self-registering end users (Customer type) |
+
+
+## Create an Organization Unit
+
+1. Navigate to **Organization Units** in the Thunder Console.
+2. Click **New Organization Unit**.
+3. Enter a **Name** and a **Handle** for the OU.
+   - The **Handle** is a URL-safe identifier used to reference the OU in hierarchical paths (for example, `engineering` or `frontend-team`).
+   - The **Name** is the human-readable display name.
+4. Optionally enter a **Description**.
+5. To nest this OU under an existing one, select a **Parent Organization Unit**.
+6. Click **Create**.
+
+:::note
+The handle must be unique within the same parent. Two sibling OUs cannot share the same handle.
+:::
+
+
+## View and Search Organization Units
+
+Navigate to **Organization Units** in the Thunder Console to see all root-level OUs. Click on any OU to view its details, child OUs, users, and groups.
+
+
+## Update an Organization Unit
+
+1. Open the OU from the **Organization Units** list.
+2. Edit the **Name**, **Handle**, or **Description** as needed.
+3. Click **Save**.
+
+
+## Delete an Organization Unit
+
+1. Open the OU from the **Organization Units** list.
+2. Click **Delete** and confirm.
+
+:::warning
+You cannot delete an OU that still contains users, groups, or child OUs. Remove or reassign these resources before deleting the OU.
+:::
+
+
+## Nested Organization Units
+
+You can nest OUs to model team or department hierarchies. A child OU inherits the context of its parent but has its own set of users and groups.
+
+To create a child OU, follow the steps in [Create an Organization Unit](#create-an-organization-unit) and select the parent OU in the **Parent Organization Unit** field.
+
+Hierarchical paths use the handle of each OU in the chain, separated by `/`. For example, an OU with handle `frontend` nested under `engineering` has the path `engineering/frontend`.
+
+
+## Related
+
+- [User Types](/guides/guides/users/user-types) — User types are scoped to an organization unit
+- [Users](/guides/guides/users) — Each user belongs to an organization unit
+- [Groups](/guides/guides/users/groups) — Each group belongs to an organization unit

@@ -107,13 +107,8 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'doc',
-          id: 'guides/quick-start/create-your-first-application',
-          label: 'Create Your First Application',
-        },
-        {
-          type: 'doc',
-          id: 'guides/quick-start/create-your-first-user',
-          label: 'Create Your First User',
+          id: 'guides/quick-start/quickstart',
+          label: 'Quickstart',
         },
         {
           type: 'category',
@@ -156,14 +151,22 @@ const sidebars: SidebarsConfig = {
           label: 'Applications',
         },
         {
-          type: 'doc',
-          id: 'guides/guides/users',
+          type: 'category',
           label: 'Users',
-        },
-        {
-          type: 'doc',
-          id: 'guides/guides/user-types',
-          label: 'User Types',
+          collapsed: true,
+          collapsible: true,
+          items: [
+            {
+              type: 'doc',
+              id: 'guides/guides/users/user-types',
+              label: 'User Types',
+            },
+            {
+              type: 'doc',
+              id: 'guides/guides/users/manage-users',
+              label: 'Manage Users',
+            },
+          ],
         },
         {
           type: 'doc',

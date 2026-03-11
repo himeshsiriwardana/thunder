@@ -3,5 +3,158 @@ title: Create Your First User
 sidebar_position: 8
 ---
 
-# 🚧 WIP
-## This page is under construction. Please check back later.
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Create Your First User
+
+Create a user to test sign-in flows with your application.
+
+<Tabs>
+<TabItem value="console" label="🖥️ Console">
+
+1. Navigate to the **Users** section in the Thunder Console.
+2. Click **Add User** and select a **User Type**.
+3. Fill in the user attributes that correspond to the selected user type. For example, `username`, `email`, `given_name`, `family_name`, `password`.
+4. Click **Create User**.
+
+</TabItem>
+<TabItem value="api" label="🧩 API">
+
+```bash
+curl -kL -X POST https://localhost:8090/users \
+  -H 'Authorization: Bearer <your-system-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "organizationUnit": "<organization-unit-id>",
+    "type": "Customer",
+    "attributes": {
+      "username": "jane",
+      "email": "jane.doe@example.com",
+      "given_name": "Jane",
+      "family_name": "Doe",
+      "password": "Secret123!"
+    }
+  }'
+```
+
+Find the `<organization-unit-id>` in the Thunder Console under **Organization Units**.
+
+</TabItem>
+</Tabs>
+
+:::info User Types & Organization Units
+
+Each user belongs to a **user type** that determines their profile, and an **organization unit** that acts as their container.
+
+| User Type | Description | Organization Unit |
+|-----------|-------------|-------------------|
+| **Customer** | Self-registering end users | Customers |
+| **Person** | Administrator-managed accounts | Default |
+
+To create custom user types, go to **User Types** in the Thunder Console.
+:::
+
+
+## Integrate with your application
+
+Choose your framework or platform to add sign-in to your application.
+
+<div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.5rem', marginTop: '1.5rem'}}>
+
+  <a href="/guides/quick-start/react" style={{textDecoration: 'none', color: 'inherit'}}>
+    <div style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', padding: '1.5rem', height: '100%', cursor: 'pointer'}}>
+      <div style={{display: 'inline-flex', padding: '12px', borderRadius: '12px', backgroundColor: 'rgba(255, 143, 51, 0.15)', marginBottom: '1rem'}}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"/><path d="M20.2 20.2c2.04-2.03.02-7.36-4.5-11.9-4.54-4.52-9.87-6.54-11.9-4.5-2.04 2.03-.02 7.36 4.5 11.9 4.54 4.52 9.87 6.54 11.9 4.5Z"/><path d="M15.7 15.7c4.52-4.54 6.54-9.87 4.5-11.9-2.03-2.04-7.36-.02-11.9 4.5-4.52 4.54-6.54 9.87-4.5 11.9 2.03 2.04 7.36.02 11.9-4.5Z"/></svg>
+      </div>
+      <div style={{fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem'}}>React</div>
+      <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-700)', marginBottom: '0.75rem'}}>Add sign-in to a React app using the Asgardeo React SDK. Includes Authorization Code flow with PKCE.</div>
+      <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-primary)'}}>Get started →</div>
+    </div>
+  </a>
+
+  <div style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', padding: '1.5rem'}}>
+    <div style={{display: 'inline-flex', padding: '12px', borderRadius: '12px', backgroundColor: 'rgba(255, 143, 51, 0.15)', marginBottom: '1rem'}}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+    </div>
+    <div style={{fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem'}}>Other Web Frameworks</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-700)', marginBottom: '0.75rem'}}>Vue, Angular, Next.js, SvelteKit, and more.</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-500)'}}>Coming soon</div>
+  </div>
+
+  <div style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', padding: '1.5rem'}}>
+    <div style={{display: 'inline-flex', padding: '12px', borderRadius: '12px', backgroundColor: 'rgba(255, 143, 51, 0.15)', marginBottom: '1rem'}}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+    </div>
+    <div style={{fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem'}}>Mobile</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-700)', marginBottom: '0.75rem'}}>React Native, Flutter, Swift, and Kotlin.</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-500)'}}>Coming soon</div>
+  </div>
+
+  <div style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', padding: '1.5rem'}}>
+    <div style={{display: 'inline-flex', padding: '12px', borderRadius: '12px', backgroundColor: 'rgba(255, 143, 51, 0.15)', marginBottom: '1rem'}}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+    </div>
+    <div style={{fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem'}}>Backend Service</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-700)', marginBottom: '0.75rem'}}>Node.js, Go, Python, Java, and more using client credentials flow.</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-500)'}}>Coming soon</div>
+  </div>
+
+</div>
+
+## Explore Thunder
+
+With an application and a user in place, here is what you can do next.
+
+<div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.5rem', marginTop: '1.5rem'}}>
+
+  <a href="/guides/authentication/passwordless-authentication/passkeys" style={{textDecoration: 'none', color: 'inherit'}}>
+    <div style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', padding: '1.5rem', height: '100%', cursor: 'pointer'}}>
+      <div style={{display: 'inline-flex', padding: '12px', borderRadius: '12px', backgroundColor: 'rgba(255, 143, 51, 0.15)', marginBottom: '1rem'}}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 18v3c0 .6.4 1 1 1h4v-3h3v-3h2l1.4-1.4a6.5 6.5 0 1 0-4-4Z"/><circle cx="16.5" cy="7.5" r=".5" fill="#fa7b3f"/></svg>
+      </div>
+      <div style={{fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem'}}>Passkeys</div>
+      <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-700)', marginBottom: '0.75rem'}}>Let users sign in without a password using device biometrics or hardware security keys via WebAuthn.</div>
+      <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-primary)'}}>Learn more →</div>
+    </div>
+  </a>
+
+  <div style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', padding: '1.5rem'}}>
+    <div style={{display: 'inline-flex', padding: '12px', borderRadius: '12px', backgroundColor: 'rgba(255, 143, 51, 0.15)', marginBottom: '1rem'}}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/><path d="M16 11h6"/><path d="M19 8v6"/></svg>
+    </div>
+    <div style={{fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem'}}>Social Login</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-700)', marginBottom: '0.75rem'}}>Let users sign in with Google, GitHub, Facebook, or any OIDC-compatible identity provider.</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-500)'}}>Coming soon</div>
+  </div>
+
+  <div style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', padding: '1.5rem'}}>
+    <div style={{display: 'inline-flex', padding: '12px', borderRadius: '12px', backgroundColor: 'rgba(255, 143, 51, 0.15)', marginBottom: '1rem'}}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
+    </div>
+    <div style={{fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem'}}>Authentication Flows</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-700)', marginBottom: '0.75rem'}}>Orchestrate custom sign-in and registration flows with MFA, consent prompts, and conditional steps.</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-500)'}}>Coming soon</div>
+  </div>
+
+  <div style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', padding: '1.5rem'}}>
+    <div style={{display: 'inline-flex', padding: '12px', borderRadius: '12px', backgroundColor: 'rgba(255, 143, 51, 0.15)', marginBottom: '1rem'}}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+    </div>
+    <div style={{fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem'}}>Roles & Permissions</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-700)', marginBottom: '0.75rem'}}>Assign roles to users and define fine-grained permissions to control access within your application.</div>
+    <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-500)'}}>Coming soon</div>
+  </div>
+
+  <a href="/guides/mcp-server" style={{textDecoration: 'none', color: 'inherit'}}>
+    <div style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', padding: '1.5rem', height: '100%', cursor: 'pointer'}}>
+      <div style={{display: 'inline-flex', padding: '12px', borderRadius: '12px', backgroundColor: 'rgba(255, 143, 51, 0.15)', marginBottom: '1rem'}}>
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+      </div>
+      <div style={{fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.5rem'}}>AI-Assisted Management</div>
+      <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-emphasis-700)', marginBottom: '0.75rem'}}>Manage Thunder from your AI assistant. Create applications, update flows, and get SDK integration code without leaving your IDE.</div>
+      <div style={{fontSize: '0.875rem', color: 'var(--ifm-color-primary)'}}>Learn more →</div>
+    </div>
+  </a>
+
+</div>

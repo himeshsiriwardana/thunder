@@ -24,6 +24,8 @@ hostname
 [Pp]laintext
 JWTs
 JWT
+OUs
+OU
 [Cc]rypto
 [Oo]nboarding
 [Pp]asscode
@@ -32,3 +34,8 @@ JWT
 SDKs
 Pardot
 Entra
+SDKs
+URIs
+Vue
+[Oo]nboarding
+JWTs

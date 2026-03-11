@@ -1,0 +1,66 @@
+---
+title: User Types
+sidebar_position: 1
+description: Define user type schemas to control the attributes, validation rules, and registration settings for different categories of users.
+---
+
+# User Types
+
+A user type in Thunder is defined by a **user schema** — a named configuration that specifies the attributes a user of that type can have, which attributes are required or unique, and whether self-registration is allowed.
+
+Thunder ships with two default user types:
+
+| User Type | Organization Unit | Self-Registration |
+|-----------|-------------------|-------------------|
+| **Customer** | Customers | ✅ Allowed |
+| **Person** | Default | ❌ Admin-managed only |
+
+
+## Create a User Type
+
+1. Navigate to **User Types** in the Thunder Console.
+2. Click **New User Type**.
+3. Enter a **Name** for the user type and select the **Organization Unit** it belongs to.
+4. Define the **attributes** — for each attribute, specify the name, data type, and constraints (required, unique, credential).
+5. Set whether **self-registration** is allowed for this type.
+6. Click **Create**.
+
+
+## Update a User Type
+
+1. Navigate to **User Types** and open the user type you want to edit.
+2. Add, remove, or update attributes as needed.
+3. Click **Save**.
+
+:::note
+Changes to a user schema do not retroactively validate existing users. New users created after the change must conform to the updated schema.
+:::
+
+
+## Delete a User Type
+
+1. Open the user type from the **User Types** list.
+2. Click **Delete** and confirm.
+
+:::warning
+Deleting a user type removes the schema definition. Existing users of that type are not automatically deleted but may become invalid without a schema.
+:::
+
+
+## Self-Registration
+
+When **Allow Self-Registration** is enabled for a user type, users of that type can sign up through the registration flow linked to your application.
+
+To enable self-registration end to end:
+1. Enable **Allow Self-Registration** on the user type
+2. Create a **Registration Flow** that collects the required attributes for that type
+3. Assign the registration flow to your application and enable it
+
+See [Flows](/guides/guides/flows) for more on configuring registration flows.
+
+
+## Related
+
+- [Users](/guides/guides/users) — Create and manage users of each type
+- [Organization Units](/guides/guides/organization-units) — Understand the OU structure that user types are tied to
+- [Flows](/guides/guides/flows) — Configure registration flows for self-service sign-up

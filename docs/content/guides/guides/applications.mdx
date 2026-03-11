@@ -1,7 +1,59 @@
 ---
 title: Applications
 sidebar_position: 10
+description: Create and manage applications in Thunder to enable OAuth 2.0 authentication for your services.
 ---
 
-# 🚧 WIP
-## This page is under construction. Please check back later.
+# Applications
+
+An application in Thunder represents a client that users authenticate against. Each application has a unique **Client ID**, an associated authentication flow, and an optional registration flow. Thunder supports four application types to cover the full range of client architectures.
+
+## Application Types
+
+| Type | Template | Description | Auth Method |
+|------|----------|-------------|-------------|
+| ⚛️ **Browser App** | `spa` | Single-page applications (React, Angular, Vue) | Authorization Code + PKCE, no client secret |
+| 🌐 **Full-stack App** | `server` | Server-rendered web apps (Express, Spring, .NET) | Authorization Code + client secret |
+| 📱 **Mobile App** | `mobile` | Native or cross-platform mobile apps (Swift, Kotlin, React Native, Flutter) | Authorization Code + PKCE, deep/universal links |
+| 🤖 **Backend Service** | `m2m` | Machine-to-machine server communication | Client Credentials, no user interaction |
+
+
+## Create an Application
+
+1. Sign in to the Thunder Console at [https://localhost:8090/develop](https://localhost:8090/develop).
+2. Navigate to **Applications** → **New Application**.
+3. Enter an **Application Name** and optional description.
+4. Select the **Sign-In Options** — the authentication methods users can use to sign in.
+5. Configure the **Sign-In Experience**:
+   - **Sign-In Approach**: Choose between redirecting to Thunder-hosted sign-in pages (recommended) or embedding sign-in components directly in your app.
+   - **User Access**: Select which user types can access this application.
+6. Select the **Application Type** and provide a redirect URL if prompted.
+7. Click **Create Application**.
+
+:::tip
+Copy the **Client ID** from the application details page. You need it to configure your SDK or OAuth client.
+:::
+
+
+## Update an Application
+
+1. Navigate to **Applications** and open the application you want to edit.
+2. Update the fields you want to change — name, redirect URLs, sign-in options, flows, or theme.
+3. Click **Save**.
+
+
+## Delete an Application
+
+1. Open the application from the **Applications** list.
+2. Click **Delete Application** and confirm.
+
+:::warning
+Deleting an application is permanent. Any clients using its Client ID will immediately lose the ability to authenticate.
+:::
+
+
+## Related
+
+- [Quickstart](/guides/quick-start/quickstart) — Register your first application end to end
+- [Flows](/guides/guides/flows) — Configure authentication and registration flows
+- [React Quickstart](/guides/quick-start/connect-your-application/react) — Integrate Thunder with a React app
