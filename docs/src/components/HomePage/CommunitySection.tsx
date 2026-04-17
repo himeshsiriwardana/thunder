@@ -20,7 +20,7 @@ import React, {JSX, useEffect, useState} from 'react';
 import {Box, Typography, AvatarGroup, Avatar, Tooltip, Skeleton, Card, Container} from '@wso2/oxygen-ui';
 import useIsDarkMode from '../../hooks/useIsDarkMode';
 import useScrollAnimation from '../../hooks/useScrollAnimation';
-import {MessagesSquare, CircleDot} from '@wso2/oxygen-ui-icons-react';
+import {MessagesSquare, CircleDot} from 'lucide-react';
 import {useLogger} from '@thunder/logger';
 
 interface Contributor {

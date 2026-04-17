@@ -18,7 +18,7 @@
 
 import React, {ReactNode, Children, isValidElement} from 'react';
 import {Grid, Typography, List, ListItem, ListItemIcon, ListItemText, Box} from '@wso2/oxygen-ui';
-import {Box as Cube} from '@wso2/oxygen-ui-icons-react';
+import {Box as Cube} from 'lucide-react';
 
 interface TutorialHeroProps {
   children: ReactNode;

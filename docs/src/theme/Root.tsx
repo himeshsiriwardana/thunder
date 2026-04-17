@@ -19,20 +19,38 @@
 import React, {PropsWithChildren, useEffect} from 'react';
 import {OxygenUIThemeProvider, AcrylicOrangeTheme} from '@wso2/oxygen-ui';
 import {LoggerProvider, LogLevel} from '@thunder/logger/react';
-import { useLocation } from '@docusaurus/router';
+import {useLocation, useHistory} from '@docusaurus/router';
+import {STORAGE_KEY, PERSONA_OPTIONS, applyPersona} from '../hooks/usePersona';
 
 export default function Root({children = null}: PropsWithChildren<Record<string, unknown>>) {
   const location = useLocation();
+  const history = useHistory();
 
   useEffect(() => {
     const html = document.documentElement;
     const pagePath = location.pathname.replace(/\//g, '-').replace(/^-|-$/g, '') || 'home';
-
     html.setAttribute('data-page', pagePath);
-
     return () => {
       html.removeAttribute('data-page');
     };
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    const isValid = saved && PERSONA_OPTIONS.some(p => p.value === saved);
+
+    if (isValid) {
+      applyPersona(saved as Parameters<typeof applyPersona>[0]);
+      return;
+    }
+
+    // No persona selected yet — send first-time visitors to the landing page
+    const isOnDocsPage = location.pathname.includes('/docs/');
+    const isAlreadyOnHome = location.pathname.includes('/docs-home');
+
+    if (isOnDocsPage && !isAlreadyOnHome) {
+      history.replace('/docs-home');
+    }
   }, [location.pathname]);
 
   return (

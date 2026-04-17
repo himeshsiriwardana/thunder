@@ -74,14 +74,14 @@ const sidebars: SidebarsConfig = {
       type: 'html',
       value:
         '<div class="sidebar-section-label sidebar-section-label--ai"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg><span>Working with AI</span></div>',
-      className: 'sidebar-html-section-header',
+      className: 'sidebar-html-section-header sidebar-persona-not-devops',
     },
     {
       type: 'category',
       label: 'Working with AI',
       collapsed: false,
       collapsible: false,
-      className: 'sidebar-section',
+      className: 'sidebar-section sidebar-persona-not-devops',
       items: [
         {
           type: 'doc',
@@ -96,14 +96,14 @@ const sidebars: SidebarsConfig = {
       type: 'html',
       value:
         '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>Quick Start</span></div>',
-      className: 'sidebar-html-section-header',
+      className: 'sidebar-html-section-header sidebar-persona-app sidebar-persona-not-devops',
     },
     {
       type: 'category',
       label: 'Quick Start',
       collapsed: false,
       collapsible: false,
-      className: 'sidebar-section',
+      className: 'sidebar-section sidebar-persona-app sidebar-persona-not-devops',
       items: [
         {
           type: 'doc',
@@ -136,20 +136,21 @@ const sidebars: SidebarsConfig = {
       type: 'html',
       value:
         '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg><span>Guides</span></div>',
-      className: 'sidebar-html-section-header',
+      className: 'sidebar-html-section-header sidebar-persona-not-devops',
     },
     {
       type: 'category',
       label: 'Guides',
       collapsed: false,
       collapsible: false,
-      className: 'sidebar-section',
+      className: 'sidebar-section sidebar-persona-not-devops',
       items: [
         {
           type: 'category',
           label: 'Applications',
           collapsed: true,
           collapsible: true,
+          className: 'sidebar-persona-app',
           items: [
             {
               type: 'doc',
@@ -168,6 +169,7 @@ const sidebars: SidebarsConfig = {
           label: 'Users',
           collapsed: true,
           collapsible: true,
+          className: 'sidebar-persona-iam',
           items: [
             {
               type: 'doc',
@@ -190,21 +192,25 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'guides/guides/integrations',
           label: 'Integrations',
+          className: 'sidebar-persona-app',
         },
         {
           type: 'doc',
           id: 'guides/guides/organization-units',
           label: 'Organization Units',
+          className: 'sidebar-persona-iam',
         },
         {
           type: 'doc',
           id: 'guides/guides/flows',
           label: 'Flows',
+          className: 'sidebar-persona-app',
         },
         {
           type: 'doc',
           id: 'guides/guides/consent',
           label: 'Consent',
+          className: 'sidebar-persona-iam',
         },
       ],
     },
@@ -214,14 +220,14 @@ const sidebars: SidebarsConfig = {
       type: 'html',
       value:
         '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg><span>Key Concepts</span></div>',
-      className: 'sidebar-html-section-header',
+      className: 'sidebar-html-section-header sidebar-persona-not-devops',
     },
     {
       type: 'category',
       label: 'Key Concepts',
       collapsed: false,
       collapsible: false,
-      className: 'sidebar-section',
+      className: 'sidebar-section sidebar-persona-not-devops',
       items: [
         {
           type: 'category',
@@ -274,14 +280,14 @@ const sidebars: SidebarsConfig = {
       type: 'html',
       value:
         '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg><span>Deployment Patterns</span></div>',
-      className: 'sidebar-html-section-header',
+      className: 'sidebar-html-section-header sidebar-persona-devops',
     },
     {
       type: 'category',
       label: 'Deployment Patterns',
       collapsed: false,
       collapsible: false,
-      className: 'sidebar-section',
+      className: 'sidebar-section sidebar-persona-devops',
       items: [
         {
           type: 'doc',

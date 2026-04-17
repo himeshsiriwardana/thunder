@@ -542,3 +542,265 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
     animation-duration: 0.001ms !important;
   }
 }
+
+/* ======================================================= */
+/* Persona Dropdown                                        */
+/* ======================================================= */
+
+.persona-dropdown {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.persona-dropdown__trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  background: transparent;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ifm-navbar-link-color);
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  line-height: 1.4;
+}
+
+.persona-dropdown__trigger:hover {
+  border-color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary);
+  background: transparent;
+}
+
+.persona-dropdown--open .persona-dropdown__trigger {
+  border-color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary);
+}
+
+.persona-dropdown__label {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.persona-dropdown__chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.persona-dropdown__chevron--open {
+  transform: rotate(180deg);
+}
+
+.persona-dropdown__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 230px;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+  z-index: 200;
+  padding: 0.3rem;
+  list-style: none;
+  margin: 0;
+}
+
+[data-theme='dark'] .persona-dropdown__menu {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.persona-dropdown__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.persona-dropdown__item:hover {
+  background: var(--ifm-color-emphasis-100);
+}
+
+.persona-dropdown__item--active {
+  background: var(--ifm-color-emphasis-100);
+}
+
+.persona-dropdown__item-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ifm-font-color-base);
+  line-height: 1.3;
+}
+
+.persona-dropdown__item--active .persona-dropdown__item-label {
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+.persona-dropdown__item-desc {
+  font-size: 0.73rem;
+  color: var(--ifm-color-emphasis-600);
+  margin-top: 0.15rem;
+  line-height: 1.3;
+}
+
+/* ========================================================
+   Persona-based Sidebar Filtering
+   ======================================================== */
+
+/* When "App Developer" is selected, hide IAM-only items */
+[data-persona='app'] .sidebar-persona-iam {
+  display: none;
+}
+
+/* When "IAM Developer" is selected, hide App-only items */
+[data-persona='iam'] .sidebar-persona-app {
+  display: none;
+}
+
+/* When "DevOps" is selected, hide items not meant for devops */
+[data-persona='devops'] .sidebar-persona-not-devops {
+  display: none;
+}
+
+/* Deployment Patterns is devops-only — hide for app and iam personas */
+[data-persona='app'] .sidebar-persona-devops,
+[data-persona='iam'] .sidebar-persona-devops {
+  display: none;
+}
+
+/* ========================================================
+   Technology Dropdown
+   ======================================================== */
+
+.tech-dropdown {
+  position: relative;
+}
+
+.tech-dropdown__trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  background: transparent;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--ifm-color-content);
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.tech-dropdown__trigger:hover {
+  border-color: var(--ifm-color-primary);
+  background: var(--ifm-color-emphasis-100);
+}
+
+.tech-dropdown--open .tech-dropdown__trigger {
+  border-color: var(--ifm-color-primary);
+}
+
+.tech-dropdown__label {
+  line-height: 1;
+}
+
+.tech-dropdown__chevron {
+  transition: transform 0.2s;
+  opacity: 0.6;
+}
+
+.tech-dropdown__chevron--open {
+  transform: rotate(180deg);
+}
+
+.tech-dropdown__logo {
+  flex-shrink: 0;
+  display: block;
+}
+
+.tech-dropdown__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 200;
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem;
+  min-width: 140px;
+}
+
+[data-theme='dark'] .tech-dropdown__menu {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.tech-dropdown__item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--ifm-color-content);
+  font-size: 0.85rem;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.tech-dropdown__item:hover {
+  background: var(--ifm-color-emphasis-100);
+}
+
+.tech-dropdown__item--active {
+  background: var(--ifm-color-emphasis-100);
+}
+
+.tech-dropdown__item-label {
+  font-weight: 500;
+}
+
+.tech-dropdown__item--active .tech-dropdown__item-label {
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+.sidebar-tech-dropdown-wrapper {
+  padding: 0.6rem 0.75rem 0.75rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+  display: none;
+}
+
+[data-persona='app'] .sidebar-tech-dropdown-wrapper {
+  display: block;
+}
+
+.sidebar-tech-dropdown-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: 0.4rem;
+}

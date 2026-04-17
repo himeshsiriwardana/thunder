@@ -16,13 +16,19 @@
  * under the License.
  */
 
-import React, {type ReactNode} from 'react';
-import type SystemColorModeType from '@theme/Icon/SystemColorMode';
-import type {WrapperProps} from '@docusaurus/types';
-import {Monitor} from 'lucide-react';
+import React from 'react';
+import OriginalNavbarItem from '@theme-original/NavbarItem';
+import PersonaDropdown from './PersonaDropdown';
+import TechDropdown from './TechDropdown';
 
-type Props = WrapperProps<typeof SystemColorModeType>;
+type OriginalProps = React.ComponentProps<typeof OriginalNavbarItem>;
 
-export default function SystemColorModeWrapper(props: Props): ReactNode {
-  return <Monitor {...props} />;
+export default function NavbarItem(props: OriginalProps): React.ReactElement {
+  if ((props as {type?: string}).type === 'custom-PersonaDropdown') {
+    return <PersonaDropdown />;
+  }
+  if ((props as {type?: string}).type === 'custom-TechDropdown') {
+    return <TechDropdown />;
+  }
+  return <OriginalNavbarItem {...props} />;
 }
