@@ -190,6 +190,7 @@ func (h *tokenExchangeGrantHandler) HandleGrant(ctx context.Context, tokenReques
 
 	// Build access token using token builder
 	accessToken, err := h.tokenBuilder.BuildAccessToken(&tokenservice.AccessTokenBuildContext{
+		Context:        ctx,
 		Subject:        subjectClaims.Sub,
 		Audiences:      finalAudiences,
 		ClientID:       tokenRequest.ClientID,

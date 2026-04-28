@@ -115,7 +115,7 @@ func (s *otpService) SendOTP(
 		ExpiryTime: otp.ExpiryTimeInMillis,
 	}
 
-	sessionToken, err := s.createSessionToken(sessionData)
+	sessionToken, err := s.createSessionToken(ctx, sessionData)
 	if err != nil {
 		logger.Error("Failed to create session token", log.Error(err))
 		return nil, &serviceerror.InternalServerError
@@ -282,7 +282,7 @@ func (s *otpService) sendSMSOTP(ctx context.Context, recipient, otp string,
 }
 
 // createSessionToken creates a JWT session token with OTP session data.
-func (s *otpService) createSessionToken(sessionData common.OTPSessionData) (string, error) {
+func (s *otpService) createSessionToken(ctx context.Context, sessionData common.OTPSessionData) (string, error) {
 	claims := map[string]interface{}{
 		"otp_data": sessionData,
 	}
@@ -293,7 +293,7 @@ func (s *otpService) createSessionToken(sessionData common.OTPSessionData) (stri
 
 	claims["aud"] = "otp-svc"
 	token, _, err := s.jwtService.GenerateJWT(
-		"otp-svc", jwtConfig.Issuer, validityPeriod, claims, jwt.TokenTypeJWT, "")
+		ctx, "otp-svc", jwtConfig.Issuer, validityPeriod, claims, jwt.TokenTypeJWT, "")
 	if err != nil {
 		return "", fmt.Errorf("failed to generate JWT token: %v", err)
 	}

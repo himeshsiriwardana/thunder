@@ -19,6 +19,7 @@
 package tokenservice
 
 import (
+	"context"
 	"fmt"
 
 	inboundmodel "github.com/asgardeo/thunder/internal/inboundclient/model"
@@ -27,6 +28,13 @@ import (
 	oauth2utils "github.com/asgardeo/thunder/internal/oauth/oauth2/utils"
 	"github.com/asgardeo/thunder/internal/system/jose/jwt"
 )
+
+func resolveContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
 
 // TokenBuilderInterface defines the interface for building OAuth2 tokens.
 type TokenBuilderInterface interface {
@@ -75,6 +83,7 @@ func (tb *tokenBuilder) BuildAccessToken(ctx *AccessTokenBuildContext) (*oauth2m
 	}
 
 	token, iat, err := tb.jwtService.GenerateJWT(
+		resolveContext(ctx.Context),
 		ctx.Subject,
 		tokenConfig.Issuer,
 		tokenConfig.ValidityPeriod,
@@ -236,6 +245,7 @@ func (tb *tokenBuilder) BuildRefreshToken(ctx *RefreshTokenBuildContext) (*oauth
 	claims["aud"] = tokenConfig.Issuer
 
 	token, iat, err := tb.jwtService.GenerateJWT(
+		resolveContext(ctx.Context),
 		ctx.ClientID,
 		tokenConfig.Issuer,
 		tokenConfig.ValidityPeriod,
@@ -310,6 +320,7 @@ func (tb *tokenBuilder) BuildIDToken(ctx *IDTokenBuildContext) (*oauth2model.Tok
 	jwtClaims["aud"] = ctx.Audience
 
 	token, iat, err := tb.jwtService.GenerateJWT(
+		resolveContext(ctx.Context),
 		ctx.Subject,
 		tokenConfig.Issuer,
 		tokenConfig.ValidityPeriod,

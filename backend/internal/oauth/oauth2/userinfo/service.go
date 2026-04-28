@@ -160,7 +160,7 @@ func (s *userInfoService) GetUserInfo(
 	case inboundmodel.UserInfoResponseTypeJWE:
 		return s.generateJWEUserInfo(ctx, response, userInfoCfg, certificate)
 	case inboundmodel.UserInfoResponseTypeJWS:
-		return s.generateJWSUserInfo(sub, tokenClaims, response, userInfoCfg)
+		return s.generateJWSUserInfo(ctx, sub, tokenClaims, response, userInfoCfg)
 	default:
 		return &UserInfoResponse{Type: inboundmodel.UserInfoResponseTypeJSON, JSONBody: response}, nil
 	}
@@ -310,7 +310,7 @@ func (s *userInfoService) generateNestedJWTUserInfo(
 	cfg *inboundmodel.UserInfoConfig,
 	certificate *inboundmodel.Certificate,
 ) (*UserInfoResponse, *serviceerror.ServiceError) {
-	jwsResp, svcErr := s.generateJWSUserInfo(sub, tokenClaims, response, cfg)
+	jwsResp, svcErr := s.generateJWSUserInfo(ctx, sub, tokenClaims, response, cfg)
 	if svcErr != nil {
 		return nil, svcErr
 	}
@@ -338,6 +338,7 @@ func (s *userInfoService) generateNestedJWTUserInfo(
 // generateJWSUserInfo creates a signed JWT UserInfo response
 // based on the application configuration.
 func (s *userInfoService) generateJWSUserInfo(
+	ctx context.Context,
 	sub string,
 	tokenClaims map[string]interface{},
 	response map[string]interface{},
@@ -360,6 +361,7 @@ func (s *userInfoService) generateJWSUserInfo(
 	}
 
 	signedJWT, _, err := s.jwtService.GenerateJWT(
+		ctx,
 		sub,
 		issuer,
 		validity,

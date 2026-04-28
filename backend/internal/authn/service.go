@@ -176,8 +176,8 @@ func (as *authenticationService) AuthenticateWithCredentials(ctx context.Context
 			OUID:       basicResult.OUID,
 			Attributes: authUserAttributesJSON,
 		}
-		svcErr = as.validateAndAppendAuthAssertion(authResponse, authenticatedUser, common.AuthenticatorCredentials,
-			existingAssertion, logger)
+		svcErr = as.validateAndAppendAuthAssertion(
+			ctx, authResponse, authenticatedUser, common.AuthenticatorCredentials, existingAssertion, logger)
 		if svcErr != nil {
 			return nil, svcErr
 		}
@@ -230,7 +230,7 @@ func (as *authenticationService) VerifyOTP(ctx context.Context, sessionToken str
 			OUID:       basicResult.OUID,
 			Attributes: nil, // Attributes not needed for assertion generation in OTP flow
 		}
-		svcErr = as.validateAndAppendAuthAssertion(authResponse, userForAssertion, common.AuthenticatorSMSOTP,
+		svcErr = as.validateAndAppendAuthAssertion(ctx, authResponse, userForAssertion, common.AuthenticatorSMSOTP,
 			existingAssertion, logger)
 		if svcErr != nil {
 			return nil, svcErr
@@ -282,7 +282,7 @@ func (as *authenticationService) StartIDPAuthentication(ctx context.Context, req
 	}
 
 	// Generate session token
-	sessionToken, err := as.createSessionToken(idpID, identityProvider.Type)
+	sessionToken, err := as.createSessionToken(ctx, idpID, identityProvider.Type)
 	if err != nil {
 		logger.Error("Failed to create session token", log.String("idpId", idpID),
 			log.String("error", err.Error.DefaultValue))
@@ -363,7 +363,7 @@ func (as *authenticationService) FinishIDPAuthentication(ctx context.Context, re
 			return nil, &serviceerror.InternalServerError
 		}
 
-		svcErr = as.validateAndAppendAuthAssertion(authResponse, user, authenticatorName,
+		svcErr = as.validateAndAppendAuthAssertion(ctx, authResponse, user, authenticatorName,
 			existingAssertion, logger)
 		if svcErr != nil {
 			return nil, svcErr
@@ -374,9 +374,10 @@ func (as *authenticationService) FinishIDPAuthentication(ctx context.Context, re
 }
 
 // validateAndAppendAuthAssertion validates and appends a generated auth assertion to the authentication response.
-func (as *authenticationService) validateAndAppendAuthAssertion(authResponse *common.AuthenticationResponse,
-	user *entityprovider.Entity, authenticator string, existingAssertion string,
-	logger *log.Logger) *serviceerror.ServiceError {
+func (as *authenticationService) validateAndAppendAuthAssertion(
+	ctx context.Context, authResponse *common.AuthenticationResponse, user *entityprovider.Entity, authenticator string,
+	existingAssertion string, logger *log.Logger,
+) *serviceerror.ServiceError {
 	logger.Debug("Generating auth assertion", log.MaskedString(log.LoggerKeyUserID, user.ID))
 
 	authenticatorRef := &common.AuthenticatorReference{
@@ -432,7 +433,7 @@ func (as *authenticationService) validateAndAppendAuthAssertion(authResponse *co
 	// Generate auth assertion JWT
 	jwtConfig := config.GetServerRuntime().Config.JWT
 	jwtClaims["aud"] = jwtConfig.Audience
-	token, _, err := as.jwtService.GenerateJWT(user.ID, jwtConfig.Issuer,
+	token, _, err := as.jwtService.GenerateJWT(ctx, user.ID, jwtConfig.Issuer,
 		jwtConfig.ValidityPeriod, jwtClaims, jwt.TokenTypeJWT, "")
 	if err != nil {
 		logger.Error("Failed to generate auth assertion", log.String("error", err.Error.DefaultValue))
@@ -598,7 +599,7 @@ func (as *authenticationService) validateIDPType(requestedType, actualType idp.I
 }
 
 // createSessionToken creates a JWT session token with authentication session data.
-func (as *authenticationService) createSessionToken(idpID string, idpType idp.IDPType) (
+func (as *authenticationService) createSessionToken(ctx context.Context, idpID string, idpType idp.IDPType) (
 	string, *serviceerror.ServiceError) {
 	sessionData := AuthSessionData{
 		IDPID:   idpID,
@@ -610,7 +611,7 @@ func (as *authenticationService) createSessionToken(idpID string, idpType idp.ID
 
 	jwtConfig := config.GetServerRuntime().Config.JWT
 	claims["aud"] = "auth-svc"
-	token, _, err := as.jwtService.GenerateJWT("auth-svc", jwtConfig.Issuer, 600, claims, jwt.TokenTypeJWT, "")
+	token, _, err := as.jwtService.GenerateJWT(ctx, "auth-svc", jwtConfig.Issuer, 600, claims, jwt.TokenTypeJWT, "")
 	if err != nil {
 		return "", err
 	}
@@ -764,7 +765,7 @@ func (as *authenticationService) FinishPasskeyAuthentication(ctx context.Context
 			OUID: basicResult.OUID,
 		}
 
-		svcErr = as.validateAndAppendAuthAssertion(authResponse, userForAssertion, common.AuthenticatorPasskey,
+		svcErr = as.validateAndAppendAuthAssertion(ctx, authResponse, userForAssertion, common.AuthenticatorPasskey,
 			existingAssertion, logger)
 		if svcErr != nil {
 			return nil, svcErr

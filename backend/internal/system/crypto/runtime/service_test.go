@@ -21,6 +21,7 @@ package runtime
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -35,6 +36,7 @@ import (
 
 	"github.com/asgardeo/thunder/internal/system/config"
 	"github.com/asgardeo/thunder/internal/system/crypto"
+	"github.com/asgardeo/thunder/internal/system/crypto/sign"
 	"github.com/asgardeo/thunder/internal/system/error/serviceerror"
 	i18ncore "github.com/asgardeo/thunder/internal/system/i18n/core"
 	"github.com/asgardeo/thunder/internal/system/log"
@@ -49,9 +51,12 @@ func resetSingleton() {
 
 type RuntimeCryptoServiceTestSuite struct {
 	suite.Suite
-	rsaKey  *rsa.PrivateKey
-	ecKey   *ecdsa.PrivateKey
-	pkiMock *pkimock.PKIServiceInterfaceMock
+	rsaKey     *rsa.PrivateKey
+	ecKey      *ecdsa.PrivateKey
+	ecKey384   *ecdsa.PrivateKey
+	ecKey521   *ecdsa.PrivateKey
+	ed25519Key ed25519.PrivateKey
+	pkiMock    *pkimock.PKIServiceInterfaceMock
 }
 
 func TestRuntimeCryptoServiceSuite(t *testing.T) {
@@ -66,6 +71,18 @@ func (suite *RuntimeCryptoServiceTestSuite) SetupSuite() {
 	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	assert.NoError(suite.T(), err)
 	suite.ecKey = ecKey
+
+	ecKey384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	assert.NoError(suite.T(), err)
+	suite.ecKey384 = ecKey384
+
+	ecKey521, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	assert.NoError(suite.T(), err)
+	suite.ecKey521 = ecKey521
+
+	_, edPriv, err := ed25519.GenerateKey(rand.Reader)
+	assert.NoError(suite.T(), err)
+	suite.ed25519Key = edPriv
 }
 
 func (suite *RuntimeCryptoServiceTestSuite) SetupTest() {
@@ -381,4 +398,152 @@ func (suite *RuntimeCryptoServiceTestSuite) TestECDHES_Decrypt_MissingEPK() {
 		nil)
 	assert.Error(suite.T(), err)
 	assert.Contains(suite.T(), err.Error(), "EPK required")
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_RSA_RS256_Success() {
+	suite.pkiMock.On("GetPrivateKey", "rsa-key-1").Return(suite.rsaKey, nil).Once()
+
+	svc := &runtimeCryptoService{
+		pkiService: suite.pkiMock,
+		logger:     log.GetLogger(),
+	}
+
+	data := []byte("header.payload")
+	sig, err := svc.Sign(context.Background(), crypto.KeyRef{KeyID: "rsa-key-1"}, crypto.AlgorithmRS256, data)
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), sig)
+
+	verifyErr := sign.Verify(data, sig, sign.RSASHA256, &suite.rsaKey.PublicKey)
+	assert.NoError(suite.T(), verifyErr)
+
+	suite.pkiMock.AssertExpectations(suite.T())
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_ECDSA_ES256_Success() {
+	suite.pkiMock.On("GetPrivateKey", "ec-key-1").Return(suite.ecKey, nil).Once()
+
+	svc := &runtimeCryptoService{
+		pkiService: suite.pkiMock,
+		logger:     log.GetLogger(),
+	}
+
+	data := []byte("header.payload")
+	sig, err := svc.Sign(context.Background(), crypto.KeyRef{KeyID: "ec-key-1"}, crypto.AlgorithmES256, data)
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), sig)
+
+	verifyErr := sign.Verify(data, sig, sign.ECDSASHA256, &suite.ecKey.PublicKey)
+	assert.NoError(suite.T(), verifyErr)
+
+	suite.pkiMock.AssertExpectations(suite.T())
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_PKINotInitialized() {
+	svc := &runtimeCryptoService{
+		pkiService: nil,
+		logger:     log.GetLogger(),
+	}
+
+	_, err := svc.Sign(context.Background(), crypto.KeyRef{KeyID: "rsa-key-1"}, crypto.AlgorithmRS256, []byte("data"))
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "PKI service not initialized")
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_KeyNotFound() {
+	suite.pkiMock.On("GetPrivateKey", "missing-key").Return(nil, suite.newKeyNotFoundErr()).Once()
+
+	svc := &runtimeCryptoService{
+		pkiService: suite.pkiMock,
+		logger:     log.GetLogger(),
+	}
+
+	_, err := svc.Sign(context.Background(), crypto.KeyRef{KeyID: "missing-key"}, crypto.AlgorithmRS256, []byte("data"))
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "missing-key")
+
+	suite.pkiMock.AssertExpectations(suite.T())
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_UnsupportedAlgorithm() {
+	svc := &runtimeCryptoService{
+		pkiService: suite.pkiMock,
+		logger:     log.GetLogger(),
+	}
+
+	_, err := svc.Sign(
+		context.Background(), crypto.KeyRef{KeyID: "rsa-key-1"}, crypto.Algorithm("UNKNOWN"), []byte("data"))
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "unsupported signing algorithm")
+
+	suite.pkiMock.AssertNotCalled(suite.T(), "GetPrivateKey", "rsa-key-1")
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_RSA_RS512_Success() {
+	suite.pkiMock.On("GetPrivateKey", "rsa-key-1").Return(suite.rsaKey, nil).Once()
+
+	svc := &runtimeCryptoService{pkiService: suite.pkiMock, logger: log.GetLogger()}
+	data := []byte("header.payload")
+
+	sig, err := svc.Sign(context.Background(), crypto.KeyRef{KeyID: "rsa-key-1"}, crypto.AlgorithmRS512, data)
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), sig)
+	assert.NoError(suite.T(), sign.Verify(data, sig, sign.RSASHA512, &suite.rsaKey.PublicKey))
+
+	suite.pkiMock.AssertExpectations(suite.T())
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_RSA_PS256_Success() {
+	suite.pkiMock.On("GetPrivateKey", "rsa-key-1").Return(suite.rsaKey, nil).Once()
+
+	svc := &runtimeCryptoService{pkiService: suite.pkiMock, logger: log.GetLogger()}
+	data := []byte("header.payload")
+
+	sig, err := svc.Sign(context.Background(), crypto.KeyRef{KeyID: "rsa-key-1"}, crypto.AlgorithmPS256, data)
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), sig)
+	assert.NoError(suite.T(), sign.Verify(data, sig, sign.RSAPSSSHA256, &suite.rsaKey.PublicKey))
+
+	suite.pkiMock.AssertExpectations(suite.T())
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_ECDSA_ES384_Success() {
+	suite.pkiMock.On("GetPrivateKey", "ec-key-384").Return(suite.ecKey384, nil).Once()
+
+	svc := &runtimeCryptoService{pkiService: suite.pkiMock, logger: log.GetLogger()}
+	data := []byte("header.payload")
+
+	sig, err := svc.Sign(context.Background(), crypto.KeyRef{KeyID: "ec-key-384"}, crypto.AlgorithmES384, data)
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), sig)
+	assert.NoError(suite.T(), sign.Verify(data, sig, sign.ECDSASHA384, &suite.ecKey384.PublicKey))
+
+	suite.pkiMock.AssertExpectations(suite.T())
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_ECDSA_ES512_Success() {
+	suite.pkiMock.On("GetPrivateKey", "ec-key-521").Return(suite.ecKey521, nil).Once()
+
+	svc := &runtimeCryptoService{pkiService: suite.pkiMock, logger: log.GetLogger()}
+	data := []byte("header.payload")
+
+	sig, err := svc.Sign(context.Background(), crypto.KeyRef{KeyID: "ec-key-521"}, crypto.AlgorithmES512, data)
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), sig)
+	assert.NoError(suite.T(), sign.Verify(data, sig, sign.ECDSASHA512, &suite.ecKey521.PublicKey))
+
+	suite.pkiMock.AssertExpectations(suite.T())
+}
+
+func (suite *RuntimeCryptoServiceTestSuite) TestSign_EdDSA_Success() {
+	suite.pkiMock.On("GetPrivateKey", "ed-key-1").Return(suite.ed25519Key, nil).Once()
+
+	svc := &runtimeCryptoService{pkiService: suite.pkiMock, logger: log.GetLogger()}
+	data := []byte("header.payload")
+
+	sig, err := svc.Sign(context.Background(), crypto.KeyRef{KeyID: "ed-key-1"}, crypto.AlgorithmEdDSA, data)
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), sig)
+	assert.NoError(suite.T(), sign.Verify(data, sig, sign.ED25519, suite.ed25519Key.Public()))
+
+	suite.pkiMock.AssertExpectations(suite.T())
 }

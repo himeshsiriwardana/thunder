@@ -105,6 +105,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_Basic() {
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -154,6 +155,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithActorClaim(
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -196,6 +198,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithNestedActor
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -227,6 +230,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_EmptyScopes() {
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -258,6 +262,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_EmptyClientID()
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -289,6 +294,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_EmptyGrantType(
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -329,6 +335,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_CustomValidityP
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io", // Server-level issuer always used
 		int64(7200),
@@ -363,6 +370,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Error_JWTGenerationFail
 	}
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -402,6 +410,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithClaimsLocal
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -449,6 +458,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_Basic() {
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"test-client",
 		"https://thunder.io",
 		int64(3600),
@@ -489,6 +499,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithoutUserAtt
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"test-client",
 		"https://thunder.io",
 		int64(3600),
@@ -520,6 +531,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithNilOAuthAp
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"test-client",
 		"https://thunder.io",
 		int64(3600),
@@ -550,6 +562,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_EmptyScopes() 
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"test-client",
 		"https://thunder.io",
 		int64(3600),
@@ -588,6 +601,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithTokenConfi
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"test-client",
 		"https://thunder.io",
 		int64(3600),
@@ -624,6 +638,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithNilAccessT
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"test-client",
 		"https://thunder.io",
 		int64(3600),
@@ -659,6 +674,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Error_JWTGenerationFai
 	}
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"test-client",
 		"https://thunder.io",
 		int64(3600),
@@ -698,6 +714,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithClaimsLoca
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"test-client",
 		"https://thunder.io",
 		int64(3600),
@@ -737,6 +754,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_Basic() {
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -774,6 +792,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithNonce() {
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -804,6 +823,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithoutNonce() {
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -834,6 +854,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_NoAuthTime() {
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -877,6 +898,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithScopeClaims() {
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -916,6 +938,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithStandardOIDCSco
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -946,6 +969,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_NoUserAttributes() 
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -984,6 +1008,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_EmptyUserAttributes
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),
@@ -1024,6 +1049,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_CustomValidityPerio
 	expectedIat := time.Now().Unix()
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(7200),
@@ -1057,6 +1083,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_JWTGenerationFailed()
 	}
 
 	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
 		"user123",
 		"https://thunder.io",
 		int64(3600),

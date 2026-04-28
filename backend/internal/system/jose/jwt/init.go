@@ -23,11 +23,12 @@ import (
 	"time"
 
 	"github.com/asgardeo/thunder/internal/system/crypto/pki"
+	"github.com/asgardeo/thunder/internal/system/crypto/runtime"
 	httpservice "github.com/asgardeo/thunder/internal/system/http"
 )
 
 // Initialize initializes the JWT service.
 func Initialize(pkiService pki.PKIServiceInterface) (JWTServiceInterface, error) {
 	httpClient := httpservice.NewHTTPClientWithTimeout(10 * time.Second)
-	return newJWTService(pkiService, httpClient)
+	return newJWTService(pkiService, httpClient, runtime.NewRuntimeCryptoService(pkiService))
 }

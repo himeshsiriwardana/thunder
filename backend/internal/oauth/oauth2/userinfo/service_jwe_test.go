@@ -288,7 +288,7 @@ func (s *JWEUserInfoTestSuite) TestGenerateNestedJWTUserInfo_Success() {
 
 	mockJWT := jwtmock.NewJWTServiceInterfaceMock(s.T())
 	mockJWT.On("GenerateJWT",
-		"user1", "test-issuer", int64(600),
+		mock.Anything, "user1", "test-issuer", int64(600),
 		mock.Anything, mock.Anything, "RS256",
 	).Return("signed.jwt.token", int64(0), (*serviceerror.ServiceError)(nil))
 
@@ -355,7 +355,7 @@ func (s *JWEUserInfoTestSuite) TestGenerateJWEUserInfo_EncryptErrorPropagated() 
 func (s *JWEUserInfoTestSuite) TestGenerateJWSUserInfo_UnsupportedAlg() {
 	mockJWT := jwtmock.NewJWTServiceInterfaceMock(s.T())
 	mockJWT.On("GenerateJWT",
-		"user1", "test-issuer", int64(600),
+		mock.Anything, "user1", "test-issuer", int64(600),
 		mock.Anything, mock.Anything, "ES256",
 	).Return("", int64(0), &jwt.ErrorUnsupportedJWSAlgorithm)
 
@@ -363,6 +363,7 @@ func (s *JWEUserInfoTestSuite) TestGenerateJWSUserInfo_UnsupportedAlg() {
 	cfg := &inboundmodel.UserInfoConfig{SigningAlg: "ES256"}
 
 	result, svcErr := svc.generateJWSUserInfo(
+		context.Background(),
 		"user1",
 		map[string]interface{}{"client_id": "client1"},
 		map[string]interface{}{"sub": "user1"},

@@ -19,6 +19,7 @@
 package jwt
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -29,6 +30,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -43,12 +45,14 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/asgardeo/thunder/internal/system/config"
+	syscrypto "github.com/asgardeo/thunder/internal/system/crypto"
 	"github.com/asgardeo/thunder/internal/system/crypto/sign"
 	"github.com/asgardeo/thunder/internal/system/error/serviceerror"
 	httpservice "github.com/asgardeo/thunder/internal/system/http"
 	"github.com/asgardeo/thunder/internal/system/i18n/core"
 	"github.com/asgardeo/thunder/internal/system/jose/jws"
 	"github.com/asgardeo/thunder/internal/system/log"
+	"github.com/asgardeo/thunder/tests/mocks/crypto/cryptomock"
 	"github.com/asgardeo/thunder/tests/mocks/crypto/pki/pkimock"
 )
 
@@ -124,12 +128,23 @@ func (suite *JWTServiceTestSuite) SetupTest() {
 	// Create PKI mock
 	suite.pkiMock = pkimock.NewPKIServiceInterfaceMock(suite.T())
 
+	cryptoMock := cryptomock.NewRuntimeCryptoProviderMock(suite.T())
+	cryptoMock.EXPECT().
+		Sign(mock.Anything, syscrypto.KeyRef{KeyID: "test-kid"}, syscrypto.Algorithm(jws.RS256), mock.Anything).
+		RunAndReturn(func(
+			_ context.Context, _ syscrypto.KeyRef, _ syscrypto.Algorithm, content []byte,
+		) ([]byte, error) {
+			return sign.Generate(content, sign.RSASHA256, suite.testPrivateKey)
+		}).Maybe()
+
 	suite.jwtService = &jwtService{
-		privateKey: suite.testPrivateKey,
-		signAlg:    sign.RSASHA256,
-		jwsAlg:     jws.RS256,
-		kid:        "test-kid",
-		logger:     log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTService")),
+		cryptoProvider: cryptoMock,
+		keyRef:         syscrypto.KeyRef{KeyID: "test-kid"},
+		publicKey:      &suite.testPrivateKey.PublicKey,
+		signAlg:        sign.RSASHA256,
+		jwsAlg:         jws.RS256,
+		kid:            "test-kid",
+		logger:         log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTService")),
 	}
 
 	testConfig := &config.Config{
@@ -407,7 +422,7 @@ func (suite *JWTServiceTestSuite) TestGenerateJWTScenarios() {
 			expectError: false,
 		},
 		{
-			name:      "NilPrivateKey",
+			name:      "NilCryptoProvider",
 			sub:       "sub",
 			iss:       "iss",
 			validity:  3600,
@@ -415,8 +430,8 @@ func (suite *JWTServiceTestSuite) TestGenerateJWTScenarios() {
 			setupMock: func() func() { return func() {} },
 			setupService: func() *jwtService {
 				return &jwtService{
-					privateKey: nil,
-					logger:     log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTService")),
+					cryptoProvider: nil,
+					logger:         log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTService")),
 				}
 			},
 			expectError: true,
@@ -432,9 +447,13 @@ func (suite *JWTServiceTestSuite) TestGenerateJWTScenarios() {
 				return func() {}
 			},
 			setupService: func() *jwtService {
+				cryptoMock := cryptomock.NewRuntimeCryptoProviderMock(suite.T())
+				cryptoMock.EXPECT().Sign(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+					Return(nil, errors.New("signing failed"))
 				return &jwtService{
-					privateKey: &rsa.PrivateKey{}, // Invalid private key
-					logger:     log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTService")),
+					cryptoProvider: cryptoMock,
+					keyRef:         syscrypto.KeyRef{KeyID: "test-kid"},
+					logger:         log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTService")),
 				}
 			},
 			expectError: true,
@@ -569,7 +588,8 @@ func (suite *JWTServiceTestSuite) TestGenerateJWTScenarios() {
 
 			jwtService := tc.setupService()
 
-			token, iat, err := jwtService.GenerateJWT(tc.sub, tc.iss, tc.validity, tc.claims, TokenTypeJWT, "")
+			token, iat, err := jwtService.GenerateJWT(
+				context.Background(), tc.sub, tc.iss, tc.validity, tc.claims, TokenTypeJWT, "")
 
 			if tc.expectError {
 				assert.NotNil(t, err)
@@ -783,8 +803,8 @@ func (suite *JWTServiceTestSuite) TestVerifyJWT() {
 			jwtSvc := suite.jwtService
 			if tc.name == "PublicKeyNotAvailable" {
 				jwtSvc = &jwtService{
-					privateKey: nil,
-					logger:     log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTService")),
+					publicKey: nil,
+					logger:    log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTService")),
 				}
 			}
 
@@ -1386,7 +1406,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignature() {
 		{
 			name: "ValidToken",
 			setupFunc: func() string {
-				token, _, err := suite.jwtService.GenerateJWT(
+				token, _, err := suite.jwtService.GenerateJWT(context.Background(),
 					"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 				assert.Nil(suite.T(), err)
 				return token
@@ -1415,7 +1435,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignature() {
 		{
 			name: "PublicKeyNotAvailable",
 			setupFunc: func() string {
-				token, _, err := suite.jwtService.GenerateJWT(
+				token, _, err := suite.jwtService.GenerateJWT(context.Background(),
 					"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 				assert.Nil(suite.T(), err)
 				return token
@@ -1431,7 +1451,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignature() {
 			jwtSvc := suite.jwtService
 			if tc.name == "PublicKeyNotAvailable" {
 				jwtSvc = &jwtService{
-					privateKey: nil,
+					publicKey: nil,
 				}
 			}
 
@@ -1446,7 +1466,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignature() {
 }
 
 func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithPublicKey() {
-	validToken, _, err := suite.jwtService.GenerateJWT(
+	validToken, _, err := suite.jwtService.GenerateJWT(context.Background(),
 		"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 	assert.Nil(suite.T(), err)
 
@@ -1484,7 +1504,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithPublicKey() {
 }
 
 func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithJWKS() {
-	token, _, err := suite.jwtService.GenerateJWT(
+	token, _, err := suite.jwtService.GenerateJWT(context.Background(),
 		"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 	assert.Nil(suite.T(), err)
 
@@ -1544,7 +1564,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithJWKSUsesCache() {
 	serverB := makeServer(&fetchCountB)
 	defer serverB.Close()
 
-	token, _, genErr := suite.jwtService.GenerateJWT(
+	token, _, genErr := suite.jwtService.GenerateJWT(context.Background(),
 		"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 	assert.Nil(suite.T(), genErr)
 
@@ -1643,7 +1663,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithJWKSHTTPErrors() {
 				}))
 			},
 			setupToken: func() string {
-				token, _, _ := suite.jwtService.GenerateJWT(
+				token, _, _ := suite.jwtService.GenerateJWT(context.Background(),
 					"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 				return token
 			},
@@ -1661,7 +1681,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithJWKSHTTPErrors() {
 				}))
 			},
 			setupToken: func() string {
-				token, _, _ := suite.jwtService.GenerateJWT(
+				token, _, _ := suite.jwtService.GenerateJWT(context.Background(),
 					"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 				return token
 			},
@@ -1691,7 +1711,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithJWKSHTTPErrors() {
 				}))
 			},
 			setupToken: func() string {
-				token, _, _ := suite.jwtService.GenerateJWT(
+				token, _, _ := suite.jwtService.GenerateJWT(context.Background(),
 					"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 				return token
 			},
@@ -1720,7 +1740,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithJWKSHTTPErrors() {
 				}))
 			},
 			setupToken: func() string {
-				token, _, _ := suite.jwtService.GenerateJWT(
+				token, _, _ := suite.jwtService.GenerateJWT(context.Background(),
 					"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 				return token
 			},
@@ -1763,7 +1783,7 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithJWKSHTTPErrors() {
 
 func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithJWKSNetworkError() {
 	// Test with invalid URL to trigger network error
-	token, _, err := suite.jwtService.GenerateJWT(
+	token, _, err := suite.jwtService.GenerateJWT(context.Background(),
 		"test-subject", testIssuer, 3600, map[string]interface{}{"aud": testAudience}, TokenTypeJWT, "")
 	assert.Nil(suite.T(), err)
 
@@ -1994,12 +2014,12 @@ func (suite *JWTServiceTestSuite) TestInitWithECDSAKeys() {
 			// Cast to access internal fields for testing
 			jwtSvc, ok := service.(*jwtService)
 			assert.True(t, ok)
-			assert.NotNil(t, jwtSvc.privateKey)
+			assert.NotNil(t, jwtSvc.publicKey)
 			assert.Equal(t, tc.expectedSignAlg, jwtSvc.signAlg)
 			assert.Equal(t, tc.expectedAlg, jwtSvc.jwsAlg)
 
 			// Test JWT generation with ECDSA key
-			token, _, svcErr := service.GenerateJWT(
+			token, _, svcErr := service.GenerateJWT(context.Background(),
 				"test-subject", "test-iss", 3600, map[string]interface{}{"aud": "test-aud"}, TokenTypeJWT, "")
 			assert.Nil(t, svcErr)
 			assert.NotEmpty(t, token)
@@ -2057,12 +2077,12 @@ func (suite *JWTServiceTestSuite) TestInitWithEd25519Key() {
 	// Cast to access internal fields for testing
 	jwtSvc, ok := service.(*jwtService)
 	assert.True(suite.T(), ok)
-	assert.NotNil(suite.T(), jwtSvc.privateKey)
+	assert.NotNil(suite.T(), jwtSvc.publicKey)
 	assert.Equal(suite.T(), sign.ED25519, jwtSvc.signAlg)
 	assert.Equal(suite.T(), jws.EdDSA, jwtSvc.jwsAlg)
 
 	// Test JWT generation with Ed25519 key
-	token, _, svcErr := service.GenerateJWT(
+	token, _, svcErr := service.GenerateJWT(context.Background(),
 		"test-subject", "test-iss", 3600, map[string]interface{}{"aud": "test-aud"}, TokenTypeJWT, "")
 	assert.Nil(suite.T(), svcErr)
 	assert.NotEmpty(suite.T(), token)
@@ -2326,14 +2346,24 @@ func (suite *JWTServiceTestSuite) TestVerifyJWTSignatureWithPublicKeyAlgorithmDe
 	for _, tc := range testCases {
 		suite.T().Run(tc.name, func(t *testing.T) {
 			priv, pub, signAlg, jwsAlg := tc.setupKey()
+			cryptoMock := cryptomock.NewRuntimeCryptoProviderMock(t)
+			keyRef := syscrypto.KeyRef{KeyID: "test-sign-key"}
+			cryptoMock.EXPECT().Sign(mock.Anything, keyRef, syscrypto.Algorithm(jwsAlg), mock.Anything).
+				RunAndReturn(func(
+					_ context.Context, _ syscrypto.KeyRef, _ syscrypto.Algorithm, content []byte,
+				) ([]byte, error) {
+					return sign.Generate(content, signAlg, priv)
+				}).Maybe()
 			jwtService := &jwtService{
-				privateKey: priv,
-				signAlg:    signAlg,
-				jwsAlg:     jwsAlg,
+				cryptoProvider: cryptoMock,
+				keyRef:         keyRef,
+				publicKey:      pub,
+				signAlg:        signAlg,
+				jwsAlg:         jwsAlg,
 			}
 
 			// Generate token
-			token, _, err := jwtService.GenerateJWT(
+			token, _, err := jwtService.GenerateJWT(context.Background(),
 				"test-sub", "test-iss", 3600, map[string]interface{}{"aud": "test-aud"}, TokenTypeJWT, "")
 			assert.Nil(t, err)
 

@@ -33,6 +33,7 @@ import (
 	"github.com/asgardeo/thunder/internal/system/crypto"
 	"github.com/asgardeo/thunder/internal/system/crypto/config"
 	"github.com/asgardeo/thunder/internal/system/crypto/pki"
+	"github.com/asgardeo/thunder/internal/system/crypto/sign"
 	"github.com/asgardeo/thunder/internal/system/log"
 )
 
@@ -61,6 +62,16 @@ func GetRuntimeCryptoService() crypto.RuntimeCryptoProvider {
 		}
 	})
 	return runtimeInstance
+}
+
+// NewRuntimeCryptoService creates a new RuntimeCryptoProvider backed by the given PKI service.
+// Use this instead of GetRuntimeCryptoService when you already hold a PKIServiceInterface instance.
+func NewRuntimeCryptoService(pkiService pki.PKIServiceInterface) crypto.RuntimeCryptoProvider {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "RuntimeCryptoService"))
+	return &runtimeCryptoService{
+		pkiService: pkiService,
+		logger:     logger,
+	}
 }
 
 // Encrypt performs key establishment for the algorithm in params. Per-algorithm behavior:
@@ -327,9 +338,45 @@ func (s *runtimeCryptoService) getECDHDecryptKeys(
 	return ecdsaPriv, epk, nil
 }
 
-// Sign is not yet implemented.
-func (s *runtimeCryptoService) Sign(_ context.Context, _ crypto.KeyRef, _ crypto.Algorithm, _ []byte) ([]byte, error) {
-	return nil, errors.New("not implemented")
+// algorithmToSignAlg maps a crypto.Algorithm (JWA names) to the internal sign.SignAlgorithm.
+func algorithmToSignAlg(alg crypto.Algorithm) (sign.SignAlgorithm, error) {
+	switch alg {
+	case crypto.AlgorithmRS256:
+		return sign.RSASHA256, nil
+	case crypto.AlgorithmRS512:
+		return sign.RSASHA512, nil
+	case crypto.AlgorithmPS256:
+		return sign.RSAPSSSHA256, nil
+	case crypto.AlgorithmES256:
+		return sign.ECDSASHA256, nil
+	case crypto.AlgorithmES384:
+		return sign.ECDSASHA384, nil
+	case crypto.AlgorithmES512:
+		return sign.ECDSASHA512, nil
+	case crypto.AlgorithmEdDSA:
+		return sign.ED25519, nil
+	default:
+		return "", fmt.Errorf("unsupported signing algorithm: %s", alg)
+	}
+}
+
+// Sign signs content using the private key identified by keyRef.
+func (s *runtimeCryptoService) Sign(
+	_ context.Context, keyRef crypto.KeyRef, algorithm crypto.Algorithm, content []byte,
+) ([]byte, error) {
+	signAlg, err := algorithmToSignAlg(algorithm)
+	if err != nil {
+		return nil, err
+	}
+	if s.pkiService == nil {
+		return nil, errors.New("PKI service not initialized")
+	}
+	privKey, svcErr := s.pkiService.GetPrivateKey(keyRef.KeyID)
+	if svcErr != nil {
+		return nil, fmt.Errorf("key not found for id %s: [%s] %s",
+			keyRef.KeyID, svcErr.Code, svcErr.Error.DefaultValue)
+	}
+	return sign.Generate(content, signAlg, privKey)
 }
 
 // GetPublicKeys is not yet implemented.

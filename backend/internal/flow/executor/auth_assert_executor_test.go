@@ -160,7 +160,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_UserAuthenticated_Success(
 		Context: &authnassert.AssuranceContext{},
 	}, nil)
 
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything).Return("jwt-token", int64(3600), nil)
 
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything, testAuthOUID).
@@ -209,7 +209,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAuthorizedPermissions(
 		Application:      appmodel.Application{},
 	}
 
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			perms, ok := claims["authorized_permissions"]
 			return ok && perms == "read:documents write:documents"
@@ -251,7 +251,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithUserAttributes() {
 	}
 
 	suite.mockEntityProvider.On("GetEntity", "user-123").Return(existingUser, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			return claims["email"] == testEmail && claims["phone"] == "1234567890"
 		}), mock.Anything, mock.Anything).Return("jwt-token", int64(3600), nil)
@@ -278,7 +278,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_JWTGenerationFails() {
 		Application:      appmodel.Application{},
 	}
 
-	suite.mockJWTService.On("GenerateJWT", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("", int64(0), &serviceerror.ServiceError{
 		Type: serviceerror.ServerErrorType,
 		Code: "JWT_GENERATION_FAILED",
@@ -547,7 +547,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithUserTypeAndOU() {
 		},
 	}
 
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			return claims[oauth2const.ClaimUserType] == "EXTERNAL" && claims[oauth2const.ClaimOUID] == "ou-456"
 		}), mock.Anything, mock.Anything).Return("jwt-token", int64(3600), nil)
@@ -581,7 +581,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithCustomTokenConfig() {
 		},
 	}
 
-	suite.mockJWTService.On("GenerateJWT", "user-123", "https://auth.example.com", int64(7200),
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", "https://auth.example.com", int64(7200),
 		mock.Anything, mock.Anything, mock.Anything).Return("jwt-token", int64(7200), nil)
 
 	resp, err := suite.executor.Execute(ctx)
@@ -616,7 +616,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithOUNameAndHandle() {
 		Handle: "eng",
 	}, nil)
 
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			return claims[oauth2const.ClaimOUID] == testAssertOUID &&
 				claims[oauth2const.ClaimOUName] == "Engineering" &&
@@ -690,7 +690,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_AppendUserDetailsToClaimsF
 
 	existingUser.Attributes = attrsJSON
 	suite.mockEntityProvider.On("GetEntity", "user-123").Return(existingUser, nil)
-	suite.mockJWTService.On("GenerateJWT", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("jwt-token", int64(3600), nil)
 
 	resp, err := suite.executor.Execute(ctx)
@@ -825,7 +825,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithConfiguredUserAttribut
 	}
 
 	suite.mockEntityProvider.On("GetEntity", "user-123").Return(existingUser, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			// Should contain the configured user attributes from the user store
 			hasEmail := claims["email"] == testEmail
@@ -868,7 +868,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithGroups() {
 
 	suite.mockEntityProvider.On("GetTransitiveEntityGroups", "user-123").
 		Return(userGroups, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			// Should contain groups claim
 			groups, ok := claims[oauth2const.UserAttributeGroups].([]string)
@@ -906,7 +906,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithGroups_EmptyGroups() {
 
 	suite.mockEntityProvider.On("GetTransitiveEntityGroups", "user-123").
 		Return([]entityprovider.EntityGroup{}, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			// Should NOT contain groups claim when groups list is empty
 			_, ok := claims[oauth2const.UserAttributeGroups]
@@ -1077,7 +1077,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithConsentedAttributes_Fi
 	}
 
 	suite.mockEntityProvider.On("GetEntity", "user-123").Return(existingUser, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			// Should only have email and name (consented), NOT phone
 			_, hasPhone := claims["phone"]
@@ -1112,7 +1112,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithEmptyConsentedAttribut
 		Application:      appmodel.Application{},
 	}
 
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything).Return("jwt-token", int64(3600), nil)
 
 	resp, err := suite.executor.Execute(ctx)
@@ -1136,7 +1136,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithoutConsentedAttributes
 		Application:      appmodel.Application{},
 	}
 
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything).Return("jwt-token", int64(3600), nil)
 
 	resp, err := suite.executor.Execute(ctx)
@@ -1184,7 +1184,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAttributeCache_AttrsSt
 				cache.Attributes["phone"] == "1234567890"
 		})).Return(&attributecache.AttributeCache{ID: "cache-abc"}, nil)
 	// In the OAuth cache path, only aci goes into the JWT; individual attrs go to cache.
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			_, hasEmail := claims["email"]
 			_, hasPhone := claims["phone"]
@@ -1235,7 +1235,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAttributeCache_NilUser
 	suite.mockEntityProvider.On("GetEntity", "user-123").Return(existingUser, nil)
 	suite.mockAttributeCacheSvc.On("CreateAttributeCache", mock.Anything, mock.Anything).
 		Return(&attributecache.AttributeCache{ID: "cache-xyz"}, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			// aci present, but no individual attribute claims
 			_, hasEmail := claims["email"]
@@ -1288,7 +1288,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAttributeCache_OnlyRes
 			return cache.Attributes["email"] == testEmail && !hasPhone
 		})).Return(&attributecache.AttributeCache{ID: "cache-def"}, nil)
 	// JWT should only contain aci, not individual attrs
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			_, hasEmail := claims["email"]
 			_, hasPhone := claims["phone"]
@@ -1336,7 +1336,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAttributeCache_NilAsse
 	suite.mockEntityProvider.On("GetEntity", "user-123").Return(existingUser, nil)
 	suite.mockAttributeCacheSvc.On("CreateAttributeCache", mock.Anything, mock.Anything).
 		Return(&attributecache.AttributeCache{ID: "cache-nil"}, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			_, hasEmail := claims["email"]
 			return claims["aci"] == "cache-nil" && !hasEmail
@@ -1562,7 +1562,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAttributeCache_GroupsI
 			groups, ok := cache.Attributes[oauth2const.UserAttributeGroups].([]string)
 			return ok && len(groups) == 2
 		})).Return(&attributecache.AttributeCache{ID: "cache-groups"}, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			_, hasGroups := claims[oauth2const.UserAttributeGroups]
 			return claims["aci"] == "cache-groups" && !hasGroups
@@ -1603,7 +1603,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAttributeCache_UserTyp
 		mock.MatchedBy(func(cache *attributecache.AttributeCache) bool {
 			return cache.Attributes[oauth2const.ClaimUserType] == "EXTERNAL"
 		})).Return(&attributecache.AttributeCache{ID: "cache-usertype"}, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			_, hasUserType := claims[oauth2const.ClaimUserType]
 			return claims["aci"] == "cache-usertype" && !hasUserType
@@ -1646,7 +1646,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAttributeCache_OUDetai
 			return cache.Attributes[oauth2const.ClaimOUID] == testAuthOUID &&
 				cache.Attributes[oauth2const.ClaimOUName] == "Engineering"
 		})).Return(&attributecache.AttributeCache{ID: "cache-ou"}, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			_, hasOUID := claims[oauth2const.ClaimOUID]
 			return claims["aci"] == "cache-ou" && !hasOUID
@@ -1690,7 +1690,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_WithRuntimeRequiredEssenti
 	}
 
 	suite.mockEntityProvider.On("GetEntity", "user-123").Return(existingUser, nil)
-	suite.mockJWTService.On("GenerateJWT", "user-123", mock.Anything, mock.Anything,
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, "user-123", mock.Anything, mock.Anything,
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			_, hasPhone := claims["phone"]
 			return claims["email"] == testEmail && claims["name"] == testNameValue && !hasPhone

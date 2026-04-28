@@ -1096,6 +1096,7 @@ func (s *UserInfoServiceTestSuite) TestGetUserInfo_JWS_ResponseType() {
 	// JWT generation
 	s.mockJWTService.On(
 		"GenerateJWT",
+		mock.Anything,
 		"user123",
 		issuer,
 		config.GetServerRuntime().Config.JWT.ValidityPeriod,
@@ -1156,6 +1157,7 @@ func (s *UserInfoServiceTestSuite) TestGetUserInfo_JWS_GenerateJWTFailure() {
 	// Simulate signing failure
 	s.mockJWTService.On(
 		"GenerateJWT",
+		mock.Anything,
 		"user123",
 		issuer,
 		config.GetServerRuntime().Config.JWT.ValidityPeriod,
