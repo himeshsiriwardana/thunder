@@ -39,7 +39,7 @@ func (suite *RuntimeConfigTestSuite) BeforeTest(suiteName, testName string) {
 	once = sync.Once{}
 }
 
-func (suite *RuntimeConfigTestSuite) TestInitializeThunderRuntime() {
+func (suite *RuntimeConfigTestSuite) TestInitializeServerRuntime() {
 	config := &Config{
 		Server: ServerConfig{
 			Hostname: "testhost",
@@ -63,7 +63,7 @@ func (suite *RuntimeConfigTestSuite) TestInitializeThunderRuntime() {
 	assert.Equal(suite.T(), config.TLS.CertFile, runtime.Config.TLS.CertFile)
 }
 
-func (suite *RuntimeConfigTestSuite) TestInitializeThunderRuntimeOnlyOnce() {
+func (suite *RuntimeConfigTestSuite) TestInitializeServerRuntimeOnlyOnce() {
 	// First initialization
 	firstConfig := &Config{
 		Server: ServerConfig{
