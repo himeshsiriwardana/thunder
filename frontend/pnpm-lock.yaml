@@ -339,7 +339,7 @@ importers:
         version: link:../../packages/design
       '@thunder/hooks':
         specifier: workspace:^
-        version: link:../../packages/thunder-hooks
+        version: link:../../packages/hooks
       '@thunder/i18n':
         specifier: workspace:^
         version: link:../../packages/thunder-i18n
@@ -523,7 +523,7 @@ importers:
         version: link:../../packages/design
       '@thunder/hooks':
         specifier: workspace:^
-        version: link:../../packages/thunder-hooks
+        version: link:../../packages/hooks
       '@thunder/i18n':
         specifier: workspace:^
         version: link:../../packages/thunder-i18n
@@ -629,7 +629,7 @@ importers:
         version: link:../design
       '@thunder/hooks':
         specifier: workspace:^
-        version: link:../thunder-hooks
+        version: link:../hooks
       '@thunder/logger':
         specifier: workspace:^
         version: link:../thunder-logger
@@ -720,7 +720,7 @@ importers:
         version: link:../design
       '@thunder/hooks':
         specifier: workspace:^
-        version: link:../thunder-hooks
+        version: link:../hooks
       '@thunder/i18n':
         specifier: workspace:^
         version: link:../thunder-i18n
@@ -823,7 +823,7 @@ importers:
         version: link:../contexts
       '@thunder/hooks':
         specifier: workspace:^
-        version: link:../thunder-hooks
+        version: link:../hooks
       '@thunder/i18n':
         specifier: workspace:^
         version: link:../thunder-i18n
@@ -917,7 +917,7 @@ importers:
         version: link:../design
       '@thunder/hooks':
         specifier: workspace:^
-        version: link:../thunder-hooks
+        version: link:../hooks
       '@thunder/i18n':
         specifier: workspace:^
         version: link:../thunder-i18n
@@ -1293,7 +1293,7 @@ importers:
         specifier: 'catalog:'
         version: 4.1.3(@opentelemetry/api@1.9.0)(@types/node@24.7.2)(@vitest/browser-playwright@4.1.3)(@vitest/coverage-istanbul@4.1.3)(jsdom@27.0.1(postcss@8.5.8))(vite@8.0.7(@types/node@24.7.2)(jiti@2.6.1)(sass-embedded@1.98.0)(sass@1.98.0)(terser@5.46.0)(yaml@2.8.3))
 
-  packages/thunder-hooks:
+  packages/hooks:
     dependencies:
       '@thunder/logger':
         specifier: workspace:^
