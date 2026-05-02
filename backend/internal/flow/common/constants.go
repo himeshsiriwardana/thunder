@@ -146,6 +146,14 @@ const (
 // DefaultHTTPTimeout defines the default timeout duration for HTTP requests.
 const DefaultHTTPTimeout = 5 * time.Second
 
+// NodeVariant identifies a PROMPT node sub-type that activates a variant-specific code path.
+type NodeVariant string
+
+const (
+	// NodeVariantLoginOptions identifies a PROMPT node that presents login method choices to the user.
+	NodeVariantLoginOptions NodeVariant = "LOGIN_OPTIONS"
+)
+
 const (
 	// NodePropertyAllowAuthenticationWithoutLocalUser indicates whether authentication is allowed without a local user
 	NodePropertyAllowAuthenticationWithoutLocalUser = "allowAuthenticationWithoutLocalUser"
@@ -160,6 +168,8 @@ const (
 	NodePropertyOUResolveFrom = "resolveFrom"
 	// NodePropertyRecipientAttribute specifies the destination parameter to use for verification (e.g., email, phone).
 	NodePropertyRecipientAttribute = "destinationAttribute"
+	// NodePropertyAuthMethodMapping maps authentication classes to action refs on login_options PROMPT nodes.
+	NodePropertyAuthMethodMapping = "authMethodMapping"
 )
 
 const (
@@ -223,6 +233,12 @@ const (
 	InvalidMagicLinkToken = "Invalid magic link token"
 	// RuntimeKeyOAuthState holds the generated OAuth state parameter for CSRF validation.
 	RuntimeKeyOAuthState = "oauthState"
+	// RuntimeKeyRequestedAuthClasses holds the space-separated ACR values from acr_values.
+	RuntimeKeyRequestedAuthClasses = "requested_auth_classes"
+	// RuntimeKeySelectedAuthClass holds the ACR value of the chosen authentication method.
+	RuntimeKeySelectedAuthClass = "selected_auth_class"
+	// RuntimeKeyAllowedLoginOptions holds the space-separated action refs allowed on a LOGIN_OPTIONS node.
+	RuntimeKeyAllowedLoginOptions = "allowed_login_options"
 )
 
 // TODO: Define a go type for InputType when formalizing input types

@@ -671,6 +671,52 @@ func (s *GraphBuilderTestSuite) TestBuildGraph_WithMeta() {
 	s.Nil(err)
 }
 
+func (s *GraphBuilderTestSuite) TestBuildGraph_VariantExplicitlySet() {
+	flow := &CompleteFlowDefinition{
+		ID:       "flow-1",
+		Handle:   "test-handle",
+		Name:     "Test Flow",
+		FlowType: common.FlowTypeAuthentication,
+		Nodes: []NodeDefinition{
+			{ID: "start", Type: "START", OnSuccess: "chooser"},
+			{
+				ID:      "chooser",
+				Type:    "PROMPT",
+				Variant: common.NodeVariantLoginOptions,
+			},
+		},
+	}
+
+	mockGraph := coremock.NewGraphInterfaceMock(s.T())
+	mockStartNode := coremock.NewRepresentationNodeInterfaceMock(s.T())
+	mockPromptNode := coremock.NewPromptNodeInterfaceMock(s.T())
+
+	s.mockFlowFactory.EXPECT().CreateGraph(
+		"flow-1", common.FlowTypeAuthentication).Return(mockGraph)
+	s.mockFlowFactory.EXPECT().CreateNode(
+		"start", "START", map[string]interface{}(nil), false, false).Return(mockStartNode, nil)
+	s.mockFlowFactory.EXPECT().CreateNode(
+		"chooser", "PROMPT", map[string]interface{}(nil), false, true).Return(mockPromptNode, nil)
+
+	mockStartNode.EXPECT().SetOnSuccess("chooser")
+	mockPromptNode.EXPECT().SetVariant(common.NodeVariantLoginOptions)
+
+	mockGraph.EXPECT().AddNode(mockStartNode).Return(nil)
+	mockGraph.EXPECT().AddNode(mockPromptNode).Return(nil)
+	mockGraph.EXPECT().AddEdge("start", "chooser").Return(nil)
+	mockGraph.EXPECT().GetNodes().Return(
+		map[string]core.NodeInterface{"start": mockStartNode, "chooser": mockPromptNode})
+	mockStartNode.EXPECT().GetType().Return(common.NodeTypeStart)
+	mockPromptNode.EXPECT().GetType().Return(common.NodeTypePrompt).Maybe()
+	mockStartNode.EXPECT().GetID().Return("start")
+	mockGraph.EXPECT().SetStartNode("start").Return(nil)
+
+	graph, err := s.builder.buildGraph(flow)
+
+	s.NotNil(graph)
+	s.Nil(err)
+}
+
 func (s *GraphBuilderTestSuite) TestBuildGraph_WithCondition() {
 	flow := &CompleteFlowDefinition{
 		ID:       "flow-1",

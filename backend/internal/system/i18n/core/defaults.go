@@ -122,6 +122,8 @@ var defaultMessages = map[string]string{
 	"error.applicationservice.consent_synchronization_failed_description": "Failed to synchronize consent configurations for the application",
 	"error.applicationservice.error_retrieving_flow_definition": "Error retrieving flow definition",
 	"error.applicationservice.error_retrieving_flow_definition_description": "An error occurred while retrieving the flow definition",
+	"error.applicationservice.invalid_acr_values": "Invalid ACR value",
+	"error.applicationservice.invalid_acr_values_description": "One or more ACR values in acr_values are not recognized by the system",
 	"error.applicationservice.invalid_application_id": "Invalid application ID",
 	"error.applicationservice.invalid_application_id_description": "The provided application ID is invalid or empty",
 	"error.applicationservice.invalid_application_name": "Invalid application name",

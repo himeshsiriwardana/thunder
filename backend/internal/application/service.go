@@ -34,6 +34,7 @@ import (
 	oauth2const "github.com/asgardeo/thunder/internal/oauth/oauth2/constants"
 	oauthutils "github.com/asgardeo/thunder/internal/oauth/oauth2/utils"
 	oupkg "github.com/asgardeo/thunder/internal/ou"
+	"github.com/asgardeo/thunder/internal/system/config"
 	"github.com/asgardeo/thunder/internal/system/error/serviceerror"
 	"github.com/asgardeo/thunder/internal/system/i18n/core"
 	i18nmgt "github.com/asgardeo/thunder/internal/system/i18n/mgt"
@@ -709,6 +710,7 @@ func buildOAuthConfigData(inboundAuth model.InboundAuthConfigProcessedDTO) *inbo
 		Token:                              oa.Token,
 		UserInfo:                           oa.UserInfo,
 		Certificate:                        oa.Certificate,
+		AcrValues:                          oa.AcrValues,
 	}
 }
 
@@ -899,7 +901,31 @@ func validateOAuthParamsForCreateAndUpdate(app *model.ApplicationDTO) (*model.In
 		oauthAppConfig.TokenEndpointAuthMethod = oauth2const.TokenEndpointAuthMethodClientSecretBasic
 	}
 
+	if err := validateAcrValues(oauthAppConfig.AcrValues); err != nil {
+		return nil, err
+	}
+
 	return inboundAuthConfig, nil
+}
+
+// isValidACR reports whether acr is present in the deployment config ACR-AMR mapping.
+func isValidACR(acr string) bool {
+	mapping := config.GetServerRuntime().Config.OAuth.AuthClass
+	_, ok := mapping.AcrAMR[acr]
+	return ok
+}
+
+// validateAcrValues rejects acr values not registered in the ACR-AMR mapping.
+func validateAcrValues(acrValues []string) *serviceerror.ServiceError {
+	for _, acr := range acrValues {
+		if !isValidACR(acr) {
+			return serviceerror.CustomServiceError(ErrorInvalidAcrValues, core.I18nMessage{
+				Key:          "error.applicationservice.invalid_acr_values_unrecognized",
+				DefaultValue: fmt.Sprintf("ACR value %q is not recognized by the system", acr),
+			})
+		}
+	}
+	return nil
 }
 
 func translateOAuthValidationError(err error) *serviceerror.ServiceError {
@@ -1340,6 +1366,7 @@ func buildApplicationResponse(dto *model.ApplicationProcessedDTO) *model.Applica
 					Scopes:                             oauthAppConfig.Scopes,
 					UserInfo:                           oauthAppConfig.UserInfo,
 					ScopeClaims:                        oauthAppConfig.ScopeClaims,
+					AcrValues:                          oauthAppConfig.AcrValues,
 				},
 			})
 		}
@@ -1457,6 +1484,7 @@ func buildOAuthInboundAuthConfigProcessedDTO(
 			UserInfo:                           userInfo,
 			ScopeClaims:                        scopeClaims,
 			Certificate:                        certificate,
+			AcrValues:                          inboundAuthConfig.OAuthAppConfig.AcrValues,
 		},
 	}
 }
@@ -1512,6 +1540,7 @@ func buildReturnApplicationDTO(
 				UserInfo:                           userInfo,
 				ScopeClaims:                        scopeClaims,
 				Certificate:                        oauthCert,
+				AcrValues:                          inboundAuthConfig.OAuthAppConfig.AcrValues,
 			},
 		}
 		returnApp.InboundAuthConfig = []model.InboundAuthConfigDTO{returnInboundAuthConfig}

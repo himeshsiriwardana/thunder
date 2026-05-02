@@ -218,6 +218,7 @@ type OAuthConfig struct {
 	AuthorizationCode AuthorizationCodeConfig `yaml:"authorization_code" json:"authorization_code"`
 	DCR               DCRConfig               `yaml:"dcr" json:"dcr"`
 	PAR               PARConfig               `yaml:"par" json:"par"`
+	AuthClass         AuthClassConfig         `yaml:"auth_class" json:"auth_class"`
 	// AllowWildcardRedirectURI enables wildcard pattern matching for redirect URIs.
 	// When false (default), only exact redirect URI matching is performed.
 	AllowWildcardRedirectURI bool `yaml:"allow_wildcard_redirect_uri" json:"allow_wildcard_redirect_uri"`
@@ -576,6 +577,46 @@ func (c *TrustedIssuerConfig) Validate() error {
 	}
 }
 
+// AuthClassConfig holds the ACR-AMR mapping configuration.
+type AuthClassConfig struct {
+	Amrs   []string            `yaml:"amrs" json:"amrs"`
+	AcrAMR map[string][]string `yaml:"acr_amr" json:"acr_amr"`
+}
+
+// Validate checks the ACR-AMR mapping for configuration errors.
+func (c *AuthClassConfig) Validate() error {
+	amrSet := make(map[string]struct{}, len(c.Amrs))
+	for _, amr := range c.Amrs {
+		if strings.TrimSpace(amr) == "" {
+			return fmt.Errorf("auth_class: AMR entry must not be empty")
+		}
+		amrSet[amr] = struct{}{}
+	}
+
+	if len(c.AcrAMR) == 0 {
+		return nil
+	}
+
+	for acr, amrKeys := range c.AcrAMR {
+		if strings.TrimSpace(acr) == "" {
+			return fmt.Errorf("auth_class: ACR value must not be empty")
+		}
+		if len(amrKeys) == 0 {
+			return fmt.Errorf("auth_class: ACR %q has an empty AMR list", acr)
+		}
+		for _, amrKey := range amrKeys {
+			if strings.TrimSpace(amrKey) == "" {
+				return fmt.Errorf("auth_class: ACR %q references an empty AMR key", acr)
+			}
+			if _, ok := amrSet[amrKey]; !ok {
+				return fmt.Errorf("auth_class: ACR %q references unknown AMR key %q", acr, amrKey)
+			}
+		}
+	}
+
+	return nil
+}
+
 // Config holds the complete configuration details of the server.
 type Config struct {
 	Server               ServerConfig           `yaml:"server" json:"server"`
@@ -653,6 +694,11 @@ func LoadConfig(configPath string, defaultPath string, serverHome string) (*Conf
 		return nil, err
 	}
 	if err := cfg.CORS.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Validate ACR-AMR mapping.
+	if err := cfg.OAuth.AuthClass.Validate(); err != nil {
 		return nil, err
 	}
 

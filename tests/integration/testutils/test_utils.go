@@ -878,6 +878,25 @@ func PatchDeploymentConfig(patch map[string]interface{}) error {
 	return nil
 }
 
+// ReadDeploymentConfigKey returns a top-level key from the deployment.yaml, or nil if missing.
+func ReadDeploymentConfigKey(key string) (interface{}, error) {
+	ensureInitialized()
+
+	configPath := filepath.Join(extractedProductHome, "repository", "conf", "deployment.yaml")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read deployment.yaml: %w", err)
+	}
+
+	var cfg map[string]interface{}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse deployment.yaml: %w", err)
+	}
+
+	return cfg[key], nil
+}
+
 // RunSetupScript runs the setup script from the extracted product directory.
 // This script starts the server without security, runs bootstrap scripts, and stops the server.
 func RunSetupScript() error {

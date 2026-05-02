@@ -2647,5 +2647,114 @@ func (suite *ServiceTestSuite) TestValidateApplication_ErrorFromProcessInboundAu
 	assert.Equal(suite.T(), &ErrorInvalidInboundAuthConfig, svcErr)
 }
 
-// TestValidateApplication_ErrorFromValidateAuthFlowID tests error from validateAuthFlowID
-// when an invalid auth flow ID is provided.
+var validAcrMapping = config.AuthClassConfig{
+	Amrs: []string{"PWD", "OTP"},
+	AcrAMR: map[string][]string{
+		"urn:thunder:acr:password":       {"PWD"},
+		"urn:thunder:acr:generated-code": {"OTP"},
+	},
+}
+
+type AcrValidationTestSuite struct {
+	suite.Suite
+}
+
+func TestAcrValidationTestSuite(t *testing.T) {
+	suite.Run(t, new(AcrValidationTestSuite))
+}
+
+func (s *AcrValidationTestSuite) initRegistry(mapping config.AuthClassConfig) {
+	config.ResetServerRuntime()
+	s.Require().NoError(config.InitializeServerRuntime("", &config.Config{
+		OAuth: config.OAuthConfig{
+			AuthClass: mapping,
+		},
+	}))
+	s.T().Cleanup(config.ResetServerRuntime)
+}
+
+func (s *AcrValidationTestSuite) TestValidateAcrValues_EmptyList() {
+	err := validateAcrValues(nil)
+	s.Nil(err)
+
+	err = validateAcrValues([]string{})
+	s.Nil(err)
+}
+
+func (s *AcrValidationTestSuite) TestValidateAcrValues_AllValid() {
+	s.initRegistry(validAcrMapping)
+
+	err := validateAcrValues([]string{
+		"urn:thunder:acr:password",
+		"urn:thunder:acr:generated-code",
+	})
+
+	s.Nil(err)
+}
+
+func (s *AcrValidationTestSuite) TestValidateAcrValues_SingleValid() {
+	s.initRegistry(validAcrMapping)
+
+	err := validateAcrValues([]string{"urn:thunder:acr:password"})
+
+	s.Nil(err)
+}
+
+func (s *AcrValidationTestSuite) TestValidateAcrValues_UnknownACR() {
+	s.initRegistry(validAcrMapping)
+
+	svcErr := validateAcrValues([]string{
+		"urn:thunder:acr:password",
+		"urn:thunder:acr:unknown-method",
+	})
+
+	s.NotNil(svcErr)
+	s.Equal("APP-1033", svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "urn:thunder:acr:unknown-method")
+}
+
+func (s *AcrValidationTestSuite) TestValidateAcrValues_FirstEntryInvalid() {
+	s.initRegistry(validAcrMapping)
+
+	svcErr := validateAcrValues([]string{"totally-invalid-acr"})
+
+	s.NotNil(svcErr)
+	s.Equal("APP-1033", svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "totally-invalid-acr")
+}
+
+func (s *AcrValidationTestSuite) TestIsValidACR_KnownACR() {
+	s.initRegistry(validAcrMapping)
+
+	s.True(isValidACR("urn:thunder:acr:password"))
+}
+
+func (s *AcrValidationTestSuite) TestIsValidACR_UnknownACR() {
+	s.initRegistry(validAcrMapping)
+
+	s.False(isValidACR("urn:thunder:acr:unknown"))
+}
+
+func (s *AcrValidationTestSuite) TestIsValidACR_EmptyString() {
+	s.initRegistry(validAcrMapping)
+
+	s.False(isValidACR(""))
+}
+
+func (s *AcrValidationTestSuite) TestIsValidACR_AllMappedACRs() {
+	s.initRegistry(validAcrMapping)
+
+	knownACRs := []string{
+		"urn:thunder:acr:password",
+		"urn:thunder:acr:generated-code",
+	}
+	for _, acr := range knownACRs {
+		s.True(isValidACR(acr), "expected ACR %q to be valid", acr)
+	}
+}
+
+func (s *AcrValidationTestSuite) TestIsValidACR_EmptyMapping() {
+	s.initRegistry(config.AuthClassConfig{})
+
+	s.False(isValidACR("urn:thunder:acr:password"))
+}

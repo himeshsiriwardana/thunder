@@ -168,6 +168,10 @@ func (a *authAssertExecutor) generateAuthAssertion(ctx *core.NodeContext, logger
 		jwtClaims["authorized_permissions"] = permissions
 	}
 
+	if completedACR, exists := ctx.RuntimeData[common.RuntimeKeySelectedAuthClass]; exists && completedACR != "" {
+		jwtClaims[oauth2const.ClaimCompletedAuthClass] = completedACR
+	}
+
 	requiredAttributes := a.getRequiredUserAttributes(ctx)
 
 	resolvedAttributes, attrErr := a.resolveUserAttributes(ctx, requiredAttributes)

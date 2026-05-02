@@ -818,6 +818,29 @@ func (suite *AuthorizeHandlerTestSuite) TestDecodeAttributesFromAssertion_NonStr
 	assert.Contains(suite.T(), err.Error(), "JWT 'aci' claim is not a string")
 }
 
+func (suite *AuthorizeHandlerTestSuite) TestDecodeAttributesFromAssertion_WithCompletedAuthClass() {
+	// JWT payload: {"sub":"test-user","completed_auth_class":"urn:thunder:acr:password"}
+	jwtToken := "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJjb21wbGV0ZWRfYXV0aF9jbGFzcyI6InVybjp0aHVuZGVyOmFjcjpwYXNzd29yZCJ9."
+
+	clms, _, err := decodeAttributesFromAssertion(jwtToken)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "test-user", clms.userID)
+	assert.Equal(suite.T(), "urn:thunder:acr:password", clms.completedACR)
+}
+
+func (suite *AuthorizeHandlerTestSuite) TestDecodeAttributesFromAssertion_NonStringCompletedAuthClass() {
+	// JWT payload: {"sub":"test-user","completed_auth_class":12345}
+	jwtToken := "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJjb21wbGV0ZWRfYXV0aF9jbGFzcyI6MTIzNDV9."
+
+	_, _, err := decodeAttributesFromAssertion(jwtToken)
+
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "JWT 'completed_auth_class' claim is not a string")
+}
+
 func (suite *AuthorizeHandlerTestSuite) TestValidateSubClaimConstraint() {
 	tests := []struct {
 		name          string
