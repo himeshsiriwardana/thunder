@@ -21,7 +21,7 @@ backend/internal/
   system/               # config · database · cache · jose/jwt · security · mcp · log · i18n
 frontend/apps/
   gate/         # login/registration SPA  (@asgardeo/react — app-native mode)
-  thunder-console/      # admin SPA               (@asgardeo/react — redirect mode)
+  console/      # admin SPA               (@asgardeo/react — redirect mode)
 frontend/packages/      # @thunder/contexts · design · hooks · i18n · utils · types · logger
 samples/apps/           # react-sdk-sample · react-api-based-sample · react-vanilla-sample
 ```
