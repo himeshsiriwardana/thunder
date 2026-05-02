@@ -36,7 +36,7 @@ describe('Template Processing', () => {
     // Register Handlebars helpers
     registerHandlebarsHelpers();
     // Create a unique test directory
-    testDir = join(tmpdir(), `thunder-create-test-${Date.now()}`);
+    testDir = join(tmpdir(), `create-test-${Date.now()}`);
     await mkdir(testDir, {recursive: true});
   });
 

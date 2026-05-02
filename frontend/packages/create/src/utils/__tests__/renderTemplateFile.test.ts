@@ -24,7 +24,7 @@ import registerHandlebarsHelpers from '../registerHandlebarsHelpers';
 import renderTemplateFile from '../renderTemplateFile';
 
 describe('renderTemplateFile', () => {
-  const testDir = join(tmpdir(), 'thunder-create-test-render-template-file');
+  const testDir = join(tmpdir(), 'create-test-render-template-file');
 
   beforeAll(() => {
     registerHandlebarsHelpers();

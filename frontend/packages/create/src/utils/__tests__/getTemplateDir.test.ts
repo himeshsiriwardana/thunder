@@ -58,7 +58,7 @@ describe('getTemplateDir', () => {
 
     // Template dir should be related to the package structure
     expect(
-      templateDir.includes('thunder-create') ||
+      templateDir.includes('create') ||
         // Or relative to current file (fallback case)
         templateDir.includes(join(currentFileDir, '..')),
     ).toBe(true);

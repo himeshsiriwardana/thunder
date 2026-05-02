@@ -23,7 +23,7 @@ import {describe, it, expect, afterEach, beforeEach} from 'vitest';
 import getWorkspaceInfo from '../getWorkspaceInfo';
 
 describe('getWorkspaceInfo', () => {
-  const testDir = join(realpathSync(tmpdir()), 'thunder-create-test-workspace-info');
+  const testDir = join(realpathSync(tmpdir()), 'create-test-workspace-info');
   let originalCwd: string;
 
   beforeEach(() => {

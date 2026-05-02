@@ -75,7 +75,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  program.name('thunder-create').description('CLI scaffolding tool for ⚡ Thunder frontends').version('0.0.0');
+  program.name('create').description('CLI scaffolding tool for ⚡ Thunder frontends').version('0.0.0');
 
   program.command('feature').description('Create a new feature module').action(createFeature);
 

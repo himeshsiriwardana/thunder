@@ -23,7 +23,7 @@ import {describe, it, expect, afterEach} from 'vitest';
 import ensureDir from '../ensureDir';
 
 describe('ensureDir', () => {
-  const testDir = join(tmpdir(), 'thunder-create-test-ensure-dir');
+  const testDir = join(tmpdir(), 'create-test-ensure-dir');
 
   afterEach(() => {
     if (existsSync(testDir)) {

@@ -24,7 +24,7 @@ import createFilesFromTemplates from '../createFilesFromTemplates';
 import registerHandlebarsHelpers from '../registerHandlebarsHelpers';
 
 describe('createFilesFromTemplates', () => {
-  const testDir = join(tmpdir(), 'thunder-create-test-create-files');
+  const testDir = join(tmpdir(), 'create-test-create-files');
 
   beforeAll(() => {
     registerHandlebarsHelpers();
