@@ -35,13 +35,13 @@ const typescriptConfig: Linter.Config[] = [
     ...tseslint.configs.disableTypeChecked,
   },
   {
-    name: 'thunder/typescript-resolver',
+    name: 'thunderid/typescript-resolver',
     settings: {
       'import-x/resolver-next': [createTypeScriptImportResolver({alwaysTryTypes: true})],
     },
   },
   {
-    name: 'thunder/typescript-overrides',
+    name: 'thunderid/typescript-overrides',
     rules: {
       // Disallow the use of the `any` type to encourage more precise typings.
       // https://typescript-eslint.io/rules/no-explicit-any/

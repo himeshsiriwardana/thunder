@@ -39,7 +39,7 @@ const reactConfig: Linter.Config[] = [
     },
   },
   {
-    name: 'thunder/react-settings',
+    name: 'thunderid/react-settings',
     settings: {
       react: {
         version: 'detect',
@@ -48,7 +48,7 @@ const reactConfig: Linter.Config[] = [
     },
   },
   {
-    name: 'thunder/react-overrides',
+    name: 'thunderid/react-overrides',
     rules: {
       // Disallow the use of `dangerouslySetInnerHTML` to prevent potential XSS vulnerabilities.
       // https://github.com/jsx-eslint/eslint-plugin-react/blob/master/docs/rules/no-danger.md

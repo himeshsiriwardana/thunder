@@ -21,12 +21,12 @@ import thunder from '@thunderid/eslint-plugin';
 export default [
   {
     plugins: {
-      '@thunder': thunder,
+      '@thunderid': thunder,
     },
     rules: {
       '@thunderid/copyright-header': 'error',
-      '@thunder/no-internal-imports': 'error',
-      '@thunder/prefer-system-utils': 'warn',
+      '@thunderid/no-internal-imports': 'error',
+      '@thunderid/prefer-system-utils': 'warn',
     },
   },
   // Or use a predefined config
@@ -41,7 +41,7 @@ export default [
 General rules for all frontend projects:
 
 - `@thunderid/copyright-header`: Enforces WSO2 Apache 2.0 copyright headers
-- `@thunder/no-internal-imports`: Prevents importing from internal paths
+- `@thunderid/no-internal-imports`: Prevents importing from internal paths
 
 #### `typescript`
 
@@ -49,7 +49,7 @@ Rules for TypeScript projects:
 
 - Extends `@typescript-eslint/recommended`
 - `@thunderid/copyright-header`: Enforces copyright headers
-- `@thunder/no-internal-imports`: Prevents internal imports
+- `@thunderid/no-internal-imports`: Prevents internal imports
 
 #### `react`
 
@@ -57,7 +57,7 @@ Rules for React projects:
 
 - Extends `plugin:react/recommended` and `plugin:react-hooks/recommended`
 - `@thunderid/copyright-header`: Enforces copyright headers
-- `@thunder/no-internal-imports`: Prevents internal imports
+- `@thunderid/no-internal-imports`: Prevents internal imports
 - React-specific rules and settings
 
 #### `next`
@@ -66,12 +66,12 @@ Rules for Next.js projects:
 
 - Extends `next/core-web-vitals`
 - `@thunderid/copyright-header`: Enforces copyright headers
-- `@thunder/no-internal-imports`: Prevents internal imports
+- `@thunderid/no-internal-imports`: Prevents internal imports
 
 Rules for TypeScript frontend projects:
 
 - `@thunderid/copyright-header`: Enforces copyright headers
-- `@thunder/no-internal-imports`: Prevents internal imports
+- `@thunderid/no-internal-imports`: Prevents internal imports
 
 ## Rules
 
@@ -98,7 +98,7 @@ export const foo = 'bar';
 export const foo = 'bar';
 ```
 
-### `@thunder/no-internal-imports`
+### `@thunderid/no-internal-imports`
 
 Prevents importing from internal directories of other modules to maintain proper module boundaries.
 

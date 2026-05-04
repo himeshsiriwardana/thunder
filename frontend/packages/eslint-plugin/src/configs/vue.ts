@@ -35,7 +35,7 @@ const vueConfig: Linter.Config[] = [
     },
   },
   {
-    name: 'thunder/vue-overrides',
+    name: 'thunderid/vue-overrides',
     rules: {
       // Vue 3 Composition API doesn't require multi-word component names
       'vue/multi-word-component-names': 'off',

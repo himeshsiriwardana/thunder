@@ -24,7 +24,7 @@ const javascriptConfig: Linter.Config[] = [
   eslint.configs.recommended,
   importX.flatConfigs.recommended,
   {
-    name: 'thunder/javascript-overrides',
+    name: 'thunderid/javascript-overrides',
     rules: {
       // Disallow the use of console in-favor of the Logger.
       // https://eslint.org/docs/latest/rules/no-console
