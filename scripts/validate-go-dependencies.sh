@@ -5,6 +5,7 @@ set -e
 BASE_SHA=$1
 HEAD_SHA=$2
 APPROVED_LIST=$3
+# Update scope value when using in other repositories.
 REQUIRED_SCOPE="${REQUIRED_SCOPE:-thunder-id}"
 
 if [ ! -s "$APPROVED_LIST" ]; then
