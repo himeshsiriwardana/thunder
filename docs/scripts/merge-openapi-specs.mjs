@@ -18,7 +18,7 @@
  * under the License.
  */
 
-/* eslint-disable @thunder/copyright-header, import/no-extraneous-dependencies */
+/* eslint-disable @thunderid/copyright-header, import/no-extraneous-dependencies */
 
 import {readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync} from 'fs';
 import {join, dirname} from 'path';

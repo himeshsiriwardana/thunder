@@ -18,7 +18,7 @@
  * under the License.
  */
 
-/* eslint-disable @thunder/copyright-header */
+/* eslint-disable @thunderid/copyright-header */
 
 import {intro, outro, cancel} from '@clack/prompts';
 import {createLogger} from '@thunderid/logger';

@@ -18,7 +18,7 @@
  * under the License.
  */
 
-/* eslint-disable @thunder/copyright-header */
+/* eslint-disable @thunderid/copyright-header */
 
 /**
  * Fetches the Unicode emoji test file and regenerates

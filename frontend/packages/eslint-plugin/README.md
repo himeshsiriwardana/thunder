@@ -24,7 +24,7 @@ export default [
       '@thunder': thunder,
     },
     rules: {
-      '@thunder/copyright-header': 'error',
+      '@thunderid/copyright-header': 'error',
       '@thunder/no-internal-imports': 'error',
       '@thunder/prefer-system-utils': 'warn',
     },
@@ -40,7 +40,7 @@ export default [
 
 General rules for all frontend projects:
 
-- `@thunder/copyright-header`: Enforces WSO2 Apache 2.0 copyright headers
+- `@thunderid/copyright-header`: Enforces WSO2 Apache 2.0 copyright headers
 - `@thunder/no-internal-imports`: Prevents importing from internal paths
 
 #### `typescript`
@@ -48,7 +48,7 @@ General rules for all frontend projects:
 Rules for TypeScript projects:
 
 - Extends `@typescript-eslint/recommended`
-- `@thunder/copyright-header`: Enforces copyright headers
+- `@thunderid/copyright-header`: Enforces copyright headers
 - `@thunder/no-internal-imports`: Prevents internal imports
 
 #### `react`
@@ -56,7 +56,7 @@ Rules for TypeScript projects:
 Rules for React projects:
 
 - Extends `plugin:react/recommended` and `plugin:react-hooks/recommended`
-- `@thunder/copyright-header`: Enforces copyright headers
+- `@thunderid/copyright-header`: Enforces copyright headers
 - `@thunder/no-internal-imports`: Prevents internal imports
 - React-specific rules and settings
 
@@ -65,17 +65,17 @@ Rules for React projects:
 Rules for Next.js projects:
 
 - Extends `next/core-web-vitals`
-- `@thunder/copyright-header`: Enforces copyright headers
+- `@thunderid/copyright-header`: Enforces copyright headers
 - `@thunder/no-internal-imports`: Prevents internal imports
 
 Rules for TypeScript frontend projects:
 
-- `@thunder/copyright-header`: Enforces copyright headers
+- `@thunderid/copyright-header`: Enforces copyright headers
 - `@thunder/no-internal-imports`: Prevents internal imports
 
 ## Rules
 
-### `@thunder/copyright-header`
+### `@thunderid/copyright-header`
 
 Enforces the presence of WSO2 Apache 2.0 copyright header in all source files.
 

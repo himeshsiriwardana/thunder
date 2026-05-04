@@ -18,7 +18,7 @@
  * under the License.
  */
 
-/* eslint-disable @thunder/copyright-header, import/no-extraneous-dependencies, no-underscore-dangle */
+/* eslint-disable @thunderid/copyright-header, import/no-extraneous-dependencies, no-underscore-dangle */
 
 /**
  * Prunes old Docusaurus documentation versions, keeping only the N most recent.

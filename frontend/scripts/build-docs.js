@@ -18,7 +18,7 @@
  * under the License.
  */
 
-/* eslint-disable @thunder/copyright-header */
+/* eslint-disable @thunderid/copyright-header */
 
 // TODO: We can remove this once NX sorts out their current limitations for including folder outside the workspace.
 // Tracker: https://github.com/asgardeo/thunder/issues/1199

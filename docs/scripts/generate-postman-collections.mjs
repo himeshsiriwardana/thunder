@@ -18,7 +18,7 @@
  * under the License.
  */
 
-/* eslint-disable @thunder/copyright-header, no-undef */
+/* eslint-disable @thunderid/copyright-header, no-undef */
 
 /**
  * Generates Postman collections, environments, and globals from OpenAPI specifications.

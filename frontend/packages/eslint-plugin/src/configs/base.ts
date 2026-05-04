@@ -20,8 +20,8 @@ import {Linter} from 'eslint';
 
 const baseConfig: Linter.Config[] = [
   {
-    name: 'thunder/copyright-header',
-    rules: {'@thunder/copyright-header': 'error'},
+    name: 'thunderid/copyright-header',
+    rules: {'@thunderid/copyright-header': 'error'},
   },
 ];
 
