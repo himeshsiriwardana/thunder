@@ -416,7 +416,7 @@ jobs:
         run: |
           cat coverage/console/console-coverage-shard-*/lcov.info > coverage/console-merged-lcov.info
 
-      - name: 📊 Upload `@thunder/console` Unit Test Coverage Report to Codecov
+      - name: 📊 Upload `@thunderid/console` Unit Test Coverage Report to Codecov
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

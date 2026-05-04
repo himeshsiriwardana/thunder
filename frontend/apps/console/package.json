@@ -1,6 +1,6 @@
 {
   "private": true,
-  "name": "@thunder/console",
+  "name": "@thunderid/console",
   "version": "0.0.0",
   "description": "⚡️ Thunder Console Application - The main control center to configure Thunder system.",
   "keywords": [
