@@ -19,6 +19,7 @@
 package executor
 
 import (
+	inboundmodel "github.com/asgardeo/thunder/internal/inboundclient/model"
 	i18ncore "github.com/asgardeo/thunder/internal/system/i18n/core"
 
 	"testing"
@@ -690,7 +691,9 @@ func (suite *OIDCAuthExecutorTestSuite) TestProcessAuthFlowResponse_AllowAuthWit
 			"allowAuthenticationWithoutLocalUser": true,
 		},
 		Application: appmodel.Application{
-			AllowedUserTypes: []string{"INTERNAL"},
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{
+				AllowedUserTypes: []string{"INTERNAL"},
+			},
 		},
 	}
 

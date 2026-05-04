@@ -472,4 +472,18 @@ var (
 			DefaultValue: "An entity with the same client ID already exists",
 		},
 	}
+
+	// ErrorMultipleOAuthConfigs is returned when more than one OAuth inbound auth config is supplied.
+	ErrorMultipleOAuthConfigs = serviceerror.ServiceError{
+		Type: serviceerror.ClientErrorType,
+		Code: "AGT-1038",
+		Error: core.I18nMessage{
+			Key:          "error.agentservice.multiple_oauth_configs",
+			DefaultValue: "Multiple OAuth inbound auth configs are not allowed",
+		},
+		ErrorDescription: core.I18nMessage{
+			Key:          "error.agentservice.multiple_oauth_configs_description",
+			DefaultValue: "An entity may have at most one inbound auth config per protocol",
+		},
+	}
 )

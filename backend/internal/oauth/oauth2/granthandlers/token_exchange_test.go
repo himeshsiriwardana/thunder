@@ -99,7 +99,7 @@ func (suite *TokenExchangeGrantHandlerTestSuite) SetupTest() {
 	}
 
 	suite.oauthApp = &inboundmodel.OAuthClient{
-		AppID:                   "app123",
+		ID:                      "app123",
 		ClientID:                testClientID,
 		RedirectURIs:            []string{"https://example.com/callback"},
 		GrantTypes:              []constants.GrantType{constants.GrantTypeTokenExchange},
@@ -1813,7 +1813,7 @@ func (suite *TokenExchangeGrantHandlerTestSuite) TestHandleGrant_ServerAuthAsser
 	claims := map[string]interface{}{
 		"sub":                    testUserID,
 		"iss":                    testCustomIssuer,
-		"aud":                    suite.oauthApp.AppID, // Match client app_id
+		"aud":                    suite.oauthApp.ID, // Match client app_id
 		"exp":                    float64(now + 3600),
 		"nbf":                    float64(now - 60),
 		"assurance":              map[string]interface{}{"aal": "AAL1", "ial": "IAL1"}, // Make it an auth assertion
@@ -1833,7 +1833,7 @@ func (suite *TokenExchangeGrantHandlerTestSuite) TestHandleGrant_ServerAuthAsser
 		Return(&tokenservice.SubjectTokenClaims{
 			Sub:            testUserID,
 			Iss:            testCustomIssuer,
-			Aud:            []string{suite.oauthApp.AppID},
+			Aud:            []string{suite.oauthApp.ID},
 			Scopes:         []string{"read:documents", "write:documents"},
 			UserAttributes: map[string]interface{}{"userType": "person"},
 			NestedAct:      nil,

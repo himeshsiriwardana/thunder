@@ -208,7 +208,7 @@ func (tv *tokenValidator) ValidateSubjectToken(
 		}
 
 		defaultAudience := config.GetServerRuntime().Config.JWT.Audience
-		clientAppID := oauthApp.AppID
+		clientAppID := oauthApp.ID
 
 		if !slices.Contains([]string{defaultAudience, clientAppID}, auds[0]) {
 			return nil, fmt.Errorf("auth assertion audience mismatch")

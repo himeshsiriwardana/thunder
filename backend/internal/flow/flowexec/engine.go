@@ -94,7 +94,7 @@ func (fe *flowEngine) Execute(ctx *EngineContext) (FlowStep, *serviceerror.Servi
 			Context:           ctx.Context,
 			ExecutionID:       ctx.ExecutionID,
 			FlowType:          ctx.FlowType,
-			AppID:             ctx.AppID,
+			EntityID:          ctx.AppID,
 			CurrentAction:     ctx.CurrentAction,
 			Verbose:           ctx.Verbose,
 			NodeInputs:        getNodeInputs(ctx.CurrentNode),
@@ -954,7 +954,7 @@ func publishNodeExecutionStartedEvent(
 		WithData(event.DataKey.NodeType, string(node.GetType())).
 		WithData(event.DataKey.StepNumber, fmt.Sprintf("%d", stepNumber)).
 		WithData(event.DataKey.AttemptNumber, fmt.Sprintf("%d", attemptNumber)).
-		WithData(event.DataKey.AppID, ctx.AppID)
+		WithData(event.DataKey.EntityID, ctx.AppID)
 
 	obsSvc.PublishEvent(evt)
 }
@@ -1027,7 +1027,7 @@ func publishNodeExecutionCompletedEvent(ctx *EngineContext, node core.NodeInterf
 		WithData(event.DataKey.StepNumber, fmt.Sprintf("%d", stepNumber)).
 		WithData(event.DataKey.AttemptNumber, fmt.Sprintf("%d", attemptNumber)).
 		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", durationMs)).
-		WithData(event.DataKey.AppID, ctx.AppID)
+		WithData(event.DataKey.EntityID, ctx.AppID)
 
 	// Add error or failure details
 	if nodeErr != nil {
@@ -1063,7 +1063,7 @@ func publishFlowStartedEvent(ctx *EngineContext, obsSvc observability.Observabil
 		WithStatus(event.StatusInProgress).
 		WithData(event.DataKey.ExecutionID, ctx.ExecutionID).
 		WithData(event.DataKey.FlowType, string(ctx.FlowType)).
-		WithData(event.DataKey.AppID, ctx.AppID)
+		WithData(event.DataKey.EntityID, ctx.AppID)
 
 	// Add user ID if already authenticated
 	if ctx.AuthenticatedUser.IsAuthenticated && ctx.AuthenticatedUser.UserID != "" {
@@ -1095,7 +1095,7 @@ func publishFlowCompletedEvent(
 		WithStatus(event.StatusSuccess).
 		WithData(event.DataKey.ExecutionID, ctx.ExecutionID).
 		WithData(event.DataKey.FlowType, string(ctx.FlowType)).
-		WithData(event.DataKey.AppID, ctx.AppID).
+		WithData(event.DataKey.EntityID, ctx.AppID).
 		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", durationMs))
 
 	// Add user ID if authenticated
@@ -1124,7 +1124,7 @@ func publishFlowFailedEvent(ctx *EngineContext, svcErr *serviceerror.ServiceErro
 		WithStatus(event.StatusFailure).
 		WithData(event.DataKey.ExecutionID, ctx.ExecutionID).
 		WithData(event.DataKey.FlowType, string(ctx.FlowType)).
-		WithData(event.DataKey.AppID, ctx.AppID).
+		WithData(event.DataKey.EntityID, ctx.AppID).
 		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", durationMs))
 
 	// Add error details if available

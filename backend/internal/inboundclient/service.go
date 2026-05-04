@@ -50,20 +50,20 @@ import (
 type InboundClientServiceInterface interface {
 	// CreateInboundClient validates and persists a new inbound auth profile, certificates, and OAuth config.
 	CreateInboundClient(ctx context.Context, client *inboundmodel.InboundClient, appCert *inboundmodel.Certificate,
-		oauthProfile *inboundmodel.OAuthProfileData, hasClientSecret bool, entityName string) error
+		oauthProfile *inboundmodel.OAuthProfile, hasClientSecret bool, entityName string) error
 	// GetInboundClientByEntityID returns the inbound client for the given entity.
 	GetInboundClientByEntityID(ctx context.Context, entityID string) (*inboundmodel.InboundClient, error)
 	// GetInboundClientList returns all inbound clients.
 	GetInboundClientList(ctx context.Context) ([]inboundmodel.InboundClient, error)
 	// UpdateInboundClient validates and persists updates to an inbound client, certificates, and OAuth config.
 	UpdateInboundClient(ctx context.Context, client *inboundmodel.InboundClient,
-		appCert *inboundmodel.Certificate, oauthProfile *inboundmodel.OAuthProfileData,
+		appCert *inboundmodel.Certificate, oauthProfile *inboundmodel.OAuthProfile,
 		hasClientSecret bool, oauthClientID string, entityName string) error
 	// DeleteInboundClient removes the inbound client, OAuth profile, and certificates for the given entity.
 	DeleteInboundClient(ctx context.Context, entityID string) error
 	// Validate resolves flow defaults and validates FK constraints and OAuth profile without persisting.
 	Validate(ctx context.Context, client *inboundmodel.InboundClient,
-		oauthProfile *inboundmodel.OAuthProfileData, hasClientSecret bool) error
+		oauthProfile *inboundmodel.OAuthProfile, hasClientSecret bool) error
 
 	// GetOAuthProfileByEntityID returns the stored OAuth profile for the given entity.
 	GetOAuthProfileByEntityID(ctx context.Context, entityID string) (*inboundmodel.OAuthProfile, error)
@@ -119,7 +119,7 @@ func newInboundClientService(store inboundClientStoreInterface, transactioner tr
 
 // CreateInboundClient validates and persists a new inbound auth profile, certificates, and OAuth config.
 func (s *inboundClientService) CreateInboundClient(ctx context.Context, client *inboundmodel.InboundClient,
-	appCert *inboundmodel.Certificate, oauthProfile *inboundmodel.OAuthProfileData,
+	appCert *inboundmodel.Certificate, oauthProfile *inboundmodel.OAuthProfile,
 	hasClientSecret bool, entityName string) error {
 	if client == nil {
 		return fmt.Errorf("inbound client is required")
@@ -188,7 +188,7 @@ func (s *inboundClientService) GetInboundClientList(ctx context.Context) ([]inbo
 
 // UpdateInboundClient validates and persists updates to an inbound client, certificates, and OAuth config.
 func (s *inboundClientService) UpdateInboundClient(ctx context.Context, client *inboundmodel.InboundClient,
-	appCert *inboundmodel.Certificate, oauthProfile *inboundmodel.OAuthProfileData,
+	appCert *inboundmodel.Certificate, oauthProfile *inboundmodel.OAuthProfile,
 	hasClientSecret bool, oauthClientID string, entityName string) error {
 	if client == nil {
 		return fmt.Errorf("inbound client is required")
@@ -255,7 +255,7 @@ func (s *inboundClientService) UpdateInboundClient(ctx context.Context, client *
 
 // Validate resolves flow defaults and validates FK constraints and OAuth profile without persisting.
 func (s *inboundClientService) Validate(ctx context.Context, client *inboundmodel.InboundClient,
-	oauthProfile *inboundmodel.OAuthProfileData, hasClientSecret bool) error {
+	oauthProfile *inboundmodel.OAuthProfile, hasClientSecret bool) error {
 	if client == nil {
 		return nil
 	}
@@ -335,7 +335,7 @@ func (s *inboundClientService) GetOAuthProfileByEntityID(ctx context.Context, en
 
 // syncOAuthProfile creates, updates, or deletes the stored OAuth profile to match the desired state.
 func (s *inboundClientService) syncOAuthProfile(ctx context.Context, entityID string,
-	desired *inboundmodel.OAuthProfileData) error {
+	desired *inboundmodel.OAuthProfile) error {
 	return s.transactioner.Transact(ctx, func(txCtx context.Context) error {
 		existing, err := s.store.GetOAuthProfileByEntityID(txCtx, entityID)
 		if err != nil && !errors.Is(err, ErrInboundClientNotFound) {
@@ -384,15 +384,15 @@ func (s *inboundClientService) GetOAuthClientByClientID(ctx context.Context, cli
 	}
 	ouID := entity.OUID
 
-	oauthDAO, err := s.store.GetOAuthProfileByEntityID(ctx, entityID)
+	oauthProfile, err := s.store.GetOAuthProfileByEntityID(ctx, entityID)
 	if err != nil && !errors.Is(err, ErrInboundClientNotFound) {
 		return nil, err
 	}
-	if oauthDAO == nil || oauthDAO.OAuthProfile == nil {
+	if oauthProfile == nil {
 		return nil, nil
 	}
 
-	client := BuildOAuthClient(entityID, clientID, ouID, oauthDAO)
+	client := BuildOAuthClient(entityID, clientID, ouID, oauthProfile)
 
 	certificate, opErr := s.GetCertificate(ctx, cert.CertificateReferenceTypeOAuthApp, clientID)
 	if opErr != nil {
@@ -404,10 +404,9 @@ func (s *inboundClientService) GetOAuthClientByClientID(ctx context.Context, cli
 }
 
 // BuildOAuthClient assembles an OAuthClient from a stored OAuthProfile and entity context.
-func BuildOAuthClient(entityID, clientID, ouID string, oauthDAO *inboundmodel.OAuthProfile) *inboundmodel.OAuthClient {
-	p := oauthDAO.OAuthProfile
+func BuildOAuthClient(entityID, clientID, ouID string, p *inboundmodel.OAuthProfile) *inboundmodel.OAuthClient {
 	client := &inboundmodel.OAuthClient{
-		AppID:                              entityID,
+		ID:                                 entityID,
 		OUID:                               ouID,
 		ClientID:                           clientID,
 		RedirectURIs:                       p.RedirectURIs,
@@ -589,7 +588,7 @@ func validateCertificateInput(refType cert.CertificateReferenceType,
 }
 
 // validateOAuthProfile validates all fields of an OAuth profile data object.
-func validateOAuthProfile(p *inboundmodel.OAuthProfileData, hasClientSecret bool) error {
+func validateOAuthProfile(p *inboundmodel.OAuthProfile, hasClientSecret bool) error {
 	if p == nil {
 		return nil
 	}
@@ -617,7 +616,7 @@ func validateOAuthProfile(p *inboundmodel.OAuthProfileData, hasClientSecret bool
 }
 
 // validateUserInfoConfig validates the UserInfo signing and encryption configuration.
-func validateUserInfoConfig(p *inboundmodel.OAuthProfileData) error {
+func validateUserInfoConfig(p *inboundmodel.OAuthProfile) error {
 	if p.UserInfo == nil {
 		return nil
 	}
@@ -681,7 +680,7 @@ func validateUserInfoConfig(p *inboundmodel.OAuthProfileData) error {
 
 // validateIDTokenConfig validates the ID token configuration.
 // responseType is the authoritative field; empty defaults to JWT.
-func validateIDTokenConfig(p *inboundmodel.OAuthProfileData) error {
+func validateIDTokenConfig(p *inboundmodel.OAuthProfile) error {
 	if p.Token == nil || p.Token.IDToken == nil {
 		return nil
 	}
@@ -722,7 +721,7 @@ func validateIDTokenConfig(p *inboundmodel.OAuthProfileData) error {
 }
 
 // validateRedirectURIs validates redirect URIs and authorization_code grant requirements.
-func validateRedirectURIs(p *inboundmodel.OAuthProfileData) error {
+func validateRedirectURIs(p *inboundmodel.OAuthProfile) error {
 	for _, redirectURI := range p.RedirectURIs {
 		// Reject wildcards in the scheme before URL parsing — url.Parse may misinterpret them.
 		if idx := strings.Index(redirectURI, "://"); idx != -1 {
@@ -776,7 +775,7 @@ func containsInvalidWildcardSegment(p string) bool {
 }
 
 // validateGrantAndResponseTypes validates grant types, response types, and their combinations.
-func validateGrantAndResponseTypes(p *inboundmodel.OAuthProfileData) error {
+func validateGrantAndResponseTypes(p *inboundmodel.OAuthProfile) error {
 	for _, grantType := range p.GrantTypes {
 		if !oauth2const.GrantType(grantType).IsValid() {
 			return ErrOAuthInvalidGrantType
@@ -814,7 +813,7 @@ func validateGrantAndResponseTypes(p *inboundmodel.OAuthProfileData) error {
 }
 
 // validateTokenEndpointAuthMethod validates the token endpoint auth method against cert and secret state.
-func validateTokenEndpointAuthMethod(p *inboundmodel.OAuthProfileData, hasClientSecret bool) error {
+func validateTokenEndpointAuthMethod(p *inboundmodel.OAuthProfile, hasClientSecret bool) error {
 	method := oauth2const.TokenEndpointAuthMethod(p.TokenEndpointAuthMethod)
 	if !method.IsValid() {
 		return ErrOAuthInvalidTokenEndpointAuthMethod
@@ -853,7 +852,7 @@ func validateTokenEndpointAuthMethod(p *inboundmodel.OAuthProfileData, hasClient
 }
 
 // validatePublicClient validates constraints required for public clients.
-func validatePublicClient(p *inboundmodel.OAuthProfileData) error {
+func validatePublicClient(p *inboundmodel.OAuthProfile) error {
 	if oauth2const.TokenEndpointAuthMethod(p.TokenEndpointAuthMethod) != oauth2const.TokenEndpointAuthMethodNone {
 		return ErrOAuthPublicClientMustUseNoneAuth
 	}
@@ -880,7 +879,7 @@ func (s *inboundClientService) validateFKs(ctx context.Context, c *inboundmodel.
 	if err := s.validateLayoutID(c.LayoutID); err != nil {
 		return err
 	}
-	if err := s.validateAllowedUserTypes(ctx, c.AllowedEntityTypes); err != nil {
+	if err := s.validateAllowedUserTypes(ctx, c.AllowedUserTypes); err != nil {
 		return err
 	}
 	return nil
@@ -957,7 +956,7 @@ func (s *inboundClientService) validateAllowedUserTypes(
 		if svcErr != nil {
 			s.logger.Error("Failed to retrieve user type list for validation",
 				log.String("error", svcErr.Error.DefaultValue), log.String("code", svcErr.Code))
-			return ErrFKInvalidUserType
+			return ErrUserSchemaLookupFailed
 		}
 		for _, schema := range entityTypeList.Schemas {
 			existingUserTypes[schema.Name] = true
@@ -977,7 +976,7 @@ func (s *inboundClientService) validateAllowedUserTypes(
 }
 
 // applyInboundDefaults fills default values for assertion, OAuth tokens, user info, and scope claims.
-func applyInboundDefaults(c *inboundmodel.InboundClient, oauthProfile *inboundmodel.OAuthProfileData) {
+func applyInboundDefaults(c *inboundmodel.InboundClient, oauthProfile *inboundmodel.OAuthProfile) {
 	if c != nil {
 		c.Assertion = resolveAssertion(c.Assertion, getDefaultAssertionFromDeployment())
 	}
@@ -1113,7 +1112,7 @@ func resolveScopeClaims(in map[string][]string) map[string][]string {
 
 // syncConsentOnCreate creates consent purpose elements for a newly registered application.
 func (s *inboundClientService) syncConsentOnCreate(ctx context.Context,
-	entityID, entityName string, client *inboundmodel.InboundClient, profile *inboundmodel.OAuthProfileData) error {
+	entityID, entityName string, client *inboundmodel.InboundClient, profile *inboundmodel.OAuthProfile) error {
 	// TODO: Replace with the entity's actual OU when multi-OU consent is supported.
 	const ouID = "default"
 	attrMap := extractRequestedAttributesFromInbound(client, profile)
@@ -1141,7 +1140,7 @@ func (s *inboundClientService) syncConsentOnCreate(ctx context.Context,
 
 // syncConsentOnUpdate updates or creates the consent purpose for an existing application.
 func (s *inboundClientService) syncConsentOnUpdate(ctx context.Context,
-	entityID, entityName string, client *inboundmodel.InboundClient, profile *inboundmodel.OAuthProfileData) error {
+	entityID, entityName string, client *inboundmodel.InboundClient, profile *inboundmodel.OAuthProfile) error {
 	// TODO: Replace with the entity's actual OU when multi-OU consent is supported.
 	const ouID = "default"
 	newAttrs := extractRequestedAttributesFromInbound(client, profile)
@@ -1250,7 +1249,7 @@ func (s *inboundClientService) wrapConsentServiceError(err *serviceerror.Service
 
 // extractRequestedAttributesFromInbound collects user attributes referenced by the client and profile.
 func extractRequestedAttributesFromInbound(
-	client *inboundmodel.InboundClient, profile *inboundmodel.OAuthProfileData,
+	client *inboundmodel.InboundClient, profile *inboundmodel.OAuthProfile,
 ) map[string]bool {
 	attrMap := make(map[string]bool)
 	if client != nil && client.Assertion != nil {

@@ -75,7 +75,7 @@ func (suite *InviteExecutorTestSuite) TearDownTest() {
 func (suite *InviteExecutorTestSuite) TestExecute_GenerateMode() {
 	ctx := &core.NodeContext{
 		ExecutionID:  "test-flow-id",
-		AppID:        "test-app-id",
+		EntityID:     "test-app-id",
 		ExecutorMode: ExecutorModeGenerate,
 		UserInputs:   make(map[string]string),
 		RuntimeData:  make(map[string]string),
@@ -96,7 +96,7 @@ func (suite *InviteExecutorTestSuite) TestExecute_GenerateMode() {
 func (suite *InviteExecutorTestSuite) TestExecute_GenerateMode_UserOnboarding_ExposesInviteLink() {
 	ctx := &core.NodeContext{
 		ExecutionID:  "test-flow-id",
-		AppID:        "test-app-id",
+		EntityID:     "test-app-id",
 		FlowType:     common.FlowTypeUserOnboarding,
 		ExecutorMode: ExecutorModeGenerate,
 		UserInputs:   make(map[string]string),

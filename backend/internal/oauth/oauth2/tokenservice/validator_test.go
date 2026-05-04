@@ -641,7 +641,7 @@ func (suite *TokenValidatorTestSuite) TestValidateSubjectToken_AuthAssertion_Rej
 
 func (suite *TokenValidatorTestSuite) TestValidateSubjectToken_NonAssertion_AcceptsMultiAud() {
 	// Non-assertion subject tokens with a multi-value aud are accepted when at least one element
-	// matches the requesting app's AppID or the configured default audience.
+	// matches the requesting app's EntityID or the configured default audience.
 	now := time.Now().Unix()
 	claims := map[string]interface{}{
 		"sub": "user123",
@@ -653,7 +653,7 @@ func (suite *TokenValidatorTestSuite) TestValidateSubjectToken_NonAssertion_Acce
 
 	oauthAppWithID := &inboundmodel.OAuthClient{
 		ClientID: "test-client",
-		AppID:    "x", // Matches one element of the aud array.
+		ID:       "x", // Matches one element of the aud array.
 	}
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
@@ -1110,7 +1110,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Success_WithAppI
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 	suite.oauthApp.ClientID = testClientID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
@@ -1141,7 +1141,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Success_WithEmpt
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 
@@ -1169,7 +1169,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Success_WithScop
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 
@@ -1198,7 +1198,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Success_WithUser
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 
@@ -1228,7 +1228,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Error_MissingAud
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 
@@ -1252,7 +1252,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Error_AudienceMi
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 	suite.oauthApp.ClientID = testClientID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
@@ -1278,7 +1278,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Success_WithDefa
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID // Different from audience
+	suite.oauthApp.ID = testAppID // Different from audience
 	suite.oauthApp.ClientID = testClientID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
@@ -1331,7 +1331,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Error_ExpiredTok
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 
@@ -1354,7 +1354,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Error_InvalidIss
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	result, err := suite.validator.ValidateSubjectToken(token, suite.oauthApp)
 
@@ -1374,7 +1374,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Error_InvalidSig
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(&serviceerror.ServiceError{
 		Type:  serviceerror.ServerErrorType,
@@ -1404,7 +1404,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Error_InvalidSub
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 
@@ -1427,7 +1427,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Error_TokenNotYe
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 
@@ -1450,7 +1450,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Error_MissingExp
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 
@@ -1474,7 +1474,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Error_InvalidAud
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 
@@ -1500,7 +1500,7 @@ func (suite *TokenValidatorTestSuite) TestValidateAuthAssertion_Success_WithEmpt
 	}
 	token := suite.createTestJWT(claims)
 
-	suite.oauthApp.AppID = testAppID
+	suite.oauthApp.ID = testAppID
 
 	suite.mockJWTService.On("VerifyJWTSignature", token).Return(nil)
 

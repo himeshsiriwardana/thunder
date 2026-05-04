@@ -58,6 +58,10 @@ var (
 	ErrFKLayoutNotFound = errors.New("layout not found")
 	// ErrFKInvalidUserType is returned when the specified user type is invalid.
 	ErrFKInvalidUserType = errors.New("invalid user type")
+	// ErrUserSchemaLookupFailed is returned when the user-schema service fails (e.g. DB outage)
+	// while validating allowed user types. Distinct from ErrFKInvalidUserType so the handler
+	// can map it to a server error instead of a client validation error.
+	ErrUserSchemaLookupFailed = errors.New("user schema lookup failed")
 
 	// ErrOAuthInvalidRedirectURI is returned when the redirect URI is invalid.
 	ErrOAuthInvalidRedirectURI = errors.New("invalid redirect URI")

@@ -23,6 +23,8 @@ import (
 	"errors"
 	"testing"
 
+	inboundmodel "github.com/asgardeo/thunder/internal/inboundclient/model"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
@@ -134,8 +136,10 @@ func TestInitiateFlowSuccessScenarios(t *testing.T) {
 
 	// Mock application and graph - shared across all test cases
 	mockApp := &appmodel.Application{
-		ID:         "app-id-123",
-		AuthFlowID: "auth-graph-1",
+		ID: "app-id-123",
+		InboundAuthProfile: inboundmodel.InboundAuthProfile{
+			AuthFlowID: "auth-graph-1",
+		},
 	}
 
 	tests := []struct {
@@ -332,8 +336,10 @@ func TestInitiateFlowErrorScenarios(t *testing.T) {
 			) {
 				// Mock application service to return valid app
 				mockApp := &appmodel.Application{
-					ID:         "app-id-123",
-					AuthFlowID: "auth-graph-1",
+					ID: "app-id-123",
+					InboundAuthProfile: inboundmodel.InboundAuthProfile{
+						AuthFlowID: "auth-graph-1",
+					},
 				}
 				mockAppService.EXPECT().GetApplication(mock.Anything, appID).Return(mockApp, nil)
 
@@ -353,8 +359,10 @@ func TestInitiateFlowErrorScenarios(t *testing.T) {
 			) {
 				// Mock application service to return valid app
 				mockApp := &appmodel.Application{
-					ID:         "app-id-123",
-					AuthFlowID: "auth-graph-1",
+					ID: "app-id-123",
+					InboundAuthProfile: inboundmodel.InboundAuthProfile{
+						AuthFlowID: "auth-graph-1",
+					},
 				}
 				mockAppService.EXPECT().GetApplication(mock.Anything, appID).Return(mockApp, nil)
 
@@ -465,7 +473,10 @@ func TestEncryptedPayloadStoredBeforeWrite(t *testing.T) {
 
 	flowFactory, _ := core.Initialize(cache.Initialize())
 	testGraph := flowFactory.CreateGraph("auth-graph-1", common.FlowTypeAuthentication)
-	mockApp := &appmodel.Application{ID: "app-id-123", AuthFlowID: "auth-graph-1"}
+	mockApp := &appmodel.Application{
+		ID:                 "app-id-123",
+		InboundAuthProfile: inboundmodel.InboundAuthProfile{AuthFlowID: "auth-graph-1"},
+	}
 
 	mockStore := newFlowStoreInterfaceMock(t)
 	mockAppService := applicationmock.NewApplicationServiceInterfaceMock(t)
@@ -542,7 +553,10 @@ func TestDecryptCalledForEncryptedStoredContext(t *testing.T) {
 	mockStore.EXPECT().GetFlowContext(mock.Anything, "existing-execution-id").Return(encryptedStoredCtx, nil)
 	mockFlowMgtSvc.EXPECT().GetGraph(mock.Anything, "test-graph-id").Return(testGraph, nil)
 	mockAppService.EXPECT().GetApplication(mock.Anything, "test-app-id").Return(
-		&appmodel.Application{ID: "test-app-id", AuthFlowID: "test-graph-id"}, nil)
+		&appmodel.Application{
+			ID:                 "test-app-id",
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{AuthFlowID: "test-graph-id"},
+		}, nil)
 
 	// Engine receives a properly restored context — not the raw encrypted bytes
 	mockEngine.EXPECT().Execute(mock.MatchedBy(func(ctx *EngineContext) bool {
@@ -792,7 +806,8 @@ func TestExecute_ContextDecryptionSuccess(t *testing.T) {
 	mockStore.EXPECT().GetFlowContext(mock.Anything, "existing-execution-id").Return(storedCtx, nil)
 	mockFlowMgtSvc.EXPECT().GetGraph(mock.Anything, "test-graph-id").Return(testGraph, nil)
 	mockAppService.EXPECT().GetApplication(mock.Anything, "test-app-id").Return(
-		&appmodel.Application{ID: "test-app-id", AuthFlowID: "test-graph-id"}, nil)
+		&appmodel.Application{ID: "test-app-id",
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{AuthFlowID: "test-graph-id"}}, nil)
 	challengeToken := "test-challenge-token"
 	mockEngine.EXPECT().Execute(mock.MatchedBy(func(ctx *EngineContext) bool {
 		return ctx != nil && ctx.ChallengeTokenIn == challengeToken
@@ -845,7 +860,8 @@ func TestExecute_ExistingFlowWithoutChallengeToken(t *testing.T) {
 	mockStore.EXPECT().GetFlowContext(mock.Anything, "existing-execution-id").Return(storedCtx, nil)
 	mockFlowMgtSvc.EXPECT().GetGraph(mock.Anything, "test-graph-id").Return(testGraph, nil)
 	mockAppService.EXPECT().GetApplication(mock.Anything, "test-app-id").Return(
-		&appmodel.Application{ID: "test-app-id", AuthFlowID: "test-graph-id"}, nil)
+		&appmodel.Application{ID: "test-app-id",
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{AuthFlowID: "test-graph-id"}}, nil)
 
 	mockCrypto := cryptomock.NewRuntimeCryptoProviderMock(t)
 	mockCrypto.EXPECT().Encrypt(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
@@ -929,7 +945,8 @@ func TestExecute_ExistingFlowWithDifferentChallengeTokens(t *testing.T) {
 			mockStore.EXPECT().GetFlowContext(mock.Anything, "existing-execution-id").Return(storedCtx, nil)
 			mockFlowMgtSvc.EXPECT().GetGraph(mock.Anything, "test-graph-id").Return(testGraph, nil)
 			mockAppService.EXPECT().GetApplication(mock.Anything, "test-app-id").Return(
-				&appmodel.Application{ID: "test-app-id", AuthFlowID: "test-graph-id"}, nil)
+				&appmodel.Application{ID: "test-app-id",
+					InboundAuthProfile: inboundmodel.InboundAuthProfile{AuthFlowID: "test-graph-id"}}, nil)
 
 			expectedToken := tt.expectInContext
 			mockCrypto := cryptomock.NewRuntimeCryptoProviderMock(t)
@@ -989,7 +1006,8 @@ func TestExecute_EngineError_InvalidChallengeToken_PreservesContext(t *testing.T
 	mockStore.EXPECT().GetFlowContext(mock.Anything, "existing-execution-id").Return(storedCtx, nil)
 	mockFlowMgtSvc.EXPECT().GetGraph(mock.Anything, "test-graph-id").Return(testGraph, nil)
 	mockAppService.EXPECT().GetApplication(mock.Anything, "test-app-id").Return(
-		&appmodel.Application{ID: "test-app-id", AuthFlowID: "test-graph-id"}, nil)
+		&appmodel.Application{ID: "test-app-id",
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{AuthFlowID: "test-graph-id"}}, nil)
 
 	// Engine returns invalid challenge token error
 	mockEngine.EXPECT().Execute(mock.Anything).Return(FlowStep{}, &ErrorInvalidChallengeToken)
@@ -1038,7 +1056,8 @@ func TestExecute_EngineError_NonChallengeToken_RemovesContext(t *testing.T) {
 	mockStore.EXPECT().GetFlowContext(mock.Anything, "existing-execution-id").Return(storedCtx, nil)
 	mockFlowMgtSvc.EXPECT().GetGraph(mock.Anything, "test-graph-id").Return(testGraph, nil)
 	mockAppService.EXPECT().GetApplication(mock.Anything, "test-app-id").Return(
-		&appmodel.Application{ID: "test-app-id", AuthFlowID: "test-graph-id"}, nil)
+		&appmodel.Application{ID: "test-app-id",
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{AuthFlowID: "test-graph-id"}}, nil)
 
 	otherErr := &serviceerror.ServiceError{
 		Code: "FES-9999",
@@ -1088,7 +1107,8 @@ func TestExecute_EngineError_NewFlow_ContextNeverRemoved(t *testing.T) {
 	mockAppService := applicationmock.NewApplicationServiceInterfaceMock(t)
 
 	mockAppService.EXPECT().GetApplication(mock.Anything, "test-app").Return(
-		&appmodel.Application{ID: "test-app", AuthFlowID: "auth-graph-1"}, nil).Times(2)
+		&appmodel.Application{ID: "test-app",
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{AuthFlowID: "auth-graph-1"}}, nil).Times(2)
 	mockFlowMgtSvc.EXPECT().GetGraph(mock.Anything, "auth-graph-1").Return(testGraph, nil)
 	mockEngine.EXPECT().Execute(mock.Anything).Return(FlowStep{}, &ErrorInvalidChallengeToken)
 	// DeleteFlowContext must NOT be called — new flows have no persisted context to clean up

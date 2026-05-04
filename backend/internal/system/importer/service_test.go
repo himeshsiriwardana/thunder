@@ -99,7 +99,7 @@ func (f *fakeApplicationService) CreateApplication(
 
 func (f *fakeApplicationService) ValidateApplication(
 	_ context.Context, _ *model.ApplicationDTO,
-) (*model.ApplicationProcessedDTO, *model.InboundAuthConfigDTO, *serviceerror.ServiceError) {
+) (*model.ApplicationProcessedDTO, *inboundmodel.InboundAuthConfigWithSecret, *serviceerror.ServiceError) {
 	return nil, nil, nil
 }
 
@@ -1407,8 +1407,8 @@ func TestImportResources_StripsClientSecretForPublicClientWithNoneAuthMethod(t *
 	require.NotNil(t, resp)
 	require.Len(t, appSvc.created, 1)
 	require.Len(t, appSvc.created[0].InboundAuthConfig, 1)
-	require.NotNil(t, appSvc.created[0].InboundAuthConfig[0].OAuthAppConfig)
-	assert.Equal(t, "", appSvc.created[0].InboundAuthConfig[0].OAuthAppConfig.ClientSecret)
+	require.NotNil(t, appSvc.created[0].InboundAuthConfig[0].OAuthConfig)
+	assert.Equal(t, "", appSvc.created[0].InboundAuthConfig[0].OAuthConfig.ClientSecret)
 	assert.Equal(t, statusSuccess, resp.Results[0].Status)
 }
 
@@ -1438,8 +1438,8 @@ func TestImportResources_KeepsClientSecretForConfidentialClient(t *testing.T) {
 	require.NotNil(t, resp)
 	require.Len(t, appSvc.created, 1)
 	require.Len(t, appSvc.created[0].InboundAuthConfig, 1)
-	require.NotNil(t, appSvc.created[0].InboundAuthConfig[0].OAuthAppConfig)
-	assert.Equal(t, "keep-me", appSvc.created[0].InboundAuthConfig[0].OAuthAppConfig.ClientSecret)
+	require.NotNil(t, appSvc.created[0].InboundAuthConfig[0].OAuthConfig)
+	assert.Equal(t, "keep-me", appSvc.created[0].InboundAuthConfig[0].OAuthConfig.ClientSecret)
 	assert.Equal(t, statusSuccess, resp.Results[0].Status)
 }
 

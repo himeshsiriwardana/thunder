@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	inboundmodel "github.com/asgardeo/thunder/internal/inboundclient/model"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -87,13 +89,15 @@ func (suite *FlowMetaServiceTestSuite) TestGetFlowMetadata_APP_Success() {
 	namespace := "auth"
 
 	mockApp := &appmodel.Application{
-		ID:                        appID,
-		Name:                      "Test App",
-		LogoURL:                   "https://example.com/logo.png",
-		URL:                       "https://example.com",
-		TosURI:                    "https://example.com/tos",
-		PolicyURI:                 "https://example.com/policy",
-		IsRegistrationFlowEnabled: true,
+		ID:        appID,
+		Name:      "Test App",
+		LogoURL:   "https://example.com/logo.png",
+		URL:       "https://example.com",
+		TosURI:    "https://example.com/tos",
+		PolicyURI: "https://example.com/policy",
+		InboundAuthProfile: inboundmodel.InboundAuthProfile{
+			IsRegistrationFlowEnabled: true,
+		},
 	}
 
 	mockOUList := &ou.OrganizationUnitListResponse{

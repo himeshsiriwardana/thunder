@@ -324,7 +324,7 @@ func (as *authorizeService) initiateFlowAndStoreRequest(
 		runtimeData[flowcm.RuntimeKeyRequestedAuthClasses] = effectiveAcrValues
 	}
 	flowInitCtx := &flowexec.FlowInitContext{
-		ApplicationID: app.AppID,
+		ApplicationID: app.ID,
 		FlowType:      string(flowcm.FlowTypeAuthentication),
 		RuntimeData:   runtimeData,
 	}
@@ -362,7 +362,7 @@ func (as *authorizeService) initiateFlowAndStoreRequest(
 	// Build query parameters for login page redirect.
 	queryParams := make(map[string]string)
 	queryParams[oauth2const.AuthID] = identifier
-	queryParams[oauth2const.AppID] = app.AppID
+	queryParams[oauth2const.AppID] = app.ID
 	queryParams[oauth2const.ExecutionID] = executionID
 
 	// Add insecure warning if the redirect URI is not using TLS.
