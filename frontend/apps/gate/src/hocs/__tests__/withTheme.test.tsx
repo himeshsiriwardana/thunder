@@ -32,7 +32,7 @@ const WithThemeComponent = withTheme(MockChild);
 
 // Create mock for useDesign
 const mockUseDesign = vi.fn();
-vi.mock('@thunder/design', () => ({
+vi.mock('@thunderid/design', () => ({
   // eslint-disable-next-line @typescript-eslint/no-unsafe-return
   useDesign: () => mockUseDesign(),
   StylesheetInjector: () => null,

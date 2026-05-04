@@ -1,13 +1,13 @@
-# @thunder/eslint-plugin
+# @thunderid/eslint-plugin
 
 ESLint plugin for ⚡️ Thunder projects with custom rules and configurations.
 
 ## Installation
 
 ```bash
-npm install --save-dev @thunder/eslint-plugin eslint
+npm install --save-dev @thunderid/eslint-plugin eslint
 # or
-pnpm add -D @thunder/eslint-plugin eslint
+pnpm add -D @thunderid/eslint-plugin eslint
 ```
 
 ## Usage
@@ -16,7 +16,7 @@ pnpm add -D @thunder/eslint-plugin eslint
 
 ```js
 // eslint.config.js
-import thunder from '@thunder/eslint-plugin';
+import thunder from '@thunderid/eslint-plugin';
 
 export default [
   {

@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type {LayoutListItem} from '@thunder/design';
+import type {LayoutListItem} from '@thunderid/design';
 import {Box, useColorScheme, useTheme} from '@wso2/oxygen-ui';
 import type {JSX} from 'react';
 

@@ -334,7 +334,7 @@ importers:
       '@thunder/contexts':
         specifier: workspace:^
         version: link:../../packages/contexts
-      '@thunder/design':
+      '@thunderid/design':
         specifier: workspace:^
         version: link:../../packages/design
       '@thunderid/hooks':
@@ -518,7 +518,7 @@ importers:
       '@thunder/contexts':
         specifier: workspace:^
         version: link:../../packages/contexts
-      '@thunder/design':
+      '@thunderid/design':
         specifier: workspace:^
         version: link:../../packages/design
       '@thunderid/hooks':
@@ -624,7 +624,7 @@ importers:
       '@thunder/contexts':
         specifier: workspace:^
         version: link:../contexts
-      '@thunder/design':
+      '@thunderid/design':
         specifier: workspace:^
         version: link:../design
       '@thunderid/hooks':
@@ -715,7 +715,7 @@ importers:
       '@thunder/contexts':
         specifier: workspace:^
         version: link:../contexts
-      '@thunder/design':
+      '@thunderid/design':
         specifier: workspace:^
         version: link:../design
       '@thunderid/hooks':
@@ -912,7 +912,7 @@ importers:
       '@thunder/contexts':
         specifier: workspace:^
         version: link:../contexts
-      '@thunder/design':
+      '@thunderid/design':
         specifier: workspace:^
         version: link:../design
       '@thunderid/hooks':

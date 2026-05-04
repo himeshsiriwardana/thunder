@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import {useDesign, type Theme} from '@thunder/design';
+import {useDesign, type Theme} from '@thunderid/design';
 import {AcrylicOrangeTheme, ThemeProvider} from '@wso2/oxygen-ui';
 import type {JSX, ReactNode} from 'react';
 import ColorSchemeSync from './ColorSchemeSync';

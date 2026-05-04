@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type {ColorSchemeOption} from '@thunder/design';
+import type {ColorSchemeOption} from '@thunderid/design';
 import {Box, IconButton, Tooltip, Typography, useColorScheme} from '@wso2/oxygen-ui';
 import {Minus, Monitor, Plus, Smartphone, Tablet} from '@wso2/oxygen-ui-icons-react';
 import {type JSX, type ReactNode, useEffect, useMemo, useState} from 'react';

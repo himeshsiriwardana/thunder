@@ -17,7 +17,7 @@
  */
 
 import {LanguageSwitcher} from '@asgardeo/react';
-import {useDesign, GoogleFontLoader, StylesheetInjector, type Theme} from '@thunder/design';
+import {useDesign, GoogleFontLoader, StylesheetInjector, type Theme} from '@thunderid/design';
 import {
   OxygenUIThemeProvider,
   ColorSchemeToggle,

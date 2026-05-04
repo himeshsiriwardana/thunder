@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type {Stylesheet} from '@thunder/design';
+import type {Stylesheet} from '@thunderid/design';
 import {Box, Button, Stack, Typography, useColorScheme} from '@wso2/oxygen-ui';
 import {Plus} from '@wso2/oxygen-ui-icons-react';
 import {forwardRef, useImperativeHandle, useRef, useState, type JSX} from 'react';

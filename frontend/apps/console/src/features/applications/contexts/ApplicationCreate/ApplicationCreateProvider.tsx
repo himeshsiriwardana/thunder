@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type {Theme} from '@thunder/design';
+import type {Theme} from '@thunderid/design';
 import type {PropsWithChildren} from 'react';
 import {useState, useMemo, useCallback} from 'react';
 import ApplicationCreateContext, {type ApplicationCreateContextType} from './ApplicationCreateContext';

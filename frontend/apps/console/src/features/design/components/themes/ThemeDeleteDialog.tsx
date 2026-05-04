@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import {useDeleteTheme} from '@thunder/design';
+import {useDeleteTheme} from '@thunderid/design';
 import {Alert, Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle} from '@wso2/oxygen-ui';
 import {useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';

@@ -17,7 +17,7 @@
  */
 
 import userEvent from '@testing-library/user-event';
-import {DesignContext, type DesignContextType} from '@thunder/design';
+import {DesignContext, type DesignContextType} from '@thunderid/design';
 import {screen, fireEvent, waitFor, render as testRender} from '@thunderid/test-utils';
 import {act} from 'react';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
@@ -25,8 +25,8 @@ import SignUpBox from '../SignUpBox';
 
 // Mock useDesign and FlowComponentRenderer
 const mockUseDesign = vi.fn();
-vi.mock('@thunder/design', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@thunder/design')>();
+vi.mock('@thunderid/design', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@thunderid/design')>();
   return {
     ...actual,
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return

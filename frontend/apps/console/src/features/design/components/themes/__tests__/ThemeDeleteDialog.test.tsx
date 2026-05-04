@@ -34,7 +34,7 @@ vi.mock('react-i18next', async () => {
   };
 });
 
-vi.mock('@thunder/design', () => ({
+vi.mock('@thunderid/design', () => ({
   useDeleteTheme: vi.fn(() => ({
     mutate: mockMutate,
     isPending: false,
@@ -122,7 +122,7 @@ describe('ThemeDeleteDialog', () => {
 
   describe('Loading state', () => {
     it('disables buttons when isPending is true', async () => {
-      const {useDeleteTheme} = await import('@thunder/design');
+      const {useDeleteTheme} = await import('@thunderid/design');
       (useDeleteTheme as ReturnType<typeof vi.fn>).mockReturnValueOnce({
         mutate: mockMutate,
         isPending: true,

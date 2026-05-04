@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type {Theme} from '@thunder/design';
+import type {Theme} from '@thunderid/design';
 import {MenuItem, Select, Stack, Typography} from '@wso2/oxygen-ui';
 import type {JSX} from 'react';
 import {useTranslation} from 'react-i18next';

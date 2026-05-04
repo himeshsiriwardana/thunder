@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type {ThemeListItem} from '@thunder/design';
+import type {ThemeListItem} from '@thunderid/design';
 import {Box} from '@wso2/oxygen-ui';
 import type {JSX} from 'react';
 

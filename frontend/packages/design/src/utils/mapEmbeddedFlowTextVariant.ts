@@ -28,7 +28,7 @@ import type {TypographyVariant} from '@wso2/oxygen-ui';
  *
  * @example
  * ```tsx
- * import {mapEmbeddedFlowTextVariant} from '@thunder/design';
+ * import {mapEmbeddedFlowTextVariant} from '@thunderid/design';
  *
  * const variant = mapEmbeddedFlowTextVariant(EmbeddedFlowTextVariant.Heading1);
  * // Returns 'h2'

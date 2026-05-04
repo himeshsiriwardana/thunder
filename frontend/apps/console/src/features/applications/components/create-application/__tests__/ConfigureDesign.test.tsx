@@ -36,9 +36,9 @@ vi.mock('@thunderid/components', () => ({
     </button>
   )),
 }));
-vi.mock('@thunder/design');
+vi.mock('@thunderid/design');
 
-const {useGetThemes, useGetTheme} = await import('@thunder/design');
+const {useGetThemes, useGetTheme} = await import('@thunderid/design');
 
 describe('ConfigureDesign', () => {
   const mockOnLogoSelect = vi.fn();

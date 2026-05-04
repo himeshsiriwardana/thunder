@@ -29,7 +29,7 @@ import {
 } from '@asgardeo/react';
 import {zodResolver} from '@hookform/resolvers/zod';
 import {OrganizationUnitTreePicker} from '@thunderid/configure-organization-units';
-import {CopyableTextAdapter, type FlowComponent} from '@thunder/design';
+import {CopyableTextAdapter, type FlowComponent} from '@thunderid/design';
 import {useLogger} from '@thunderid/logger/react';
 import {
   Box,

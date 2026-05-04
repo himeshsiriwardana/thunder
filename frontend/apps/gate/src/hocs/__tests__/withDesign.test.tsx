@@ -25,7 +25,7 @@ import withDesign from '../withDesign';
 let capturedDesignProp: unknown;
 let capturedShouldResolveDesignInternally: unknown;
 
-vi.mock('@thunder/design', () => ({
+vi.mock('@thunderid/design', () => ({
   DesignProvider: ({
     children,
     design = undefined,

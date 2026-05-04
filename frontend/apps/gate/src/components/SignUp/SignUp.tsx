@@ -17,7 +17,7 @@
  */
 
 import {useAsgardeo} from '@asgardeo/react';
-import {AuthPageLayout} from '@thunder/design';
+import {AuthPageLayout} from '@thunderid/design';
 import type {JSX} from 'react';
 import SignUpBox from './SignUpBox';
 

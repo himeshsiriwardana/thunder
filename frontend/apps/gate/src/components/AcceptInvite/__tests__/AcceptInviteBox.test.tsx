@@ -17,7 +17,7 @@
  */
 
 import userEvent from '@testing-library/user-event';
-import {DesignContext, type DesignContextType} from '@thunder/design';
+import {DesignContext, type DesignContextType} from '@thunderid/design';
 import {render as testRender, screen, fireEvent, waitFor} from '@thunderid/test-utils';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
 import AcceptInviteBox from '../AcceptInviteBox';
@@ -42,8 +42,8 @@ vi.mock('@thunderid/logger/react', async (importOriginal) => {
 
 // Mock useDesign
 const mockUseDesign = vi.fn();
-vi.mock('@thunder/design', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@thunder/design')>();
+vi.mock('@thunderid/design', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@thunderid/design')>();
   return {
     ...actual,
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return

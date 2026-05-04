@@ -17,7 +17,7 @@
  */
 
 import {EmbeddedFlowComponentType, SignIn, type EmbeddedFlowComponent} from '@asgardeo/react';
-import {useDesign, FlowComponentRenderer, AuthCardLayout} from '@thunder/design';
+import {useDesign, FlowComponentRenderer, AuthCardLayout} from '@thunderid/design';
 import {useTemplateLiteralResolver} from '@thunderid/hooks';
 import {TemplateLiteralType} from '@thunderid/utils';
 import {Box, Alert, CircularProgress} from '@wso2/oxygen-ui';

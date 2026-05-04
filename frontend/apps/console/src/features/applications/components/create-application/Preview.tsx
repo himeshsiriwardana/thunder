@@ -17,7 +17,7 @@
  */
 
 import {BaseSignIn, ThemeProvider} from '@asgardeo/react';
-import {type Theme} from '@thunder/design';
+import {type Theme} from '@thunderid/design';
 import type {RecursivePartial} from '@thunderid/types';
 import {
   Box,

@@ -17,7 +17,7 @@
  */
 
 import {BuilderLayout, BuilderStaticPanel} from '@thunderid/components';
-import {useGetThemes, useGetTheme, type Stylesheet} from '@thunder/design';
+import {useGetThemes, useGetTheme, type Stylesheet} from '@thunderid/design';
 import {Autocomplete, Box, Button, IconButton, TextField, Tooltip, Typography, useColorScheme} from '@wso2/oxygen-ui';
 import {ArrowLeft, Crosshair, Layers, Save} from '@wso2/oxygen-ui-icons-react';
 import {useCallback, useMemo, useRef, useState, type JSX} from 'react';

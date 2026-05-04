@@ -80,7 +80,7 @@
     "@wso2/oxygen-ui-icons-react": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@thunder/contexts": "workspace:^",
-    "@thunder/design": "workspace:^",
+    "@thunderid/design": "workspace:^",
     "@thunderid/hooks": "workspace:^",
     "@thunderid/logger": "workspace:^",
     "react": "catalog:",

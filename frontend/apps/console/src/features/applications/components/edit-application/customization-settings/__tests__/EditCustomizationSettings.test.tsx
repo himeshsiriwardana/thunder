@@ -28,7 +28,7 @@ vi.mock('react-i18next', () => ({
   Trans: ({i18nKey}: {i18nKey: string}) => i18nKey,
 }));
 
-vi.mock('@thunder/design', () => ({
+vi.mock('@thunderid/design', () => ({
   useGetThemes: vi.fn(() => ({
     data: {
       themes: [

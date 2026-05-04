@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type {Theme} from '@thunder/design';
+import type {Theme} from '@thunderid/design';
 import {describe, it, expect} from 'vitest';
 import buildThemeFromPrimaryColor from '../buildThemeFromPrimaryColor';
 

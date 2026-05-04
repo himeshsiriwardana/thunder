@@ -17,7 +17,7 @@
  */
 
 import {SettingsCard} from '@thunderid/components';
-import {useGetThemes, useGetLayouts} from '@thunder/design';
+import {useGetThemes, useGetLayouts} from '@thunderid/design';
 import {Box, Typography, TextField, Autocomplete, CircularProgress} from '@wso2/oxygen-ui';
 import {useTranslation} from 'react-i18next';
 import type {Application} from '../../../models/application';

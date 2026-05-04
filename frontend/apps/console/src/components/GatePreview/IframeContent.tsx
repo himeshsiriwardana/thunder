@@ -28,7 +28,7 @@ import {
   type Theme,
   type DesignResolveResponse,
   type Stylesheet,
-} from '@thunder/design';
+} from '@thunderid/design';
 import {useTemplateLiteralResolver} from '@thunderid/hooks';
 import {TemplateLiteralType} from '@thunderid/utils';
 import {Box} from '@wso2/oxygen-ui';
