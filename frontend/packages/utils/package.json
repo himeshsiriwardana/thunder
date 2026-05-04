@@ -55,7 +55,7 @@
   },
   "devDependencies": {
     "@thunder/types": "workspace:^",
-    "@thunder/eslint-plugin-thunder": "workspace:^",
+    "@thunderid/eslint-plugin-thunder": "workspace:^",
     "@thunder/prettier-config": "workspace:^",
     "@thunder/test-utils": "workspace:^",
     "@types/node": "catalog:",

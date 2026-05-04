@@ -56,7 +56,7 @@
     "typecheck": "tsc -p tsconfig.lib.json"
   },
   "devDependencies": {
-    "@thunder/eslint-plugin-thunder": "workspace:^",
+    "@thunderid/eslint-plugin-thunder": "workspace:^",
     "@types/node": "catalog:",
     "eslint": "catalog:",
     "prettier": "catalog:",

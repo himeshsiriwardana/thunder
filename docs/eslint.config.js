@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import thunderPlugin, {createParserOptions} from '@thunder/eslint-plugin-thunder';
+import thunderPlugin, {createParserOptions} from '@thunderid/eslint-plugin-thunder';
 import {fileURLToPath} from 'url';
 import {dirname} from 'path';
 

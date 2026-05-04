@@ -43,7 +43,7 @@
     "@docusaurus/plugin-content-docs": "3.9.2",
     "@docusaurus/preset-classic": "3.9.2",
     "@mdx-js/react": "3.0.0",
-    "@thunder/eslint-plugin-thunder": "workspace:^",
+    "@thunderid/eslint-plugin-thunder": "workspace:^",
     "@thunderid/logger": "workspace:^",
     "@thunder/prettier-config": "workspace:^",
     "@wso2/oxygen-ui": "catalog:",
