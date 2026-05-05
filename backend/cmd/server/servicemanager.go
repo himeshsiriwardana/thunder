@@ -200,7 +200,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	exporters = append(exporters, roleExporter)
 	authZService := authz.Initialize(roleService)
 
-	idpService, idpExporter, err := idp.Initialize(mux)
+	idpService, idpExporter, err := idp.Initialize(cacheManager, mux)
 	if err != nil {
 		logger.Fatal("Failed to initialize IDPService", log.Error(err))
 	}
@@ -348,7 +348,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	// Initialize OAuth services.
 	err = oauth.Initialize(mux, applicationService, inboundClientService, authnProvider, jwtService, jweService,
 		flowExecService, observabilitySvc, pkiService, ouService, attributeCacheService, authZService, entityProvider,
-		resourceService, i18nService)
+		resourceService, i18nService, idpService)
 	if err != nil {
 		logger.Fatal("Failed to initialize OAuth services", log.Error(err))
 	}
