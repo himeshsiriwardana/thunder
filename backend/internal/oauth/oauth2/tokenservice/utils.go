@@ -243,24 +243,9 @@ func ExtractUserAttributes(claims map[string]interface{}) map[string]interface{}
 	return userAttributes
 }
 
-// getValidIssuers collects all valid/trusted issuers for the given OAuth application.
-func getValidIssuers(oauthApp *inboundmodel.OAuthClient) map[string]bool {
-	validIssuers := make(map[string]bool)
-
-	tokenConfig := ResolveTokenConfig(oauthApp, TokenTypeAccess)
-	validIssuers[tokenConfig.Issuer] = true
-
-	// TODO: Add support for external issuers
-	return validIssuers
-}
-
-// validateIssuer validates that a token issuer is trusted by checking against configured issuers.
-func validateIssuer(issuer string, oauthApp *inboundmodel.OAuthClient) error {
-	validIssuers := getValidIssuers(oauthApp)
-	if !validIssuers[issuer] {
-		return fmt.Errorf("token issuer '%s' is not supported", issuer)
-	}
-	return nil
+// isSelfIssuer reports whether the given issuer is the server's own configured issuer.
+func isSelfIssuer(issuer string) bool {
+	return issuer == config.GetServerRuntime().Config.JWT.Issuer
 }
 
 // FetchUserAttributes fetches user attributes and merges default claims and groups into the return map.

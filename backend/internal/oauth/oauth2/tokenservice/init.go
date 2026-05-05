@@ -19,6 +19,7 @@
 package tokenservice
 
 import (
+	"github.com/asgardeo/thunder/internal/idp"
 	"github.com/asgardeo/thunder/internal/oauth/oauth2/jwksresolver"
 	"github.com/asgardeo/thunder/internal/system/jose/jwe"
 	"github.com/asgardeo/thunder/internal/system/jose/jwt"
@@ -30,8 +31,9 @@ func Initialize(
 	jwtService jwt.JWTServiceInterface,
 	jweService jwe.JWEServiceInterface,
 	resolver *jwksresolver.Resolver,
+	idpService idp.IDPServiceInterface,
 ) (TokenBuilderInterface, TokenValidatorInterface) {
 	tokenBuilder := newTokenBuilder(jwtService, jweService, resolver)
-	tokenValidator := newTokenValidator(jwtService)
+	tokenValidator := newTokenValidator(jwtService, idpService)
 	return tokenBuilder, tokenValidator
 }
