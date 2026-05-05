@@ -634,14 +634,14 @@ func (s *entityService) validateCredentialKeys(
 		return nil
 	}
 
-	credFields, svcErr := s.entityTypeService.GetCredentialAttributes(ctx,
-		entitytype.TypeCategory(category), entityType)
+	credInfos, svcErr := s.entityTypeService.GetAttributes(ctx,
+		entitytype.TypeCategory(category), entityType, true, false, false)
 	if svcErr != nil {
 		return fmt.Errorf("failed to get credential attributes from schema: %s", svcErr.ErrorDescription)
 	}
-	allowed := make(map[string]struct{}, len(credFields))
-	for _, f := range credFields {
-		allowed[f] = struct{}{}
+	allowed := make(map[string]struct{}, len(credInfos))
+	for _, a := range credInfos {
+		allowed[a.Attribute] = struct{}{}
 	}
 	for key := range updates {
 		if _, ok := allowed[key]; !ok {
@@ -849,13 +849,13 @@ func (s *entityService) extractAndHashSchemaCredentials(ctx context.Context, ent
 		return nil, nil
 	}
 
-	credentialFields, svcErr := s.entityTypeService.GetCredentialAttributes(ctx,
-		entitytype.TypeCategory(entity.Category), entity.Type)
+	credentialInfos, svcErr := s.entityTypeService.GetAttributes(ctx,
+		entitytype.TypeCategory(entity.Category), entity.Type, true, false, false)
 	if svcErr != nil {
 		return nil, fmt.Errorf("failed to get credential attributes from schema: %s", svcErr.ErrorDescription)
 	}
 
-	if len(credentialFields) == 0 {
+	if len(credentialInfos) == 0 {
 		return nil, nil
 	}
 
@@ -865,10 +865,10 @@ func (s *entityService) extractAndHashSchemaCredentials(ctx context.Context, ent
 	}
 
 	plaintextCreds := make(map[string]string)
-	for _, field := range credentialFields {
-		if val, ok := attrsMap[field].(string); ok && val != "" {
-			plaintextCreds[field] = val
-			delete(attrsMap, field)
+	for _, info := range credentialInfos {
+		if val, ok := attrsMap[info.Attribute].(string); ok && val != "" {
+			plaintextCreds[info.Attribute] = val
+			delete(attrsMap, info.Attribute)
 		}
 	}
 

@@ -74,18 +74,16 @@ type EntityTypeServiceInterface interface {
 		attributes json.RawMessage,
 		exists func(map[string]interface{}) (bool, error),
 	) (bool, *serviceerror.ServiceError)
-	GetCredentialAttributes(
+	GetAttributes(
 		ctx context.Context, category TypeCategory, entityType string,
-	) ([]string, *serviceerror.ServiceError)
+		allowCredential, allowNonCredential, requiredOnly bool,
+	) ([]AttributeInfo, *serviceerror.ServiceError)
 	GetUniqueAttributes(
 		ctx context.Context, category TypeCategory, entityType string,
 	) ([]string, *serviceerror.ServiceError)
 	GetDisplayAttributesByNames(
 		ctx context.Context, category TypeCategory, names []string,
 	) (map[string]string, *serviceerror.ServiceError)
-	GetNonCredentialAttributes(
-		ctx context.Context, category TypeCategory, entityType string, requiredOnly bool,
-	) ([]AttributeInfo, *serviceerror.ServiceError)
 }
 
 // entityTypeService is the default implementation of the EntityTypeServiceInterface.
@@ -616,10 +614,13 @@ func (us *entityTypeService) ValidateEntityUniqueness(
 	return true, nil
 }
 
-// GetCredentialAttributes returns the names of schema properties marked as credentials for a given entity type.
-func (us *entityTypeService) GetCredentialAttributes(
+// GetAttributes returns schema properties filtered by the provided flags for the given entity type.
+// allowCredential includes credential properties; allowNonCredential includes non-credential properties.
+// When requiredOnly is true, only required properties are included.
+func (us *entityTypeService) GetAttributes(
 	ctx context.Context, category TypeCategory, entityType string,
-) ([]string, *serviceerror.ServiceError) {
+	allowCredential, allowNonCredential, requiredOnly bool,
+) ([]AttributeInfo, *serviceerror.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, entityTypeLoggerComponentName))
 
 	if svcErr := validateCategory(category); svcErr != nil {
@@ -631,10 +632,10 @@ func (us *entityTypeService) GetCredentialAttributes(
 		if errors.Is(err, ErrEntityTypeNotFound) {
 			return nil, entityTypeNotFoundErr(category)
 		}
-		return nil, logAndReturnServerError(logger, "Failed to load entity type for credential attributes", err)
+		return nil, logAndReturnServerError(logger, "Failed to load entity type for attribute infos", err)
 	}
 
-	return compiledSchema.GetCredentialAttributes(), nil
+	return compiledSchema.GetAttributes(allowCredential, allowNonCredential, requiredOnly), nil
 }
 
 // GetUniqueAttributes returns the names of schema properties marked as unique for a given entity type.
@@ -678,29 +679,6 @@ func (us *entityTypeService) GetDisplayAttributesByNames(
 	}
 
 	return result, nil
-}
-
-// GetNonCredentialAttributes returns non-credential attributes defined in the schema for the given
-// category and entity type. When requiredOnly is true, only required attributes are returned.
-func (us *entityTypeService) GetNonCredentialAttributes(
-	ctx context.Context, category TypeCategory, entityType string, requiredOnly bool,
-) ([]AttributeInfo, *serviceerror.ServiceError) {
-	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, entityTypeLoggerComponentName))
-
-	if svcErr := validateCategory(category); svcErr != nil {
-		return nil, svcErr
-	}
-
-	compiledSchema, err := us.getCompiledSchemaForEntityType(ctx, category, entityType, logger)
-	if err != nil {
-		if errors.Is(err, ErrEntityTypeNotFound) {
-			return nil, entityTypeNotFoundErr(category)
-		}
-		return nil, logAndReturnServerError(logger,
-			"Failed to load entity type for non-credential attributes", err)
-	}
-
-	return compiledSchema.GetNonCredentialAttributes(requiredOnly), nil
 }
 
 func (us *entityTypeService) getCompiledSchemaForEntityType(

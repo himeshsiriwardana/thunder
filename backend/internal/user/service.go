@@ -589,8 +589,8 @@ func (us *userService) UpdateUserAttributes(
 		logger.Error("Entity type service is not configured for user operations")
 		return nil, &serviceerror.InternalServerError
 	}
-	schemaCredentialAttributes, svcErr := us.entityTypeService.GetCredentialAttributes(ctx,
-		entitytype.TypeCategoryUser, existingUser.Type)
+	schemaCredentialInfos, svcErr := us.entityTypeService.GetAttributes(ctx,
+		entitytype.TypeCategoryUser, existingUser.Type, true, false, false)
 	if svcErr != nil {
 		if svcErr.Code == entitytype.ErrorEntityTypeNotFound.Code {
 			return nil, &ErrorEntityTypeNotFound
@@ -599,13 +599,13 @@ func (us *userService) UpdateUserAttributes(
 			fmt.Errorf("schema service error: %s", svcErr.ErrorDescription.DefaultValue),
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
-	if len(schemaCredentialAttributes) > 0 {
+	if len(schemaCredentialInfos) > 0 {
 		var attrs map[string]any
 		if err := json.Unmarshal(attributes, &attrs); err != nil {
 			return nil, &ErrorInvalidRequestFormat
 		}
-		for _, credField := range schemaCredentialAttributes {
-			if _, ok := attrs[credField]; ok {
+		for _, credInfo := range schemaCredentialInfos {
+			if _, ok := attrs[credInfo.Attribute]; ok {
 				return nil, &ErrorInvalidRequestFormat
 			}
 		}

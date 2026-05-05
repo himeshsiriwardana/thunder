@@ -1031,8 +1031,8 @@ func (s *inboundClientService) validateUserAttributesAgainstAllowedTypes(
 
 	validAttrs := make(map[string]bool)
 	for _, entityTypeName := range allowedEntityTypes {
-		attrInfos, svcErr := s.entityType.GetNonCredentialAttributes(
-			security.WithRuntimeContext(ctx), entitytype.TypeCategoryUser, entityTypeName, false)
+		attrInfos, svcErr := s.entityType.GetAttributes(
+			security.WithRuntimeContext(ctx), entitytype.TypeCategoryUser, entityTypeName, false, true, false)
 		if svcErr != nil {
 			if svcErr.Type == serviceerror.ServerErrorType {
 				return ErrUserSchemaLookupFailed

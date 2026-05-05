@@ -1809,7 +1809,7 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_NoOpWhenN
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_ValidAssertionAttribute() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}, {Attribute: "name"}}, nil)
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1820,7 +1820,7 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_ValidAsse
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_InvalidAssertionAttribute() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1831,7 +1831,7 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_InvalidAs
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_ValidAccessTokenAttribute() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1846,7 +1846,7 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_ValidAcce
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_InvalidAccessTokenAttribute() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1861,7 +1861,7 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_InvalidAc
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_InvalidIDTokenAttribute() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1876,7 +1876,7 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_InvalidID
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_InvalidUserInfoAttribute() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1889,7 +1889,7 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_InvalidUs
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_ClientErrorMapsToFKError() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return(nil, &serviceerror.ServiceError{Type: serviceerror.ClientErrorType, Code: "ERR"})
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1900,7 +1900,7 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_ClientErr
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_ServerErrorMapsToLookupFailed() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return(nil, &serviceerror.ServiceError{Type: serviceerror.ServerErrorType, Code: "SRV"})
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1911,9 +1911,9 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_ServerErr
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_UnionAcrossMultipleTypes() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "contractor", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "contractor", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "agency_name"}}, nil)
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1925,7 +1925,7 @@ func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_UnionAcro
 
 func (suite *InboundClientServiceTestSuite) TestValidateUserAttributes_ComputedAttributesSkipSchemaCheck() {
 	us := entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
 	svc := &inboundClientService{entityType: us, logger: log.GetLogger()}
 
@@ -1961,7 +1961,7 @@ func (suite *InboundClientServiceTestSuite) TestCreateInboundClient_RejectsInval
 			TotalResults: 1,
 			Schemas:      []entitytypepkg.EntityTypeListItem{{Name: "employee"}},
 		}, nil)
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
 
 	svc := newInboundClientService(store, transaction.NewNoOpTransactioner(), nil, nil, nil, nil, nil, us, nil)
@@ -1985,7 +1985,7 @@ func (suite *InboundClientServiceTestSuite) TestUpdateInboundClient_RejectsInval
 			TotalResults: 1,
 			Schemas:      []entitytypepkg.EntityTypeListItem{{Name: "employee"}},
 		}, nil)
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
 
 	svc := newInboundClientService(store, transaction.NewNoOpTransactioner(), nil, nil, nil, nil, nil, us, nil)
@@ -2009,7 +2009,7 @@ func (suite *InboundClientServiceTestSuite) TestValidate_RejectsInvalidUserAttri
 			TotalResults: 1,
 			Schemas:      []entitytypepkg.EntityTypeListItem{{Name: "employee"}},
 		}, nil)
-	us.EXPECT().GetNonCredentialAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false).
+	us.EXPECT().GetAttributes(mock.Anything, entitytypepkg.TypeCategoryUser, "employee", false, true, false).
 		Return([]entitytypepkg.AttributeInfo{{Attribute: "email"}}, nil)
 
 	svc := newInboundClientService(store, transaction.NewNoOpTransactioner(), nil, nil, nil, nil, nil, us, nil)

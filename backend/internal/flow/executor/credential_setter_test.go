@@ -186,7 +186,7 @@ func (suite *CredentialSetterTestSuite) TestExecute_ServiceError() {
 
 func (suite *CredentialSetterTestSuite) TestExecute_CustomAttribute() {
 	userID := testUserID
-	customAttr := "pin"
+	const customAttr = "pin"
 	pinValue := "1234"
 
 	ctx := &core.NodeContext{
