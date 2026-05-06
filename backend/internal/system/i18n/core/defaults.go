@@ -97,6 +97,8 @@ var defaultMessages = map[string]string{
 	"error.agentservice.multiple_oauth_configs_description": "An entity may have at most one inbound auth config per protocol",
 	"error.agentservice.organization_unit_not_found": "Organization unit not found",
 	"error.agentservice.organization_unit_not_found_description": "The specified organization unit does not exist",
+	"error.agentservice.owner_not_found": "Owner not found",
+	"error.agentservice.owner_not_found_description": "The specified owner does not match any known user, application, or agent",
 	"error.agentservice.schema_validation_failed": "Schema validation failed",
 	"error.agentservice.schema_validation_failed_description": "The provided attributes failed schema validation",
 	"error.agentservice.theme_not_found": "Theme not found",
