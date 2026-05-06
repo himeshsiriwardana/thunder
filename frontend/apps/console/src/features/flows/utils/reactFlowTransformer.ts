@@ -652,6 +652,11 @@ function collectInputsForExecutionNodes(
       return flowNode;
     }
 
+    // If executor already has user-configured inputs, preserve them
+    if (flowNode.executor?.inputs && flowNode.executor.inputs.length > 0) {
+      return flowNode;
+    }
+
     const executorName = flowNode.executor?.name;
 
     // OAuth/OIDC executors get a standard 'code' input for OAuth callback

@@ -104,3 +104,29 @@ export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] as const;
  * Passkey modes that require relying party configuration.
  */
 export const PASSKEY_MODES_WITH_RELYING_PARTY = ['challenge', 'register_start'] as const;
+
+/**
+ * Available input types for executor input configuration.
+ * These correspond to the backend input type constants defined in common/constants.go.
+ */
+export const INPUT_TYPES = [
+  {value: 'TEXT_INPUT', translationKey: 'flows:core.executions.inputs.types.text'},
+  {value: 'EMAIL_INPUT', translationKey: 'flows:core.executions.inputs.types.email'},
+  {value: 'PASSWORD_INPUT', translationKey: 'flows:core.executions.inputs.types.password'},
+  {value: 'OTP_INPUT', translationKey: 'flows:core.executions.inputs.types.otp'},
+  {value: 'PHONE_INPUT', translationKey: 'flows:core.executions.inputs.types.phone'},
+  {value: 'CONSENT_INPUT', translationKey: 'flows:core.executions.inputs.types.consent'},
+  {value: 'SELECT', translationKey: 'flows:core.executions.inputs.types.select'},
+] as const;
+
+/**
+ * Executors that have fixed/programmatic inputs and should not show the input editor.
+ * OAuth executors get a fixed 'code' input; ConsentExecutor gets 'consent_decisions'.
+ */
+export const EXECUTORS_WITH_FIXED_INPUTS = new Set<string>([
+  ExecutionTypes.GoogleFederation,
+  ExecutionTypes.GithubFederation,
+  ExecutionTypes.OAuthExecutor,
+  ExecutionTypes.OIDCAuthExecutor,
+  ExecutionTypes.ConsentExecutor,
+]);

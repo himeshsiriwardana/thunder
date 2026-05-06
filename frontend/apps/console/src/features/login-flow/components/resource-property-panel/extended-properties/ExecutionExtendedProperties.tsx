@@ -16,10 +16,12 @@
  * under the License.
  */
 
-import {useMemo, type ReactNode} from 'react';
+import {Stack} from '@wso2/oxygen-ui';
+import {useCallback, useMemo, type ReactNode} from 'react';
 import ConsentProperties from './execution-properties/ConsentProperties';
-import {EXECUTOR_TO_IDP_TYPE_MAP} from './execution-properties/constants';
+import {EXECUTOR_TO_IDP_TYPE_MAP, EXECUTORS_WITH_FIXED_INPUTS} from './execution-properties/constants';
 import EmailProperties from './execution-properties/EmailProperties';
+import ExecutorInputsEditor from './execution-properties/ExecutorInputsEditor';
 import FederationProperties from './execution-properties/FederationProperties';
 import HttpRequestProperties from './execution-properties/HttpRequestProperties';
 import IdentifyingProperties from './execution-properties/IdentifyingProperties';
@@ -34,6 +36,7 @@ import SmsOtpProperties from './execution-properties/SmsOtpProperties';
 import SmsProperties from './execution-properties/SmsProperties';
 import UserTypeResolverProperties from './execution-properties/UserTypeResolverProperties';
 import type {CommonResourcePropertiesPropsInterface} from '@/features/flows/components/resource-property-panel/ResourceProperties';
+import type {FlowNodeInput} from '@/features/flows/models/responses';
 import {ExecutionTypes} from '@/features/flows/models/steps';
 import type {StepData} from '@/features/flows/models/steps';
 
@@ -55,51 +58,85 @@ function ExecutionExtendedProperties({resource, onChange}: ExecutionExtendedProp
     return stepData?.action?.executor?.name;
   }, [resource]);
 
+  const currentInputs = useMemo((): FlowNodeInput[] => {
+    const stepData = resource?.data as StepData | undefined;
+    return (stepData?.action?.executor as {inputs?: FlowNodeInput[]} | undefined)?.inputs ?? [];
+  }, [resource]);
+
+  const handleInputsChange = useCallback(
+    (inputs: FlowNodeInput[]) => {
+      onChange('data.action.executor.inputs', inputs.length > 0 ? inputs : undefined, resource);
+    },
+    [onChange, resource],
+  );
+
   if (!executorName) {
     return null;
   }
 
+  const showInputsEditor = !EXECUTORS_WITH_FIXED_INPUTS.has(executorName);
+
+  let executorSpecificProperties: ReactNode = null;
+
   switch (executorName) {
     case ExecutionTypes.SMSOTPAuth:
-      return <SmsOtpProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <SmsOtpProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.ConsentExecutor:
-      return <ConsentProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <ConsentProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.IdentifyingExecutor:
-      return <IdentifyingProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <IdentifyingProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.PasskeyAuth:
-      return <PasskeyProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <PasskeyProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.OUResolverExecutor:
-      return <OUResolverProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <OUResolverProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.InviteExecutor:
-      return <InviteProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <InviteProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.EmailExecutor:
-      return <EmailProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <EmailProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.SMSExecutor:
-      return <SmsProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <SmsProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.PermissionValidator:
-      return <PermissionValidatorProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <PermissionValidatorProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.ProvisioningExecutor:
-      return <ProvisioningProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <ProvisioningProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.OUExecutor:
-      return <OUExecutorProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <OUExecutorProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.UserTypeResolver:
-      return <UserTypeResolverProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <UserTypeResolverProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.HTTPRequestExecutor:
-      return <HttpRequestProperties resource={resource} onChange={onChange} />;
+      executorSpecificProperties = <HttpRequestProperties resource={resource} onChange={onChange} />;
+      break;
     case ExecutionTypes.CredentialSetter:
     case ExecutionTypes.AttributeUniquenessValidator:
     case ExecutionTypes.MagicLinkExecutor:
-      return <NoConfigProperties />;
+      executorSpecificProperties = <NoConfigProperties />;
+      break;
     default:
+      // Federated executors (Google, GitHub, OAuth, OIDC) - check if executor has an IDP type mapping
+      if (EXECUTOR_TO_IDP_TYPE_MAP[executorName]) {
+        executorSpecificProperties = <FederationProperties resource={resource} onChange={onChange} />;
+      }
       break;
   }
 
-  // Federated executors (Google, GitHub, OAuth, OIDC) - check if executor has an IDP type mapping
-  if (EXECUTOR_TO_IDP_TYPE_MAP[executorName]) {
-    return <FederationProperties resource={resource} onChange={onChange} />;
-  }
-
-  return null;
+  return (
+    <Stack gap={2}>
+      {executorSpecificProperties}
+      {showInputsEditor && <ExecutorInputsEditor inputs={currentInputs} onChange={handleInputsChange} />}
+    </Stack>
+  );
 }
 
 export default ExecutionExtendedProperties;

@@ -2091,6 +2091,24 @@ const translations = {
     'core.executions.httpRequest.errorHandling.retryDelay.placeholder': '0',
     'core.executions.httpRequest.errorHandling.retryDelay.hint': 'Delay between retries in milliseconds (max 5000).',
 
+    // Executor input configuration
+    'core.executions.inputs.title': 'Executor Inputs',
+    'core.executions.inputs.typeLabel': 'Type',
+    'core.executions.inputs.typePlaceholder': 'Select type',
+    'core.executions.inputs.identifierLabel': 'Identifier',
+    'core.executions.inputs.identifierPlaceholder': 'e.g., username, email',
+    'core.executions.inputs.required': 'Required',
+    'core.executions.inputs.add': 'Add Input',
+    'core.executions.inputs.remove': 'Remove input',
+    'core.executions.inputs.empty': 'No custom inputs configured. The executor will use its default inputs.',
+    'core.executions.inputs.types.text': 'Text',
+    'core.executions.inputs.types.email': 'Email',
+    'core.executions.inputs.types.password': 'Password',
+    'core.executions.inputs.types.otp': 'OTP',
+    'core.executions.inputs.types.phone': 'Phone',
+    'core.executions.inputs.types.consent': 'Consent',
+    'core.executions.inputs.types.select': 'Select',
+
     // Execution steps - tooltips and messages
     // No-config executors
     'core.executions.noConfig.description': 'This executor has no configurable properties.',

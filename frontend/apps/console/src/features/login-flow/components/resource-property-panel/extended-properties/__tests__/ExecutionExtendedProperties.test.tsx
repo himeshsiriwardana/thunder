@@ -1755,7 +1755,7 @@ describe('ExecutionExtendedProperties', () => {
       expect(container.firstChild).toBeNull();
     });
 
-    it('should return null when executor type is not mapped', () => {
+    it('should render only the inputs editor when executor type is not mapped', () => {
       const resourceWithUnmappedExecutor = {
         id: 'resource-1',
         data: {
@@ -1771,7 +1771,8 @@ describe('ExecutionExtendedProperties', () => {
         <ExecutionExtendedProperties resource={resourceWithUnmappedExecutor} onChange={mockOnChange} />,
       );
 
-      expect(container.firstChild).toBeNull();
+      expect(container.firstChild).not.toBeNull();
+      expect(screen.getByText('flows:core.executions.inputs.title')).toBeInTheDocument();
     });
 
     it('should handle undefined resource gracefully', () => {
