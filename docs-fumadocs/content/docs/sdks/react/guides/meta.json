@@ -1,0 +1,7 @@
+{
+  "title": "Guides",
+  "pages": [
+    "accessing-protected-apis",
+    "protecting-routes"
+  ]
+}

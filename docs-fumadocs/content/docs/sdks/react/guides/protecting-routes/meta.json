@@ -1,0 +1,9 @@
+{
+  "title": "Protecting Routes",
+  "pages": [
+    "overview",
+    "react-router",
+    "tanstack-router",
+    "custom"
+  ]
+}

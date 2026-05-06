@@ -1,0 +1,307 @@
+---
+title: React Quickstart
+sidebar_position: 1
+description: Quick start guide to integrate Thunder with a React application
+persona: app
+---
+
+
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+
+# React Quickstart
+
+Welcome to the React Quickstart guide! In this document, you will learn to build a React app, add user sign-in and display user profile information using Thunder.
+
+
+## What You Will Learn
+
+- }>Create new React app using Vite
+- }>Install <code>@asgardeo/react</code> package
+- }>Add user sign-in and sign-out
+- }>Display user profile information
+
+## Prerequisites
+
+- }>About 15 minutes
+- }>Thunder running locally or on a server
+- }>Node.js installed on your system
+- }>A JavaScript package manager like npm, yarn, or pnpm
+- }>A favorite text editor or IDE
+
+
+<Callout title="Example Source Code">
+Check out the complete [React Sample App](https://github.com/asgardeo/thunder/tree/main/samples/apps/react-sdk-sample) in the Thunder repository
+</Callout>
+
+
+## Create an Application in Thunder
+
+Before integrating Thunder with your React app, you need to create an application in Thunder.
+
+### Using the Thunder Console
+
+1. Sign into the Thunder Console at [https://localhost:8090/console](https://localhost:8090/console)
+2. Navigate to **Applications** → **New Application**
+3. Provide the following details:
+   - **Name**: `my-react-app`
+   - **Type**: Single Page Application (SPA)
+   - **Authorized Redirect URL**: `http://localhost:5173`
+
+<Callout>
+The authorized redirect URL determines where Thunder should send users after they successfully log in. For this guide, we'll use `http://localhost:5173`, as the Vite development server runs at this URL by default.
+</Callout>
+
+### Using the Thunder API
+
+Alternatively, you can create an application using the Thunder API. First, [obtain a system API token](/guides/quick-start/get-thunder#obtain-system-api-token), then:
+
+```bash
+curl -kL -X POST https://localhost:8090/applications \
+  -H 'Authorization: Bearer <your-system-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "my-react-app",
+    "inboundAuthConfig": [{
+      "type": "oauth2",
+      "config": {
+        "grantTypes": ["authorization_code", "refresh_token"],
+        "responseTypes": ["code"],
+        "redirectUris": ["http://localhost:5173"],
+        "tokenEndpointAuthMethod": "none",
+        "publicClient": true,
+        "pkceRequired": true
+      }
+    }]
+  }'
+```
+
+<Callout type="warn" title="Important">
+Note down the **Client ID** from the response. You'll need it to configure your React app.
+</Callout>
+
+## Create a React App
+
+Create your new React app using Vite:
+
+<Tabs items={["npm", "Yarn", "pnpm"]}>
+<Tab value="npm">
+```bash
+npm create vite@latest my-react-app -- --template react
+    cd my-react-app
+    npm install
+```
+</Tab>
+<Tab value="Yarn">
+```bash
+yarn create vite my-react-app --template react
+    cd my-react-app
+    yarn install
+```
+</Tab>
+<Tab value="pnpm">
+```bash
+pnpm create vite my-react-app --template react
+    cd my-react-app
+    pnpm install
+```
+</Tab>
+</Tabs>
+
+## Install @asgardeo/react
+
+Thunder uses the Asgardeo React SDK for authentication. Install it in your project:
+
+<Tabs items={["npm", "Yarn", "pnpm", "Bun"]}>
+<Tab value="npm">
+```bash
+npm install @asgardeo/react
+```
+</Tab>
+<Tab value="Yarn">
+```bash
+yarn add @asgardeo/react
+```
+</Tab>
+<Tab value="pnpm">
+```bash
+pnpm add @asgardeo/react
+```
+</Tab>
+<Tab value="Bun">
+```bash
+bun add @asgardeo/react
+```
+</Tab>
+</Tabs>
+
+## Add AsgardeoProvider to Your App
+
+The `<AsgardeoProvider />` serves as a context provider for the SDK. Integrate it by wrapping your root component.
+
+Update the `main.jsx` file with the following:
+
+```jsx title="src/main.jsx" showLineNumbers
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { AsgardeoProvider } from '@asgardeo/react'
+import App from './App.jsx'
+import './index.css'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <AsgardeoProvider
+      clientId="<your-client-id>"
+      baseUrl="https://localhost:8090"
+      platform="AsgardeoV2"
+    >
+      <App />
+    </AsgardeoProvider>
+  </StrictMode>
+)
+```
+
+<Callout type="warn" title="Configuration">
+Replace `<your-client-id>` with the Client ID you obtained when creating the application in Thunder.
+</Callout>
+
+### Configuration Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `clientId` | The Client ID from your Thunder application |
+| `baseUrl` | Your Thunder instance URL (e.g., `https://localhost:8090`) |
+| `platform` | Must be set to `"AsgardeoV2"` for Thunder |
+
+## Add Sign-In and Sign-Out
+
+The Asgardeo React SDK provides `SignInButton` and `SignOutButton` components along with `SignedIn` and `SignedOut` components for conditional rendering.
+
+Replace the content of `App.jsx` with:
+
+```jsx title="src/App.jsx" showLineNumbers
+import {
+  SignedIn,
+  SignedOut,
+  SignInButton,
+  SignOutButton,
+  Loading
+} from '@asgardeo/react'
+import './App.css'
+
+function App() {
+  return (
+    <>
+      <Loading>
+        <div>Loading authentication...</div>
+      </Loading>
+
+      <header>
+        <h1>Thunder Auth Demo</h1>
+        <SignedIn>
+          <SignOutButton>Sign Out</SignOutButton>
+        </SignedIn>
+        <SignedOut>
+          <SignInButton>Sign In</SignInButton>
+        </SignedOut>
+      </header>
+    </>
+  )
+}
+
+export default App
+```
+
+## Display User Profile Information
+
+Use the `User` component to access and display user profile information:
+
+```jsx title="src/App.jsx" {7} showLineNumbers
+import {
+  SignedIn,
+  SignedOut,
+  SignInButton,
+  SignOutButton,
+  Loading,
+  User
+} from '@asgardeo/react'
+import './App.css'
+
+function App() {
+  return (
+    <>
+      <Loading>
+        <div>Loading authentication...</div>
+      </Loading>
+
+      <header>
+        <h1>Thunder Auth Demo</h1>
+        <SignedIn>
+          <SignOutButton>Sign Out</SignOutButton>
+        </SignedIn>
+        <SignedOut>
+          <SignInButton>Sign In</SignInButton>
+        </SignedOut>
+      </header>
+
+      <main>
+        <SignedIn>
+          <User>
+            {(user) => user && (
+              <div className="user-profile">
+                {user.picture && (
+                  <img
+                    src={user.picture}
+                    alt={user.name || 'User avatar'}
+                    style={{ width: '80px', height: '80px', borderRadius: '50%' }}
+                  />
+                )}
+                <h2>Welcome, {user.name || user.username}!</h2>
+                <div className="user-details">
+                  <p><strong>Email:</strong> {user.email}</p>
+                  <p><strong>First Name:</strong> {user.given_name}</p>
+                  <p><strong>Last Name:</strong> {user.family_name}</p>
+                </div>
+              </div>
+            )}
+          </User>
+        </SignedIn>
+      </main>
+    </>
+  )
+}
+
+export default App
+```
+
+## Run Your App
+
+Start the development server:
+
+<Tabs items={["npm", "Yarn", "pnpm"]}>
+<Tab value="npm">
+```bash
+npm run dev
+```
+</Tab>
+<Tab value="Yarn">
+```bash
+yarn dev
+```
+</Tab>
+<Tab value="pnpm">
+```bash
+pnpm run dev
+```
+</Tab>
+</Tabs>
+
+Visit your app at [http://localhost:5173](http://localhost:5173)
+
+<Callout title="Success">
+You should now see the sign-in button. Click it to authenticate with Thunder!
+</Callout>
+

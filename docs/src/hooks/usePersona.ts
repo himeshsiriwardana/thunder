@@ -18,11 +18,11 @@
 
 import {useCallback, useEffect, useState} from 'react';
 
-export type Persona = 'all' | 'app' | 'iam' | 'devops';
+export type Persona = 'all' | 'applications' | 'agents' | 'apis' | 'wallets';
 
-export const STORAGE_KEY = 'thunder-docs-persona';
+export const STORAGE_KEY = 'thunder-docs-usecase';
 
-const CHANGE_EVENT = 'thunder-persona-change';
+const CHANGE_EVENT = 'thunder-usecase-change';
 
 export interface PersonaOption {
   value: Persona;
@@ -31,37 +31,28 @@ export interface PersonaOption {
 }
 
 export const PERSONA_OPTIONS: PersonaOption[] = [
-  {value: 'all', label: 'All Roles', description: 'Browse all documentation'},
-  {value: 'app', label: 'Application Developer', description: 'Integrate Thunder into your app'},
-  {value: 'iam', label: 'IAM Developer', description: 'Configure and manage Thunder'},
-  {value: 'devops', label: 'DevOps Engineer', description: 'Deploy and operate Thunder'},
+  {value: 'all', label: 'All', description: 'Browse all documentation'},
+  {value: 'applications', label: 'Applications', description: 'Add login to your web or mobile app'},
+  {value: 'agents', label: 'Agents', description: 'Secure AI agents and tool calls'},
+  {value: 'apis', label: 'APIs', description: 'Protect your APIs and services'},
+  {value: 'wallets', label: 'Wallets', description: 'Identity for digital wallets'},
 ];
 
 export function applyPersona(persona: Persona): void {
   const html = document.documentElement;
   if (persona === 'all') {
-    html.removeAttribute('data-persona');
+    html.removeAttribute('data-usecase');
   } else {
-    html.setAttribute('data-persona', persona);
+    html.setAttribute('data-usecase', persona);
   }
 }
 
-/**
- * Persists the selected persona to localStorage, applies it to the DOM, and
- * dispatches a custom event so any other component using usePersona() updates
- * in the same browser tab without a page reload.
- */
 export function setStoredPersona(persona: Persona): void {
   localStorage.setItem(STORAGE_KEY, persona);
   applyPersona(persona);
   window.dispatchEvent(new CustomEvent<Persona>(CHANGE_EVENT, {detail: persona}));
 }
 
-/**
- * Returns the current persona value and a setter that persists and broadcasts
- * the change. Both the landing page and the navbar dropdown use this hook so
- * they always reflect the same selection.
- */
 export function usePersona(): [Persona, (value: Persona) => void] {
   const [persona, setPersona] = useState<Persona>('all');
 

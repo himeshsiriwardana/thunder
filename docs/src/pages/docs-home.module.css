@@ -60,12 +60,12 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Header
+   Header (now only badge, title/subtitle moved to stepHeader)
    ───────────────────────────────────────────────────────────── */
 
 .header {
   text-align: center;
-  margin-bottom: 3.5rem;
+  margin-bottom: 1.5rem;
   opacity: 0;
   transform: translateY(22px);
   transition: opacity 0.55s ease, transform 0.55s ease;
@@ -116,34 +116,44 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Cards grid
+   Cards grid (3 old personas → 4 use-case cards)
    ───────────────────────────────────────────────────────────── */
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.375rem;
+}
+
+.cardsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: 1.375rem;
 }
 
 @media (max-width: 860px) {
-  .cards {
+  .cards,
+  .cardsGrid {
     grid-template-columns: 1fr;
     max-width: 480px;
     margin: 0 auto;
   }
 }
 
-@media (min-width: 861px) and (max-width: 1040px) {
-  .cards {
+@media (min-width: 861px) and (max-width: 1100px) {
+  .cards,
+  .cardsGrid {
+    grid-template-columns: repeat(2, 1fr);
     gap: 1rem;
   }
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Card
+   Card (shared between old .card and new .ucCard)
    ───────────────────────────────────────────────────────────── */
 
-.card {
+.card,
+.ucCard {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -160,9 +170,13 @@
     transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
     box-shadow 0.28s ease,
     border-color 0.28s ease;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
 }
 
-[data-theme='dark'] .card {
+[data-theme='dark'] .card,
+[data-theme='dark'] .ucCard {
   background: rgba(255, 255, 255, 0.035);
   border-color: rgba(255, 255, 255, 0.08);
 }
@@ -185,12 +199,14 @@
 }
 
 /* Hover: lift + accent glow */
-.card:hover {
+.card:hover,
+.ucCard:hover {
   transform: translateY(-8px);
 }
 
 /* Top accent line — color per persona */
-.card::before {
+.card::before,
+.ucCard::before {
   content: '';
   position: absolute;
   top: 0;
@@ -202,11 +218,12 @@
   border-radius: 18px 18px 0 0;
 }
 
-.card:hover::before {
+.card:hover::before,
+.ucCard:hover::before {
   opacity: 1;
 }
 
-/* ── Blue (Application Developer) ── */
+/* ── Blue (Application Developer / Applications) ── */
 .blue::before {
   background: linear-gradient(90deg, #1d4ed8, #60a5fa);
 }
@@ -222,7 +239,7 @@
     0 4px 12px rgba(37, 99, 235, 0.12);
 }
 
-/* ── Violet (Identity Developer) ── */
+/* ── Violet (Identity Developer / Agents) ── */
 .violet::before {
   background: linear-gradient(90deg, #6d28d9, #a78bfa);
 }
@@ -238,7 +255,23 @@
     0 4px 12px rgba(109, 40, 217, 0.12);
 }
 
-/* ── Emerald (DevOps Engineer) ── */
+/* ── Amber (APIs) ── */
+.amber::before {
+  background: linear-gradient(90deg, #b45309, #fbbf24);
+}
+.amber:hover {
+  box-shadow:
+    0 12px 40px rgba(180, 83, 9, 0.14),
+    0 4px 12px rgba(180, 83, 9, 0.08);
+  border-color: rgba(180, 83, 9, 0.18);
+}
+[data-theme='dark'] .amber:hover {
+  box-shadow:
+    0 12px 40px rgba(180, 83, 9, 0.22),
+    0 4px 12px rgba(180, 83, 9, 0.12);
+}
+
+/* ── Emerald (DevOps Engineer / Wallets) ── */
 .emerald::before {
   background: linear-gradient(90deg, #047857, #34d399);
 }
@@ -275,6 +308,12 @@
     0 4px 12px rgba(109, 40, 217, 0.1);
   border-color: rgba(109, 40, 217, 0.25);
 }
+.amber.cardActive {
+  box-shadow:
+    0 12px 40px rgba(180, 83, 9, 0.18),
+    0 4px 12px rgba(180, 83, 9, 0.1);
+  border-color: rgba(180, 83, 9, 0.25);
+}
 .emerald.cardActive {
   box-shadow:
     0 12px 40px rgba(4, 120, 87, 0.18),
@@ -303,7 +342,8 @@
   transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.card:hover .iconWrap {
+.card:hover .iconWrap,
+.ucCard:hover .iconWrap {
   transform: scale(1.1);
 }
 
@@ -314,6 +354,10 @@
 .violet .iconWrap {
   background: #f5f3ff;
   color: #7c3aed;
+}
+.amber .iconWrap {
+  background: #fffbeb;
+  color: #b45309;
 }
 .emerald .iconWrap {
   background: #ecfdf5;
@@ -328,13 +372,18 @@
   background: rgba(109, 40, 217, 0.14);
   color: #a78bfa;
 }
+[data-theme='dark'] .amber .iconWrap {
+  background: rgba(180, 83, 9, 0.14);
+  color: #fbbf24;
+}
 [data-theme='dark'] .emerald .iconWrap {
   background: rgba(4, 120, 87, 0.14);
   color: #34d399;
 }
 
-/* Tagline */
-.cardTagline {
+/* Tagline / subtitle */
+.cardTagline,
+.cardSubtitle {
   font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -342,23 +391,37 @@
   margin-bottom: 0.4rem;
 }
 
-.blue .cardTagline {
+.blue .cardTagline,
+.blue .cardSubtitle {
   color: #2563eb;
 }
-.violet .cardTagline {
+.violet .cardTagline,
+.violet .cardSubtitle {
   color: #7c3aed;
 }
-.emerald .cardTagline {
+.amber .cardTagline,
+.amber .cardSubtitle {
+  color: #b45309;
+}
+.emerald .cardTagline,
+.emerald .cardSubtitle {
   color: #059669;
 }
 
-[data-theme='dark'] .blue .cardTagline {
+[data-theme='dark'] .blue .cardTagline,
+[data-theme='dark'] .blue .cardSubtitle {
   color: #60a5fa;
 }
-[data-theme='dark'] .violet .cardTagline {
+[data-theme='dark'] .violet .cardTagline,
+[data-theme='dark'] .violet .cardSubtitle {
   color: #a78bfa;
 }
-[data-theme='dark'] .emerald .cardTagline {
+[data-theme='dark'] .amber .cardTagline,
+[data-theme='dark'] .amber .cardSubtitle {
+  color: #fbbf24;
+}
+[data-theme='dark'] .emerald .cardTagline,
+[data-theme='dark'] .emerald .cardSubtitle {
   color: #34d399;
 }
 
@@ -451,8 +514,243 @@
   flex-shrink: 0;
 }
 
-.card:hover .ctaArrow {
+.card:hover .ctaArrow,
+.ucCard:hover .ctaArrow {
   transform: translateX(5px);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Step wrapper + step header
+   ───────────────────────────────────────────────────────────── */
+
+.stepWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.5rem;
+}
+
+.stepHeader {
+  text-align: center;
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.55s ease 0.1s, transform 0.55s ease 0.1s;
+}
+
+.stepHeaderVisible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: var(--ifm-color-emphasis-500);
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.55s ease 0.7s;
+}
+
+.hintVisible {
+  opacity: 1;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Step 2 — sub-step styles
+   ───────────────────────────────────────────────────────────── */
+
+.subStep {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2.5rem;
+  animation: cardEnter 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+  color: var(--ifm-color-emphasis-600);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.2s;
+  font-family: inherit;
+}
+
+.backBtn:hover {
+  color: var(--ifm-color-emphasis-900);
+}
+
+.subHeader {
+  text-align: center;
+}
+
+.subBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.8rem;
+  border-radius: 100px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: 1.25rem;
+}
+
+[data-theme='dark'] .subBadge {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.subBadgeUsecase {
+  color: var(--ifm-color-primary);
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.subSection {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.groupLabel {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ifm-color-emphasis-500);
+  margin: 0;
+}
+
+/* Tech grid */
+.techGrid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 0.75rem;
+}
+
+@media (max-width: 900px) {
+  .techGrid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .techGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.techCard {
+  border-radius: 12px;
+  border: 1.5px solid rgba(0, 0, 0, 0.07);
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  padding: 1rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  text-align: center;
+  font-family: inherit;
+  transition:
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+[data-theme='dark'] .techCard {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.techCard:hover {
+  transform: translateY(-4px);
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 6px 20px rgba(255, 107, 0, 0.1);
+}
+
+.techLabel {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ifm-color-emphasis-800);
+}
+
+/* Standards grid */
+.standardsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.875rem;
+}
+
+@media (max-width: 700px) {
+  .standardsGrid {
+    grid-template-columns: 1fr;
+    max-width: 380px;
+  }
+}
+
+.standardCard {
+  border-radius: 14px;
+  border: 1.5px solid rgba(0, 0, 0, 0.07);
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  padding: 1.125rem 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition:
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+[data-theme='dark'] .standardCard {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.standardCard:hover {
+  transform: translateY(-4px);
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 6px 20px rgba(255, 107, 0, 0.1);
+}
+
+.standardIcon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: rgba(255, 107, 0, 0.08);
+  color: var(--ifm-color-primary);
+  border: 1px solid rgba(255, 107, 0, 0.15);
+}
+
+.standardLabel {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--ifm-heading-color);
+  margin: 0 0 0.2rem;
+}
+
+.standardDesc {
+  font-size: 0.75rem;
+  color: var(--ifm-color-emphasis-600);
+  margin: 0;
+  line-height: 1.4;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -461,14 +759,20 @@
 
 @media (prefers-reduced-motion: reduce) {
   .header,
-  .card {
+  .stepHeader,
+  .card,
+  .ucCard,
+  .techCard,
+  .standardCard,
+  .subStep {
     transition: none !important;
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
   }
 
-  .headerVisible {
+  .headerVisible,
+  .stepHeaderVisible {
     opacity: 1;
     transform: none;
   }
@@ -476,5 +780,9 @@
   .cardVisible {
     opacity: 1;
     transform: none;
+  }
+
+  .hint {
+    opacity: 1;
   }
 }

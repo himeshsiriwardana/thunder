@@ -19,6 +19,7 @@
 import type {Plugin, AllContent} from '@docusaurus/types';
 
 interface DocFrontMatter {
+  usecase?: string;
   persona?: string;
   [key: string]: unknown;
 }
@@ -36,13 +37,16 @@ interface LoadedContent {
   loadedVersions: LoadedVersion[];
 }
 
+// Maps old persona values to new usecase values for backward compat
+const PERSONA_TO_USECASE: Record<string, string> = {
+  app: 'applications',
+};
+
 /**
- * Reads the `persona` frontmatter field from every doc and exposes a
- * `{ personaMap: Record<string, string> }` global data object.
+ * Reads the `usecase` (or legacy `persona`) frontmatter field from every doc
+ * and exposes a `{ personaMap: Record<string, string> }` global data object.
  *
- * The map key is the doc ID (e.g. "guides/guides/flows/build-a-flow") and the
- * value is the persona string ("app" or "iam"). Pages without a `persona`
- * field are omitted — they are always visible regardless of the selected persona.
+ * Pages without a `usecase` field are omitted — they are always visible.
  */
 export default function personaPlugin(): Plugin {
   return {
@@ -66,9 +70,17 @@ export default function personaPlugin(): Plugin {
       if (docsContent?.loadedVersions) {
         for (const version of docsContent.loadedVersions) {
           for (const doc of version.docs) {
-            const persona = doc.frontMatter?.persona;
-            if (typeof persona === 'string' && persona.length > 0) {
-              personaMap[doc.id] = persona;
+            const usecase = doc.frontMatter?.usecase;
+            const legacyPersona = doc.frontMatter?.persona;
+
+            if (typeof usecase === 'string' && usecase.length > 0) {
+              personaMap[doc.id] = usecase;
+            } else if (typeof legacyPersona === 'string' && legacyPersona.length > 0) {
+              const mapped = PERSONA_TO_USECASE[legacyPersona];
+              if (mapped) {
+                personaMap[doc.id] = mapped;
+              }
+              // iam/devops personas have no direct equivalent — omit (always visible)
             }
           }
         }

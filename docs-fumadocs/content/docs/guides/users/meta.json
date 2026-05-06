@@ -1,0 +1,10 @@
+{
+  "title": "Users",
+  "pages": [
+    "manage-users",
+    "user-groups",
+    "groups",
+    "user-types",
+    "user-schema-reference"
+  ]
+}

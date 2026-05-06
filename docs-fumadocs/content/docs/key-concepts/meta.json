@@ -1,0 +1,10 @@
+{
+  "title": "Key Concepts",
+  "pages": [
+    "authentication",
+    "authorization",
+    "tokens",
+    "passkeys",
+    "events"
+  ]
+}

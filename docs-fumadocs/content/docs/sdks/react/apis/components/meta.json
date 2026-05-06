@@ -1,0 +1,19 @@
+{
+  "title": "Components",
+  "pages": [
+    "sign-in-button",
+    "sign-out-button",
+    "sign-up-button",
+    "signed-in",
+    "signed-out",
+    "loading",
+    "user",
+    "user-profile",
+    "user-dropdown",
+    "organization",
+    "organization-list",
+    "organization-profile",
+    "organization-switcher",
+    "create-organization"
+  ]
+}

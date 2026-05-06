@@ -555,8 +555,9 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
 
 .persona-dropdown__trigger {
   display: flex;
-  align-items: center;
-  gap: 0.4rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
   padding: 0.3rem 0.7rem;
   background: transparent;
   border: 1px solid var(--ifm-color-emphasis-300);
@@ -568,6 +569,15 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
   white-space: nowrap;
   transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
   line-height: 1.4;
+}
+
+.persona-dropdown__section-label {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ifm-color-emphasis-500);
+  line-height: 1;
 }
 
 .persona-dropdown__trigger:hover {
@@ -657,27 +667,34 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
 }
 
 /* ========================================================
-   Persona-based Sidebar Filtering
+   Use-case-based Sidebar Filtering
    ======================================================== */
 
-/* When "App Developer" is selected, hide IAM-only items */
-[data-persona='app'] .sidebar-persona-iam {
+/* Hide applications-only sidebar items for other use cases */
+[data-usecase='agents'] .sidebar-usecase-applications,
+[data-usecase='apis'] .sidebar-usecase-applications,
+[data-usecase='wallets'] .sidebar-usecase-applications {
   display: none;
 }
 
-/* When "IAM Developer" is selected, hide App-only items */
-[data-persona='iam'] .sidebar-persona-app {
+/* Hide agents-only sidebar items for other use cases */
+[data-usecase='applications'] .sidebar-usecase-agents,
+[data-usecase='apis'] .sidebar-usecase-agents,
+[data-usecase='wallets'] .sidebar-usecase-agents {
   display: none;
 }
 
-/* When "DevOps" is selected, hide items not meant for devops */
-[data-persona='devops'] .sidebar-persona-not-devops {
+/* Hide apis-only sidebar items for other use cases */
+[data-usecase='applications'] .sidebar-usecase-apis,
+[data-usecase='agents'] .sidebar-usecase-apis,
+[data-usecase='wallets'] .sidebar-usecase-apis {
   display: none;
 }
 
-/* Deployment Patterns is devops-only — hide for app and iam personas */
-[data-persona='app'] .sidebar-persona-devops,
-[data-persona='iam'] .sidebar-persona-devops {
+/* Hide wallets-only sidebar items for other use cases */
+[data-usecase='applications'] .sidebar-usecase-wallets,
+[data-usecase='agents'] .sidebar-usecase-wallets,
+[data-usecase='apis'] .sidebar-usecase-wallets {
   display: none;
 }
 
@@ -703,6 +720,9 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
   font-weight: 500;
   white-space: nowrap;
   transition: border-color 0.15s, background 0.15s;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
 }
 
 .tech-dropdown__trigger:hover {
@@ -714,8 +734,18 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
   border-color: var(--ifm-color-primary);
 }
 
+.tech-dropdown__section-label {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ifm-color-emphasis-500);
+  line-height: 1;
+}
+
 .tech-dropdown__label {
   line-height: 1;
+  font-weight: 600;
 }
 
 .tech-dropdown__chevron {
@@ -741,10 +771,28 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
   border: 1px solid var(--ifm-color-emphasis-200);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  list-style: none;
   margin: 0;
   padding: 0.3rem;
-  min-width: 140px;
+  min-width: 180px;
+}
+
+.tech-dropdown__group {
+  padding: 0.2rem 0;
+}
+
+.tech-dropdown__group + .tech-dropdown__group {
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+  margin-top: 0.2rem;
+  padding-top: 0.4rem;
+}
+
+.tech-dropdown__group-label {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ifm-color-emphasis-500);
+  padding: 0.2rem 0.6rem 0.35rem;
 }
 
 [data-theme='dark'] .tech-dropdown__menu {
@@ -791,7 +839,7 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
   display: none;
 }
 
-[data-persona='app'] .sidebar-tech-dropdown-wrapper {
+[data-usecase='applications'] .sidebar-tech-dropdown-wrapper {
   display: block;
 }
 

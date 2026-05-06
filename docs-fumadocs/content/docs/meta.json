@@ -1,0 +1,15 @@
+{
+  "title": "Thunder Docs",
+  "pages": [
+    "sdks",
+    "---",
+    "getting-started",
+    "quick-start",
+    "key-concepts",
+    "guides",
+    "deployment-patterns",
+    "declarative-configurations",
+    "working-with-ai",
+    "releases"
+  ]
+}

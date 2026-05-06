@@ -34,14 +34,14 @@ export default function DocSidebarItemLink(
   ) as PersonaPluginData;
 
   const docId = (props.item as {docId?: string}).docId;
-  const persona = docId ? personaMap[docId] : undefined;
+  const usecase = docId ? personaMap[docId] : undefined;
 
-  if (persona) {
+  if (usecase) {
     const existingClass =
       (props.item as {className?: string}).className ?? '';
     const enrichedItem = {
       ...props.item,
-      className: `${existingClass} sidebar-persona-${persona}`.trim(),
+      className: `${existingClass} sidebar-usecase-${usecase}`.trim(),
     };
 
     return (

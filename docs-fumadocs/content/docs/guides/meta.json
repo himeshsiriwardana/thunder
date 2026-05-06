@@ -1,0 +1,12 @@
+{
+  "title": "Guides",
+  "pages": [
+    "applications",
+    "users",
+    "flows",
+    "consent",
+    "organization-units",
+    "user-types",
+    "integrations"
+  ]
+}

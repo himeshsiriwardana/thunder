@@ -21,6 +21,7 @@ import {OxygenUIThemeProvider, AcrylicOrangeTheme} from '@wso2/oxygen-ui';
 import {LoggerProvider, LogLevel} from '@thunder/logger/react';
 import {useLocation, useHistory} from '@docusaurus/router';
 import {STORAGE_KEY, PERSONA_OPTIONS, applyPersona} from '../hooks/usePersona';
+import {TECH_STORAGE_KEY, STANDARD_STORAGE_KEY, applyTech, type Technology} from '../hooks/useTech';
 
 export default function Root({children = null}: PropsWithChildren<Record<string, unknown>>) {
   const location = useLocation();
@@ -52,6 +53,17 @@ export default function Root({children = null}: PropsWithChildren<Record<string,
       history.replace('/docs-home');
     }
   }, [location.pathname]);
+
+  useEffect(() => {
+    const savedTech = localStorage.getItem(TECH_STORAGE_KEY) as Technology | null;
+    const savedStd = localStorage.getItem(STANDARD_STORAGE_KEY);
+    if (savedTech) {
+      applyTech(savedTech);
+    }
+    if (savedStd) {
+      document.documentElement.setAttribute('data-standard', savedStd);
+    }
+  }, []);
 
   return (
     <OxygenUIThemeProvider theme={AcrylicOrangeTheme}>
