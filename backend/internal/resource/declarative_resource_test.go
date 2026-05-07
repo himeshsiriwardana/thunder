@@ -384,7 +384,7 @@ func TestProcessResourceServer_SetsPermissionsAndDelimiter(t *testing.T) {
 		},
 	}
 
-	err := processResourceServer(rs)
+	err := ProcessResourceServer(rs)
 
 	assert.NoError(t, err)
 	assert.Equal(t, ":", rs.Delimiter)
@@ -415,7 +415,7 @@ func TestProcessResourceServer_WithHandlePrefixesPermissions(t *testing.T) {
 		},
 	}
 
-	err := processResourceServer(rs)
+	err := ProcessResourceServer(rs)
 
 	assert.NoError(t, err)
 	assert.Equal(t, ":", rs.Delimiter)
@@ -436,7 +436,7 @@ func TestProcessResourceServer_DuplicateHandle(t *testing.T) {
 		},
 	}
 
-	err := processResourceServer(rs)
+	err := ProcessResourceServer(rs)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate resource handle")

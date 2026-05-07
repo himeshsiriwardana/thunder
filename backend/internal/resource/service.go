@@ -210,10 +210,23 @@ func (rs *resourceService) CreateResourceServer(
 		}
 	}
 
-	id, err := utils.GenerateUUIDv7()
-	if err != nil {
-		rs.logger.Error("Failed to generate UUID", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+	id := resourceServer.ID
+	if id == "" {
+		var err error
+		id, err = utils.GenerateUUIDv7()
+		if err != nil {
+			rs.logger.Error("Failed to generate UUID", log.Error(err))
+			return nil, &serviceerror.InternalServerError
+		}
+	} else {
+		_, svcErr := rs.GetResourceServer(ctx, id)
+		if svcErr != nil && svcErr.Code != ErrorResourceServerNotFound.Code {
+			return nil, svcErr
+		}
+		if svcErr == nil {
+			rs.logger.Debug("Resource server ID already exists", log.String("id", id))
+			return nil, &ErrorResourceServerIDConflict
+		}
 	}
 
 	// Use transaction for write operation

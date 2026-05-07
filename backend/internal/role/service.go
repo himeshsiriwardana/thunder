@@ -208,10 +208,23 @@ func (rs *roleService) CreateRole(
 		return nil, &ErrorRoleNameConflict
 	}
 
-	id, err := utils.GenerateUUIDv7()
-	if err != nil {
-		logger.Error("Failed to generate UUID", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+	id := role.ID
+	if id == "" {
+		id, err = utils.GenerateUUIDv7()
+		if err != nil {
+			logger.Error("Failed to generate UUID", log.Error(err))
+			return nil, &serviceerror.InternalServerError
+		}
+	} else {
+		_, err = rs.roleStore.GetRole(ctx, id)
+		if err != nil && !errors.Is(err, ErrRoleNotFound) {
+			logger.Error("Failed to check role ID existence", log.Error(err))
+			return nil, &serviceerror.InternalServerError
+		}
+		if err == nil {
+			logger.Debug("Role ID already exists", log.String("id", id))
+			return nil, &ErrorRoleIDConflict
+		}
 	}
 
 	serviceRole := &RoleWithPermissionsAndAssignments{

@@ -279,7 +279,7 @@ func parseAndValidateResourceServerWrapper(resourceService ResourceServiceInterf
 		}
 
 		// Process and compute permissions in-place
-		if err := processResourceServer(rs); err != nil {
+		if err := ProcessResourceServer(rs); err != nil {
 			return nil, fmt.Errorf("error processing resource server '%s': %w", rs.Name, err)
 		}
 
@@ -307,8 +307,8 @@ func parseToResourceServer(data []byte) (*ResourceServer, error) {
 	return &rs, nil
 }
 
-// processResourceServer processes the resource server and computes permissions in-place.
-func processResourceServer(rs *ResourceServer) error {
+// ProcessResourceServer processes the resource server and computes permissions in-place.
+func ProcessResourceServer(rs *ResourceServer) error {
 	delimiter := rs.Delimiter
 	if delimiter == "" {
 		delimiter = ":" // Default delimiter

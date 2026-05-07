@@ -31,6 +31,7 @@ import (
 	"github.com/asgardeo/thunder/internal/entitytype"
 	"github.com/asgardeo/thunder/internal/flow/common"
 	flowmgt "github.com/asgardeo/thunder/internal/flow/mgt"
+	"github.com/asgardeo/thunder/internal/group"
 	"github.com/asgardeo/thunder/internal/idp"
 	oauth2const "github.com/asgardeo/thunder/internal/oauth/oauth2/constants"
 	"github.com/asgardeo/thunder/internal/ou"
@@ -109,6 +110,16 @@ type roleAdapter interface {
 	GetRoleWithPermissions(ctx context.Context, id string) (*role.RoleWithPermissions, *serviceerror.ServiceError)
 	UpdateRoleWithPermissions(ctx context.Context, id string, role role.RoleUpdateDetail) (*role.RoleWithPermissions,
 		*serviceerror.ServiceError)
+	AddAssignments(ctx context.Context, id string, assignments []role.RoleAssignment) *serviceerror.ServiceError
+}
+
+type groupAdapter interface {
+	CreateGroup(ctx context.Context, request group.CreateGroupRequest) (*group.Group, *serviceerror.ServiceError)
+	GetGroup(ctx context.Context, groupID string, includeDisplay bool) (*group.Group, *serviceerror.ServiceError)
+	UpdateGroup(ctx context.Context, groupID string, request group.UpdateGroupRequest) (
+		*group.Group, *serviceerror.ServiceError)
+	AddGroupMembers(ctx context.Context, groupID string, members []group.Member) (
+		*group.Group, *serviceerror.ServiceError)
 }
 
 type resourceServerAdapter interface {
@@ -117,6 +128,12 @@ type resourceServerAdapter interface {
 	GetResourceServer(ctx context.Context, id string) (*resource.ResourceServer, *serviceerror.ServiceError)
 	UpdateResourceServer(ctx context.Context, id string, rs resource.ResourceServer) (*resource.ResourceServer,
 		*serviceerror.ServiceError)
+	CreateResource(ctx context.Context, resourceServerID string, res resource.Resource) (
+		*resource.Resource, *serviceerror.ServiceError)
+	GetResourceList(ctx context.Context, resourceServerID string, parentID *string, limit, offset int) (
+		*resource.ResourceList, *serviceerror.ServiceError)
+	CreateAction(ctx context.Context, resourceServerID string, resourceID *string, action resource.Action) (
+		*resource.Action, *serviceerror.ServiceError)
 }
 
 type themeAdapter interface {
@@ -167,6 +184,7 @@ type importService struct {
 	ouService          ouAdapter
 	entityTypeService  entityTypeAdapter
 	roleService        roleAdapter
+	groupService       groupAdapter
 	resourceService    resourceServerAdapter
 	themeService       themeAdapter
 	layoutService      layoutAdapter
@@ -181,6 +199,7 @@ func newImportService(
 	ouService ouAdapter,
 	entityTypeService entityTypeAdapter,
 	roleService roleAdapter,
+	groupService groupAdapter,
 	resourceService resourceServerAdapter,
 	themeService themeAdapter,
 	layoutService layoutAdapter,
@@ -194,6 +213,7 @@ func newImportService(
 		ouService:          ouService,
 		entityTypeService:  entityTypeService,
 		roleService:        roleService,
+		groupService:       groupService,
 		resourceService:    resourceService,
 		themeService:       themeService,
 		layoutService:      layoutService,
@@ -338,6 +358,8 @@ func (s *importService) importDocument(
 		return s.importEntityType(ctx, doc, options, dryRun)
 	case resourceTypeRole:
 		return s.importRole(ctx, doc, options, dryRun)
+	case resourceTypeGroup:
+		return s.importGroup(ctx, doc, options, dryRun)
 	case resourceTypeResourceServer:
 		return s.importResourceServer(ctx, doc, options, dryRun)
 	case resourceTypeTheme:
@@ -590,6 +612,7 @@ var resourceDependencyOrder = []string{
 	resourceTypeEntityType,
 	resourceTypeResourceServer,
 	resourceTypeRole,
+	resourceTypeGroup,
 	resourceTypeIdentityProvider,
 	resourceTypeNotificationSender,
 	resourceTypeFlow,

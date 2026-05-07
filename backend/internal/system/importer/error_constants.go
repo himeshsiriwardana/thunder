@@ -25,6 +25,7 @@ import (
 	thememgt "github.com/asgardeo/thunder/internal/design/theme/mgt"
 	"github.com/asgardeo/thunder/internal/entitytype"
 	flowmgt "github.com/asgardeo/thunder/internal/flow/mgt"
+	"github.com/asgardeo/thunder/internal/group"
 	"github.com/asgardeo/thunder/internal/idp"
 	"github.com/asgardeo/thunder/internal/ou"
 	"github.com/asgardeo/thunder/internal/resource"
@@ -44,6 +45,7 @@ var notFoundErrorCodes = map[string]struct{}{
 	ou.ErrorOrganizationUnitNotFound.Code:     {},
 	entitytype.ErrorEntityTypeNotFound.Code:   {},
 	role.ErrorRoleNotFound.Code:               {},
+	group.ErrorGroupNotFound.Code:             {},
 	resource.ErrorResourceServerNotFound.Code: {},
 	thememgt.ErrorThemeNotFound.Code:          {},
 	layoutmgt.ErrorLayoutNotFound.Code:        {},
