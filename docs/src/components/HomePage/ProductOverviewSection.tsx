@@ -16,11 +16,13 @@
  * under the License.
  */
 
-import React, {JSX, ReactNode} from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import {Box, Card, Container, Typography} from '@wso2/oxygen-ui';
+import React, {JSX, ReactNode} from 'react';
 import useIsDarkMode from '../../hooks/useIsDarkMode';
 import useScrollAnimation from '../../hooks/useScrollAnimation';
+import {DocusaurusProductConfig} from '@site/docusaurus.product.config';
 
 interface FeatureCardProps {
   icon: ReactNode;
@@ -53,9 +55,7 @@ function HighlightCard({icon, title, description, index, isVisible}: FeatureCard
         transitionDelay: isVisible ? `${index * 0.07}s` : '0s',
         '&:hover': {
           transform: 'translateY(-6px)',
-          boxShadow: isDark
-            ? '0 20px 48px rgba(255, 107, 0, 0.22)'
-            : '0 20px 48px rgba(255, 107, 0, 0.14)',
+          boxShadow: isDark ? '0 20px 48px rgba(255, 107, 0, 0.22)' : '0 20px 48px rgba(255, 107, 0, 0.14)',
         },
         '&::before': {
           content: '""',
@@ -157,10 +157,20 @@ function FeatureCard({icon, title, description, index, isVisible}: FeatureCardPr
       >
         {icon}
       </Box>
-      <Typography variant="h6" sx={{fontWeight: 600, mb: 1, fontSize: '0.95rem', color: isDark ? '#ffffff' : '#1a1a2e'}}>
+      <Typography
+        variant="h6"
+        sx={{fontWeight: 600, mb: 1, fontSize: '0.95rem', color: isDark ? '#ffffff' : '#1a1a2e'}}
+      >
         {title}
       </Typography>
-      <Typography variant="body2" sx={{fontSize: '0.85rem', lineHeight: 1.65, color: isDark ? 'rgba(255, 255, 255, 0.55)' : 'rgba(0, 0, 0, 0.55)'}}>
+      <Typography
+        variant="body2"
+        sx={{
+          fontSize: '0.85rem',
+          lineHeight: 1.65,
+          color: isDark ? 'rgba(255, 255, 255, 0.55)' : 'rgba(0, 0, 0, 0.55)',
+        }}
+      >
         {description}
       </Typography>
     </Card>
@@ -170,7 +180,16 @@ function FeatureCard({icon, title, description, index, isVisible}: FeatureCardPr
 const features = [
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="2" y="6" width="20" height="14" rx="3" />
         <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
         <circle cx="9" cy="13" r="1.5" />
@@ -184,7 +203,16 @@ const features = [
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
         <path d="M9 10l1.5 1.5L15 8" />
         <circle cx="12" cy="13" r="1" />
@@ -196,29 +224,60 @@ const features = [
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="6" height="6" rx="1" />
-        <rect x="15" y="3" width="6" height="6" rx="1" />
-        <rect x="9" y="15" width="6" height="6" rx="1" />
-        <path d="M6 9v3a3 3 0 0 0 3 3" />
-        <path d="M18 9v3a3 3 0 0 1-3 3" />
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="12" cy="12" r="3" />
+        <circle cx="3" cy="6" r="2" />
+        <circle cx="21" cy="6" r="2" />
+        <circle cx="3" cy="18" r="2" />
+        <circle cx="21" cy="18" r="2" />
+        <path d="M5 6h4M15 6h4M5 18h4M15 18h4" />
+        <path d="M4.5 7.5l6 3M19.5 7.5l-6 3M4.5 16.5l6-3M19.5 16.5l-6-3" />
       </svg>
     ),
-    title: 'Built for how you work',
-    description: 'Work your way, whether you are an app developer, IAM architect, or system admin. Your workflows, your default toolbox.',
+    title: 'Decentralized identity integration',
+    description:
+      'Designed for integration with decentralized identity infrastructure, including digital wallets, verifiable credentials, DIDs, and trust registries, reducing integration complexity for developers.',
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M13 2L4.5 13.5H11L10 22L20.5 10H14L13 2z" />
       </svg>
     ),
-    title: 'Lightweight and high performing',
-    description: 'A sub-25MB Go runtime with minimal resource overhead, optimized for speed and efficiency for edge use cases.',
+    title: 'Lightweight, high-performant runtime',
+    description:
+      'Built for cloud-native delivery with a lightweight, high-performant, API-first runtime that integrates into modern CI/CD, GitOps, and containerized workflows.',
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <circle cx="5" cy="6" r="2" />
         <circle cx="19" cy="6" r="2" />
         <circle cx="12" cy="18" r="2" />
@@ -228,42 +287,82 @@ const features = [
       </svg>
     ),
     title: 'Every journey is a flow',
-    description: 'Model and orchestrate identity journeys as composable flows using a drag-&-drop visual flow builder. ',
+    description:
+      'Model and orchestrate identity journeys as composable flows using a drag-&-drop visual flow builder. ',
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <polyline points="16 18 22 12 16 6" />
         <polyline points="8 6 2 12 8 18" />
       </svg>
     ),
     title: 'API-first identity as code',
-    description: 'Every capability is accessible programmatically over a secure, modern RESTful API, enabling you to build, deploy, and manage identity as code.',
+    description:
+      'Every capability is accessible programmatically over a secure, modern RESTful API, enabling you to build, deploy, and manage identity as code.',
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
         <polyline points="3.29 7 12 12 20.71 7" />
         <line x1="12" y1="22" x2="12" y2="12" />
       </svg>
     ),
     title: 'Developer-first SDKs',
-    description: 'Use drop-in UI components from pixel-perfect SDKs for React, Next.js, and more, and style with your own CSS.',
+    description:
+      'Use drop-in UI components from pixel-perfect SDKs for React, Next.js, and more, and style with your own CSS.',
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <circle cx="12" cy="8" r="6" />
         <path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32" />
       </svg>
     ),
     title: 'Standards-first identity engine',
-    description: 'Built on proven open standards including OpenID Connect, OAuth2, SCIM, and SAML and designed to evolve with next-generation standards.',
+    description:
+      'Built on proven open standards including OpenID Connect, OAuth2, SCIM, and SAML and designed to evolve with next-generation standards.',
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="2" y="14" width="20" height="8" rx="2" />
         <path d="M6 14v-2a6 6 0 0 1 12 0v2" />
         <line x1="6" y1="18" x2="6.01" y2="18" />
@@ -271,7 +370,8 @@ const features = [
       </svg>
     ),
     title: 'Agnostic infrastructure and deployment',
-    description: 'Deploy where your workloads live without infrastructure lock-in using a GitOps-driven approach and deployment artifacts for Kubernetes, Docker, and Helm.',
+    description:
+      'Deploy where your workloads live without infrastructure lock-in using a GitOps-driven approach and deployment artifacts for Kubernetes, Docker, and Helm.',
   },
 ];
 
@@ -280,6 +380,8 @@ export default function ProductOverviewSection(): JSX.Element {
   const diagramUrl = useBaseUrl('/assets/images/diagram.png');
   const {ref: titleRef, isVisible: titleVisible} = useScrollAnimation({threshold: 0.2});
   const {ref, isVisible} = useScrollAnimation({threshold: 0.05});
+  const {siteConfig} = useDocusaurusContext();
+  const productName = (siteConfig.customFields?.product as DocusaurusProductConfig).project.name;
 
   return (
     <Box sx={{py: {xs: 8, lg: 12}, background: isDark ? '#0a0a0a' : 'transparent'}}>
@@ -313,7 +415,7 @@ export default function ProductOverviewSection(): JSX.Element {
                 backgroundClip: 'text',
               }}
             >
-              ThunderID?
+              {productName}?
             </Box>
           </Typography>
           <Typography
@@ -326,7 +428,8 @@ export default function ProductOverviewSection(): JSX.Element {
               color: isDark ? 'rgba(255, 255, 255, 0.6)' : 'rgba(0, 0, 0, 0.55)',
             }}
           >
-            Thunder is an open source IAM stack built in Go, focused on open standards and designed to handle identity for humans, AI agents, and workloads with fully orchestratable identity flows.
+            {productName} is an open source IAM stack built in Go, focused on open standards and designed to handle
+            identity for humans, AI agents, and workloads with fully orchestratable identity flows.
           </Typography>
         </Box>
 
@@ -334,11 +437,11 @@ export default function ProductOverviewSection(): JSX.Element {
           ref={ref}
           sx={{
             display: 'grid',
-            gridTemplateColumns: {xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)'},
+            gridTemplateColumns: {xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)'},
             gap: 3,
           }}
         >
-          {features.slice(0, 3).map((feature, index) => (
+          {features.slice(0, 4).map((feature, index) => (
             <HighlightCard key={feature.title} {...feature} index={index} isVisible={isVisible} />
           ))}
           <Box
@@ -358,15 +461,34 @@ export default function ProductOverviewSection(): JSX.Element {
               },
             }}
           >
-            <img
-              src={diagramUrl}
-              alt="ThunderID Architecture Diagram"
-              style={{width: '100%', display: 'block'}}
-            />
+            <img src={diagramUrl} alt="ThunderID Architecture Diagram" style={{width: '100%', display: 'block'}} />
           </Box>
-          {features.slice(3).map((feature, index) => (
-            <FeatureCard key={feature.title} {...feature} index={index + 3} isVisible={isVisible} />
-          ))}
+          <Box
+            sx={{
+              gridColumn: '1 / -1',
+              display: 'grid',
+              gridTemplateColumns: {xs: '1fr', sm: 'repeat(3, 1fr)'},
+              gap: 3,
+            }}
+          >
+            {features.slice(4, 7).map((feature, index) => (
+              <FeatureCard key={feature.title} {...feature} index={index + 4} isVisible={isVisible} />
+            ))}
+          </Box>
+          <Box
+            sx={{
+              gridColumn: '1 / -1',
+              display: 'grid',
+              gridTemplateColumns: {xs: '1fr', sm: 'repeat(4, 1fr)'},
+              gap: 3,
+            }}
+          >
+            <Box sx={{display: {xs: 'none', sm: 'block'}}} />
+            {features.slice(7).map((feature, index) => (
+              <FeatureCard key={feature.title} {...feature} index={index + 7} isVisible={isVisible} />
+            ))}
+            <Box sx={{display: {xs: 'none', sm: 'block'}}} />
+          </Box>
         </Box>
       </Container>
     </Box>

@@ -20,10 +20,14 @@ import React, {JSX} from 'react';
 import {Box, Container, Typography} from '@wso2/oxygen-ui';
 import useIsDarkMode from '../../hooks/useIsDarkMode';
 import useScrollAnimation from '../../hooks/useScrollAnimation';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import { DocusaurusProductConfig } from '@site/docusaurus.product.config';
 
 export default function WorkflowSection(): JSX.Element {
   const isDark = useIsDarkMode();
   const {ref, isVisible} = useScrollAnimation({threshold: 0.2});
+  const {siteConfig} = useDocusaurusContext();
+  const productName = (siteConfig.customFields?.product as DocusaurusProductConfig).project.name;
 
   return (
     <Box
@@ -87,7 +91,7 @@ export default function WorkflowSection(): JSX.Element {
               color: isDark ? 'rgba(255, 255, 255, 0.6)' : 'rgba(0, 0, 0, 0.55)',
             }}
           >
-            Thunder is engineered from the ground up to fit your workflows and toolbox, not dictate them.
+            {productName} is engineered from the ground up to fit your workflows and toolbox, not dictate them.
           </Typography>
         </Box>
       </Container>

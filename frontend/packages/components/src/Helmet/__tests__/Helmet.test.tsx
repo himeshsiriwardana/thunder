@@ -152,7 +152,7 @@ describe('Helmet', () => {
     render(
       <Helmet>
         <title>Multi Test</title>
-        <meta name="author" content="Thunder" />
+        <meta name="author" content="Team" />
         <link rel="canonical" href="https://example.com" />
       </Helmet>,
     );

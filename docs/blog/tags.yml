@@ -1,7 +1,7 @@
-thunder:
-  label: Thunder
-  permalink: /thunder
-  description: Thunder platform related posts
+thunderid:
+  label: ThunderID
+  permalink: /thunderid
+  description: ThunderID platform related posts
 
 community:
   label: Community
