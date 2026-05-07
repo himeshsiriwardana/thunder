@@ -203,6 +203,50 @@ else {
 Write-Host ""
 
 # ============================================================================
+# Create Default Agent Type
+# ============================================================================
+
+Log-Info "Creating default agent type..."
+
+$agentTypeData = ([ordered]@{
+    name = "default"
+    ouId = $DEFAULT_OU_ID
+    schema = [ordered]@{
+        model = @{
+            type = "string"
+            displayName = "Model"
+            required = $false
+            enum = @("GPT-5", "Claude", "Gemini", "Llama", "Mistral", "Other")
+        }
+        department = @{
+            type = "string"
+            displayName = "Department"
+            required = $false
+        }
+        purpose = @{
+            type = "string"
+            displayName = "Purpose"
+            required = $false
+        }
+    }
+} | ConvertTo-Json -Depth 5)
+
+$response = Invoke-Api -Method POST -Endpoint "/agent-types" -Data $agentTypeData
+
+if ($response.StatusCode -eq 201 -or $response.StatusCode -eq 200) {
+    Log-Success "Agent type created successfully"
+}
+elseif ($response.StatusCode -eq 409) {
+    Log-Warning "Agent type already exists, skipping"
+}
+else {
+    Log-Error "Failed to create agent type (HTTP $($response.StatusCode))"
+    exit 1
+}
+
+Write-Host ""
+
+# ============================================================================
 # Create Admin User
 # ============================================================================
 
