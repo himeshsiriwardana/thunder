@@ -72,7 +72,7 @@ func main() {
 	}
 
 	// Initialize the cache manager.
-	initCacheManager(logger)
+	cacheManager := cache.Initialize()
 
 	// Initialize system permission strings before any service or middleware uses them.
 	security.InitSystemPermissions(cfg.Resource.SystemResourceServer.Handle)
@@ -84,7 +84,7 @@ func main() {
 	}
 
 	// Register the services.
-	jwtService := registerServices(mux)
+	jwtService := registerServices(mux, cacheManager)
 
 	// Register static file handlers for frontend applications.
 	registerStaticFileHandlers(logger, mux, serverHome)
@@ -121,7 +121,7 @@ func main() {
 	// Wait for shutdown signal
 	<-sigChan
 	logger.Info("Shutting down server...")
-	gracefulShutdown(logger, server)
+	gracefulShutdown(logger, server, cacheManager)
 }
 
 // getThunderHome retrieves and return the home directory.
@@ -162,15 +162,6 @@ func initThunderConfigurations(logger *log.Logger, serverHome string) *config.Co
 	}
 
 	return cfg
-}
-
-// initCacheManager initializes the cache manager with centralized cleanup.
-func initCacheManager(logger *log.Logger) {
-	cm := cache.GetCacheManager()
-	if cm == nil {
-		logger.Fatal("Failed to get cache manager instance")
-	}
-	cm.Init()
 }
 
 // loadCertConfig loads the certificate configuration and extracts the Key ID (kid).
@@ -243,6 +234,7 @@ func createSecurityMiddleware(logger *log.Logger, mux *http.ServeMux,
 func gracefulShutdown(
 	logger *log.Logger,
 	server *http.Server,
+	cacheManager cache.CacheManagerInterface,
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
@@ -265,7 +257,6 @@ func gracefulShutdown(
 		logger.Debug("Database connections closed successfully")
 	}
 
-	cacheManager := cache.GetCacheManager()
 	if cacheManager != nil {
 		cacheManager.Close()
 		logger.Debug("Cache manager closed successfully")
