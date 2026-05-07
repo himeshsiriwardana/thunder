@@ -16,30 +16,14 @@
  * under the License.
  */
 
+import React, {JSX} from 'react';
 import Link from '@docusaurus/Link';
-import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
-import type {DocusaurusProductConfig} from '@site/docusaurus.product.config';
 import {Box, Container, Typography, Stack, Button} from '@wso2/oxygen-ui';
-import React, {JSX, useEffect, useState} from 'react';
-import ConstellationBackground from './ConstellationBackground';
 import useIsDarkMode from '../../hooks/useIsDarkMode';
-import LoginBox from '../LoginBox';
+import ConstellationBackground from './ConstellationBackground';
 
 export default function HeroSection(): JSX.Element {
   const isDark = useIsDarkMode();
-  const {siteConfig} = useDocusaurusContext();
-  const {project} = siteConfig.customFields?.product as DocusaurusProductConfig;
-  const productName = project.name;
-
-  // After entry animations finish, clear them so CSS transitions can take over.
-  // animation-fill-mode: both locks the transform, preventing smooth hover transitions.
-  const [animDone, setAnimDone] = useState(false);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setAnimDone(true), 1800);
-
-    return () => clearTimeout(timer);
-  }, []);
 
   return (
     <Box
@@ -48,18 +32,6 @@ export default function HeroSection(): JSX.Element {
           from: {opacity: 0, transform: 'translateY(32px)'},
           to: {opacity: 1, transform: 'translateY(0)'},
         },
-        '@keyframes fadeInScale': {
-          from: {opacity: 0, transform: 'scale(0.95) translateY(16px)'},
-          to: {opacity: 1, transform: 'scale(1) translateY(0)'},
-        },
-        '@keyframes slideInLeft': {
-          from: {opacity: 0, transform: 'translateX(-32px)'},
-          to: {opacity: 1, transform: 'translateX(0)'},
-        },
-        '@keyframes slideInRight': {
-          from: {opacity: 0, transform: 'translateX(32px)'},
-          to: {opacity: 1, transform: 'translateX(0)'},
-        },
         '@keyframes pulseGlow': {
           '0%, 100%': {opacity: 0.6, transform: 'scale(1)'},
           '50%': {opacity: 1, transform: 'scale(1.1)'},
@@ -67,9 +39,6 @@ export default function HeroSection(): JSX.Element {
         '@keyframes heroFloat': {
           '0%, 100%': {transform: 'translateY(0)'},
           '50%': {transform: 'translateY(-6px)'},
-        },
-        '@keyframes heroDash': {
-          to: {strokeDashoffset: -40},
         },
         py: {xs: 7, lg: 10},
         position: 'relative',
@@ -101,7 +70,7 @@ export default function HeroSection(): JSX.Element {
             textAlign: 'center',
           }}
         >
-          {/* Lightning bolt icon with glow */}
+          {/* Lightning bolt icon */}
           <Box
             sx={{
               mb: 3,
@@ -114,7 +83,6 @@ export default function HeroSection(): JSX.Element {
               animation: 'fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) both',
             }}
           >
-            {/* Glow effect */}
             <Box
               sx={{
                 position: 'absolute',
@@ -159,7 +127,7 @@ export default function HeroSection(): JSX.Element {
             INTRODUCING
           </Typography>
 
-          {/* title */}
+          {/* [ THUNDER ] title */}
           <Typography
             variant="h2"
             sx={{
@@ -171,7 +139,7 @@ export default function HeroSection(): JSX.Element {
               animation: 'fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both',
             }}
           >
-            [ {productName.toUpperCase()} ]
+            [ ThunderID ]
           </Typography>
 
           {/* Main heading */}
@@ -213,7 +181,7 @@ export default function HeroSection(): JSX.Element {
               animation: 'fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.4s both',
             }}
           >
-            The world&apos;s most flexible, truly open source identity platform, powered by open source innovation.
+            High-performance open-source identity stack, engineered for developers
           </Typography>
 
           {/* Buttons */}
@@ -240,7 +208,6 @@ export default function HeroSection(): JSX.Element {
                 position: 'relative',
                 overflow: 'hidden',
                 transition: 'transform 0.3s ease, box-shadow 0.3s ease',
-                // Shimmer sweep on hover
                 '&::after': {
                   content: '""',
                   position: 'absolute',
@@ -267,11 +234,11 @@ export default function HeroSection(): JSX.Element {
                 },
               }}
             >
-              Get Started
+              Start Building
             </Button>
             <Button
               component={Link}
-              href="https://github.com/asgardeo/thunder"
+              href="/docs/next/guides/getting-started/what-is-thunderid"
               variant="outlined"
               size="large"
               sx={{
@@ -286,7 +253,6 @@ export default function HeroSection(): JSX.Element {
                 overflow: 'hidden',
                 transition:
                   'transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, background-color 0.3s ease',
-                // Subtle radial glow on hover
                 '&::before': {
                   content: '""',
                   position: 'absolute',
@@ -298,9 +264,7 @@ export default function HeroSection(): JSX.Element {
                   opacity: 0,
                   transition: 'opacity 0.3s ease',
                 },
-                '&:hover::before': {
-                  opacity: 1,
-                },
+                '&:hover::before': {opacity: 1},
                 '&:hover': {
                   borderColor: isDark ? 'rgba(255, 140, 0, 0.7)' : 'rgba(255, 107, 0, 0.7)',
                   bgcolor: isDark ? 'rgba(255, 140, 0, 0.06)' : 'rgba(255, 107, 0, 0.04)',
@@ -309,230 +273,12 @@ export default function HeroSection(): JSX.Element {
                     ? '0 4px 16px rgba(255, 140, 0, 0.12), 0 0 0 1px rgba(255, 140, 0, 0.15)'
                     : '0 4px 16px rgba(255, 107, 0, 0.1), 0 0 0 1px rgba(255, 107, 0, 0.12)',
                 },
-                '&:active': {
-                  transform: 'translateY(0)',
-                  boxShadow: 'none',
-                },
+                '&:active': {transform: 'translateY(0)', boxShadow: 'none'},
               }}
-              startIcon={
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
-                    fill="#FF8C00"
-                  />
-                </svg>
-              }
             >
-              Star on GitHub
+              Learn More
             </Button>
           </Stack>
-
-          {/* Login Box Showcase with dashed arc borders */}
-          <Box
-            sx={{
-              mt: 2,
-              position: 'relative',
-              maxWidth: '1100px',
-              width: '100%',
-              mx: 'auto',
-              animation: 'fadeInScale 1s cubic-bezier(0.16, 1, 0.3, 1) 0.6s both',
-            }}
-          >
-            {/* Ambient glow behind card group */}
-            <Box
-              sx={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -45%)',
-                width: '70%',
-                height: '80%',
-                background: isDark
-                  ? 'radial-gradient(ellipse at center, rgba(255, 107, 0, 0.06) 0%, transparent 70%)'
-                  : 'radial-gradient(ellipse at center, rgba(255, 107, 0, 0.04) 0%, transparent 70%)',
-                pointerEvents: 'none',
-                zIndex: 0,
-                filter: 'blur(40px)',
-                display: {xs: 'none', md: 'block'},
-              }}
-            />
-
-            {/* Subtle connecting lines between cards */}
-            <Box
-              component="svg"
-              sx={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
-                pointerEvents: 'none',
-                zIndex: 1,
-                display: {xs: 'none', md: 'block'},
-              }}
-              viewBox="0 0 1100 600"
-              preserveAspectRatio="xMidYMid slice"
-            >
-              {/* Left-to-center connecting line */}
-              <line
-                x1="320"
-                y1="280"
-                x2="430"
-                y2="200"
-                stroke={isDark ? 'rgba(255, 140, 0, 0.08)' : 'rgba(255, 107, 0, 0.06)'}
-                strokeWidth="1"
-                strokeDasharray="4 6"
-                style={{animation: 'heroDash 6s linear infinite'}}
-              />
-              {/* Center-to-right connecting line */}
-              <line
-                x1="670"
-                y1="200"
-                x2="780"
-                y2="280"
-                stroke={isDark ? 'rgba(255, 140, 0, 0.08)' : 'rgba(255, 107, 0, 0.06)'}
-                strokeWidth="1"
-                strokeDasharray="4 6"
-                style={{animation: 'heroDash 6s linear infinite'}}
-              />
-            </Box>
-
-            {/* Floating particles */}
-            <Box
-              component="svg"
-              sx={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
-                pointerEvents: 'none',
-                zIndex: 3,
-                display: {xs: 'none', md: 'block'},
-              }}
-              viewBox="0 0 1100 600"
-              preserveAspectRatio="xMidYMid slice"
-            >
-              {[
-                {cx: 120, cy: 80, r: 2, dur: '6s', delay: '0s'},
-                {cx: 980, cy: 100, r: 1.5, dur: '7s', delay: '1s'},
-                {cx: 200, cy: 400, r: 1.5, dur: '5s', delay: '2s'},
-                {cx: 900, cy: 420, r: 2, dur: '8s', delay: '0.5s'},
-                {cx: 550, cy: 500, r: 1.5, dur: '6s', delay: '3s'},
-                {cx: 50, cy: 250, r: 1.5, dur: '7s', delay: '1.5s'},
-                {cx: 1050, cy: 280, r: 1.5, dur: '5.5s', delay: '2.5s'},
-              ].map((dot, i) => (
-                <circle
-                  key={i}
-                  cx={dot.cx}
-                  cy={dot.cy}
-                  r={dot.r}
-                  fill={isDark ? 'rgba(255, 140, 0, 0.3)' : 'rgba(255, 107, 0, 0.2)'}
-                >
-                  <animate
-                    attributeName="cy"
-                    values={`${dot.cy};${dot.cy - 15};${dot.cy}`}
-                    dur={dot.dur}
-                    begin={dot.delay}
-                    repeatCount="indefinite"
-                  />
-                  <animate
-                    attributeName="opacity"
-                    values="0.15;0.5;0.15"
-                    dur={dot.dur}
-                    begin={dot.delay}
-                    repeatCount="indefinite"
-                  />
-                </circle>
-              ))}
-            </Box>
-
-            {/* Login cards container */}
-            <Box
-              sx={{
-                display: 'flex',
-                flexWrap: 'nowrap',
-                alignItems: 'flex-start',
-                justifyContent: 'center',
-                position: 'relative',
-                pt: {xs: 0, md: 4},
-              }}
-            >
-              {/* Left card - social login */}
-              <LoginBox
-                variant="social"
-                delay={0.3}
-                sideCard
-                sx={{
-                  display: {xs: 'none', md: 'block'},
-                  mr: '-60px',
-                  mt: '40px',
-                  transform: 'translateY(0px)',
-                  opacity: 0.85,
-                  zIndex: 0,
-                  transition:
-                    'transform 0.8s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-                  ...(animDone ? {} : {animation: 'slideInLeft 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.8s both'}),
-                  boxShadow: isDark ? '0 12px 40px rgba(0, 0, 0, 0.4)' : '0 12px 40px rgba(0, 0, 0, 0.06)',
-                  '&:hover': {
-                    transform: 'translateY(-4px)',
-                    opacity: 0.95,
-                    boxShadow: isDark
-                      ? '0 16px 48px rgba(0, 0, 0, 0.45), 0 0 24px rgba(255, 140, 0, 0.04)'
-                      : '0 16px 48px rgba(0, 0, 0, 0.08), 0 0 24px rgba(255, 107, 0, 0.03)',
-                  },
-                }}
-              />
-
-              {/* Center card - email login (most prominent) */}
-              <LoginBox
-                variant="email"
-                delay={0}
-                sx={{
-                  zIndex: 2,
-                  transform: 'translateY(0px)',
-                  boxShadow: isDark
-                    ? '0 20px 60px rgba(0, 0, 0, 0.5), 0 0 80px rgba(255, 107, 0, 0.1)'
-                    : '0 20px 60px rgba(0, 0, 0, 0.1), 0 0 80px rgba(255, 107, 0, 0.07)',
-                  transition:
-                    'transform 0.8s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-                  ...(animDone ? {} : {animation: 'fadeInUp 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.7s both'}),
-                  '&:hover': {
-                    transform: 'translateY(-4px)',
-                    boxShadow: isDark
-                      ? '0 24px 68px rgba(0, 0, 0, 0.55), 0 0 90px rgba(255, 107, 0, 0.12)'
-                      : '0 24px 68px rgba(0, 0, 0, 0.12), 0 0 90px rgba(255, 107, 0, 0.09)',
-                  },
-                }}
-              />
-
-              {/* Right card - MFA */}
-              <LoginBox
-                variant="mfa"
-                delay={0.6}
-                sideCard
-                sx={{
-                  display: {xs: 'none', md: 'block'},
-                  ml: '-60px',
-                  mt: '40px',
-                  transform: 'translateY(0px)',
-                  opacity: 0.85,
-                  zIndex: 0,
-                  transition:
-                    'transform 0.8s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-                  ...(animDone ? {} : {animation: 'slideInRight 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.8s both'}),
-                  boxShadow: isDark ? '0 12px 40px rgba(0, 0, 0, 0.4)' : '0 12px 40px rgba(0, 0, 0, 0.06)',
-                  '&:hover': {
-                    transform: 'translateY(-4px)',
-                    opacity: 0.95,
-                    boxShadow: isDark
-                      ? '0 16px 48px rgba(0, 0, 0, 0.45), 0 0 24px rgba(255, 140, 0, 0.04)'
-                      : '0 16px 48px rgba(0, 0, 0, 0.08), 0 0 24px rgba(255, 107, 0, 0.03)',
-                  },
-                }}
-              />
-            </Box>
-          </Box>
         </Box>
       </Container>
     </Box>
