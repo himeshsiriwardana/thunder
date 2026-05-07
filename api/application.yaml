@@ -1426,7 +1426,7 @@ components:
       properties:
         code:
           type: string
-          description: The error code.
+          description: "Error code. Codes follow the APP-XXXX convention."
           example: "APP-1001"
         message:
           $ref: '#/components/schemas/I18nMessage'

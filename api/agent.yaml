@@ -108,6 +108,8 @@ paths:
                     description:
                       key: "error.agentservice.invalid_filter_description"
                       defaultValue: "The filter format is invalid"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
         "500":
           description: Internal server error
 
@@ -612,6 +614,8 @@ paths:
                     description:
                       key: "error.agentservice.agent_already_exists_with_client_id_description"
                       defaultValue: "An entity with the same client ID already exists"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
         "500":
           description: Internal server error
 
@@ -711,6 +715,8 @@ paths:
                 description:
                   key: "error.agentservice.agent_not_found_description"
                   defaultValue: "The agent with the specified id does not exist"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
         "500":
           description: Internal server error
 
@@ -1150,6 +1156,8 @@ paths:
                     description:
                       key: "error.agentservice.agent_already_exists_with_client_id_description"
                       defaultValue: "An entity with the same client ID already exists"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
         "500":
           description: Internal server error
 
@@ -1199,6 +1207,8 @@ paths:
                 description:
                   key: "error.agentservice.agent_not_found_description"
                   defaultValue: "The agent with the specified id does not exist"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
         "500":
           description: Internal server error
 
@@ -1271,6 +1281,8 @@ paths:
                 description:
                   key: "error.agentservice.agent_not_found_description"
                   defaultValue: "The agent with the specified id does not exist"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
         "500":
           description: Internal server error
 
@@ -1309,7 +1321,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EntityTypeError'
+                $ref: '#/components/schemas/Error'
               examples:
                 invalid-limit:
                   summary: Invalid limit parameter
@@ -1331,6 +1343,10 @@ paths:
                     description:
                       key: "error.entitytypeservice.invalid_offset_parameter_description"
                       defaultValue: "The offset parameter must be a non-negative integer"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "500":
           description: Internal server error
 
@@ -1369,7 +1385,7 @@ paths:
                   type: "boolean"
       responses:
         "201":
-          description: agent type created
+          description: Agent type created
           content:
             application/json:
               schema:
@@ -1399,7 +1415,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EntityTypeError'
+                $ref: '#/components/schemas/Error'
               examples:
                 invalid-request-format:
                   summary: Invalid request format
@@ -1436,7 +1452,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EntityTypeError'
+                $ref: '#/components/schemas/Error'
               example:
                 code: "USRS-1003"
                 message:
@@ -1445,6 +1461,10 @@ paths:
                 description:
                   key: "error.entitytypeservice.agent_type_name_conflict_description"
                   defaultValue: "An agent type with the same name already exists"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "500":
           description: Internal server error
 
@@ -1466,7 +1486,7 @@ paths:
         - $ref: '#/components/parameters/includeQueryParam'
       responses:
         "200":
-          description: agent type details
+          description: Agent type details
           content:
             application/json:
               schema:
@@ -1497,11 +1517,11 @@ paths:
                   isActive:
                     type: "boolean"
         "404":
-          description: agent type not found
+          description: Agent type not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EntityTypeError'
+                $ref: '#/components/schemas/Error'
               example:
                 code: "USRS-1002"
                 message:
@@ -1510,6 +1530,10 @@ paths:
                 description:
                   key: "error.entitytypeservice.agent_type_not_found_description"
                   defaultValue: "The agent type with the specified id does not exist"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "500":
           description: Internal server error
 
@@ -1553,7 +1577,7 @@ paths:
                   type: "number"
       responses:
         "200":
-          description: agent type updated
+          description: Agent type updated
           content:
             application/json:
               schema:
@@ -1563,7 +1587,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EntityTypeError'
+                $ref: '#/components/schemas/Error'
               examples:
                 invalid-request-format:
                   summary: Invalid request format
@@ -1596,11 +1620,11 @@ paths:
                       key: "error.entitytypeservice.agent_type_only_default_allowed_description"
                       defaultValue: "Agent types are restricted to a single 'default' schema; create or rename to other names is not permitted"
         "404":
-          description: agent type not found
+          description: Agent type not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EntityTypeError'
+                $ref: '#/components/schemas/Error'
               example:
                 code: "USRS-1002"
                 message:
@@ -1610,11 +1634,11 @@ paths:
                   key: "error.entitytypeservice.agent_type_not_found_description"
                   defaultValue: "The agent type with the specified id does not exist"
         "409":
-          description: agent type name already exists
+          description: Agent type name already exists
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EntityTypeError'
+                $ref: '#/components/schemas/Error'
               example:
                 code: "USRS-1003"
                 message:
@@ -1623,6 +1647,10 @@ paths:
                 description:
                   key: "error.entitytypeservice.agent_type_name_conflict_description"
                   defaultValue: "An agent type with the same name already exists"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "500":
           description: Internal server error
 
@@ -1643,12 +1671,14 @@ paths:
             format: uuid
           example: "550e8400-e29b-41d4-a716-446655440000"
       responses:
+        "204":
+          description: Agent type deleted
         "400":
           description: Bad request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EntityTypeError'
+                $ref: '#/components/schemas/Error'
               example:
                 code: "USRS-1015"
                 message:
@@ -1657,6 +1687,10 @@ paths:
                 description:
                   key: "error.entitytypeservice.agent_type_cannot_delete_description"
                   defaultValue: "The default agent type cannot be deleted. Edit the schema instead"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "500":
           description: Internal server error
 
@@ -1670,6 +1704,36 @@ components:
           tokenUrl: https://localhost:8090/oauth2/token
           scopes:
             system: Access to system management APIs
+
+  responses:
+    Unauthorized:
+      description: Unauthorized - missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: "AUTH-4010"
+            message:
+              key: "error.unauthorized"
+              defaultValue: "Unauthorized"
+            description:
+              key: "error.unauthorized_description"
+              defaultValue: "Authentication is required to access this resource"
+    Forbidden:
+      description: Forbidden - insufficient permissions to perform this operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: "AUTH-4030"
+            message:
+              key: "error.forbidden"
+              defaultValue: "Forbidden"
+            description:
+              key: "error.forbidden_description"
+              defaultValue: "You do not have sufficient permissions to access this resource"
 
   parameters:
     limitQueryParam:
@@ -2661,20 +2725,6 @@ components:
           additionalProperties:
             $ref: "#/components/schemas/AgentType/properties/schema/additionalProperties"
 
-    EntityTypeError:
-      type: object
-      required: [code, message]
-      description: |
-        Internationalized error response returned by entity type management endpoints.
-      properties:
-        code:
-          type: string
-          description: Machine-readable error code (USRS-XXXX prefix shared with user-types).
-        message:
-          $ref: '#/components/schemas/I18nMessage'
-        description:
-          $ref: '#/components/schemas/I18nMessage'
-
     I18nMessage:
       type: object
       description: Internationalized message with translation key and default value.
@@ -2705,7 +2755,7 @@ components:
       type: object
       required: [code, message]
       description: |
-        Standard error response. Error codes follow the `AGT-XXXX` convention.
+        Standard error response. Agent management errors follow the AGT-XXXX convention.
       properties:
         code:
           type: string
