@@ -25,6 +25,8 @@ import (
 	"sort"
 	"time"
 
+	inboundmodel "github.com/asgardeo/thunder/internal/inboundclient/model"
+
 	appmodel "github.com/asgardeo/thunder/internal/application/model"
 	layoutmgt "github.com/asgardeo/thunder/internal/design/layout/mgt"
 	thememgt "github.com/asgardeo/thunder/internal/design/theme/mgt"
@@ -781,49 +783,54 @@ func (s *importService) importApplication(
 
 func applicationRequestToDTO(req *appmodel.ApplicationRequestWithID) *appmodel.ApplicationDTO {
 	appDTO := &appmodel.ApplicationDTO{
-		ID:                        req.ID,
-		OUID:                      req.OUID,
-		Name:                      req.Name,
-		Description:               req.Description,
-		AuthFlowID:                req.AuthFlowID,
-		RegistrationFlowID:        req.RegistrationFlowID,
-		IsRegistrationFlowEnabled: req.IsRegistrationFlowEnabled,
-		ThemeID:                   req.ThemeID,
-		LayoutID:                  req.LayoutID,
-		Template:                  req.Template,
-		URL:                       req.URL,
-		LogoURL:                   req.LogoURL,
-		Assertion:                 req.Assertion,
-		Certificate:               req.Certificate,
-		TosURI:                    req.TosURI,
-		PolicyURI:                 req.PolicyURI,
-		Contacts:                  req.Contacts,
-		AllowedUserTypes:          req.AllowedUserTypes,
-		Metadata:                  req.Metadata,
+		ID:          req.ID,
+		OUID:        req.OUID,
+		Name:        req.Name,
+		Description: req.Description,
+		InboundAuthProfile: inboundmodel.InboundAuthProfile{
+			AuthFlowID:                req.AuthFlowID,
+			RegistrationFlowID:        req.RegistrationFlowID,
+			IsRegistrationFlowEnabled: req.IsRegistrationFlowEnabled,
+			ThemeID:                   req.ThemeID,
+			LayoutID:                  req.LayoutID,
+			Assertion:                 req.Assertion,
+			LoginConsent:              req.LoginConsent,
+			AllowedUserTypes:          req.AllowedUserTypes,
+			Certificate:               req.Certificate,
+		},
+		Template:  req.Template,
+		URL:       req.URL,
+		LogoURL:   req.LogoURL,
+		TosURI:    req.TosURI,
+		PolicyURI: req.PolicyURI,
+		Contacts:  req.Contacts,
+		Metadata:  req.Metadata,
 	}
 
 	if len(req.InboundAuthConfig) > 0 {
-		inboundAuthConfigDTOs := make([]appmodel.InboundAuthConfigDTO, 0, len(req.InboundAuthConfig))
+		inboundAuthConfigDTOs := make([]inboundmodel.InboundAuthConfigWithSecret, 0, len(req.InboundAuthConfig))
 		for _, config := range req.InboundAuthConfig {
-			if config.Type != appmodel.OAuthInboundAuthType || config.OAuthAppConfig == nil {
+			if config.Type != inboundmodel.OAuthInboundAuthType || config.OAuthConfig == nil {
 				continue
 			}
 
-			inboundAuthConfigDTOs = append(inboundAuthConfigDTOs, appmodel.InboundAuthConfigDTO{
+			inboundAuthConfigDTOs = append(inboundAuthConfigDTOs, inboundmodel.InboundAuthConfigWithSecret{
 				Type: config.Type,
-				OAuthAppConfig: &appmodel.OAuthAppConfigDTO{
-					ClientID:                config.OAuthAppConfig.ClientID,
-					ClientSecret:            config.OAuthAppConfig.ClientSecret,
-					RedirectURIs:            config.OAuthAppConfig.RedirectURIs,
-					GrantTypes:              config.OAuthAppConfig.GrantTypes,
-					ResponseTypes:           config.OAuthAppConfig.ResponseTypes,
-					TokenEndpointAuthMethod: config.OAuthAppConfig.TokenEndpointAuthMethod,
-					PKCERequired:            config.OAuthAppConfig.PKCERequired,
-					PublicClient:            config.OAuthAppConfig.PublicClient,
-					Token:                   config.OAuthAppConfig.Token,
-					Scopes:                  config.OAuthAppConfig.Scopes,
-					UserInfo:                config.OAuthAppConfig.UserInfo,
-					ScopeClaims:             config.OAuthAppConfig.ScopeClaims,
+				OAuthConfig: &inboundmodel.OAuthConfigWithSecret{
+					ClientID:                           config.OAuthConfig.ClientID,
+					ClientSecret:                       config.OAuthConfig.ClientSecret,
+					RedirectURIs:                       config.OAuthConfig.RedirectURIs,
+					GrantTypes:                         config.OAuthConfig.GrantTypes,
+					ResponseTypes:                      config.OAuthConfig.ResponseTypes,
+					TokenEndpointAuthMethod:            config.OAuthConfig.TokenEndpointAuthMethod,
+					PKCERequired:                       config.OAuthConfig.PKCERequired,
+					PublicClient:                       config.OAuthConfig.PublicClient,
+					RequirePushedAuthorizationRequests: config.OAuthConfig.RequirePushedAuthorizationRequests,
+					Token:                              config.OAuthConfig.Token,
+					Scopes:                             config.OAuthConfig.Scopes,
+					UserInfo:                           config.OAuthConfig.UserInfo,
+					ScopeClaims:                        config.OAuthConfig.ScopeClaims,
+					Certificate:                        config.OAuthConfig.Certificate,
 				},
 			})
 		}
@@ -833,14 +840,14 @@ func applicationRequestToDTO(req *appmodel.ApplicationRequestWithID) *appmodel.A
 	return appDTO
 }
 
-func getOAuthConfigForImportLog(appDTO *appmodel.ApplicationDTO) *appmodel.OAuthAppConfigDTO {
+func getOAuthConfigForImportLog(appDTO *appmodel.ApplicationDTO) *inboundmodel.OAuthConfigWithSecret {
 	if appDTO == nil {
 		return nil
 	}
 
 	for _, inboundAuth := range appDTO.InboundAuthConfig {
-		if inboundAuth.Type == appmodel.OAuthInboundAuthType && inboundAuth.OAuthAppConfig != nil {
-			return inboundAuth.OAuthAppConfig
+		if inboundAuth.Type == inboundmodel.OAuthInboundAuthType && inboundAuth.OAuthConfig != nil {
+			return inboundAuth.OAuthConfig
 		}
 	}
 

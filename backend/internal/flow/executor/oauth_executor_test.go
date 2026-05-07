@@ -19,6 +19,7 @@
 package executor
 
 import (
+	inboundmodel "github.com/asgardeo/thunder/internal/inboundclient/model"
 	i18ncore "github.com/asgardeo/thunder/internal/system/i18n/core"
 
 	"testing"
@@ -655,7 +656,9 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_AllowAuthWithou
 			"allowAuthenticationWithoutLocalUser": true,
 		},
 		Application: appmodel.Application{
-			AllowedUserTypes: []string{"INTERNAL"},
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{
+				AllowedUserTypes: []string{"INTERNAL"},
+			},
 		},
 	}
 
@@ -805,7 +808,9 @@ func (suite *OAuthExecutorTestSuite) TestResolveUserTypeForAutoProvisioning() {
 		ExecutionID: "flow-123",
 		FlowType:    common.FlowTypeAuthentication,
 		Application: appmodel.Application{
-			AllowedUserTypes: []string{"INTERNAL"},
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{
+				AllowedUserTypes: []string{"INTERNAL"},
+			},
 		},
 	}
 
@@ -883,7 +888,9 @@ func (suite *OAuthExecutorTestSuite) TestResolveUserTypeForAutoProvisioning_Fail
 				ExecutionID: "flow-123",
 				FlowType:    common.FlowTypeAuthentication,
 				Application: appmodel.Application{
-					AllowedUserTypes: tt.allowedUserTypes,
+					InboundAuthProfile: inboundmodel.InboundAuthProfile{
+						AllowedUserTypes: tt.allowedUserTypes,
+					},
 				},
 			}
 
@@ -909,7 +916,9 @@ func (suite *OAuthExecutorTestSuite) TestResolveUserTypeForAutoProvisioning_GetE
 		ExecutionID: "flow-123",
 		FlowType:    common.FlowTypeAuthentication,
 		Application: appmodel.Application{
-			AllowedUserTypes: []string{"INTERNAL"},
+			InboundAuthProfile: inboundmodel.InboundAuthProfile{
+				AllowedUserTypes: []string{"INTERNAL"},
+			},
 		},
 	}
 
@@ -1075,7 +1084,9 @@ func (suite *OAuthExecutorTestSuite) TestResolveUserTypeForAutoProvisioning_Fail
 			ctx := &core.NodeContext{
 				ExecutionID: "flow-123",
 				Application: appmodel.Application{
-					AllowedUserTypes: tt.allowedUserTypes,
+					InboundAuthProfile: inboundmodel.InboundAuthProfile{
+						AllowedUserTypes: tt.allowedUserTypes,
+					},
 				},
 			}
 

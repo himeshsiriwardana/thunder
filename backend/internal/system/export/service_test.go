@@ -219,7 +219,7 @@ func (suite *ExportServiceTestSuite) TestExportResources_CompleteOAuthApplicatio
 		},
 	}
 
-	mockOAuthConfig := &appmodel.OAuthAppConfigComplete{
+	mockOAuthConfig := &inboundmodel.OAuthConfigWithSecret{
 		ClientID:                "client123",
 		RedirectURIs:            []string{"http://localhost:3000/callback"},
 		GrantTypes:              []oauth2const.GrantType{oauth2const.GrantTypeAuthorizationCode},
@@ -248,14 +248,16 @@ func (suite *ExportServiceTestSuite) TestExportResources_CompleteOAuthApplicatio
 		Name:        "OAuth Test App",
 		Description: "OAuth Test Description",
 		URL:         "https://example.com",
-		InboundAuthConfig: []appmodel.InboundAuthConfigComplete{
+		InboundAuthConfig: []inboundmodel.InboundAuthConfigWithSecret{
 			{
-				Type:           appmodel.OAuthInboundAuthType,
-				OAuthAppConfig: mockOAuthConfig,
+				Type:        inboundmodel.OAuthInboundAuthType,
+				OAuthConfig: mockOAuthConfig,
 			},
 		},
-		Assertion: &inboundmodel.AssertionConfig{
-			UserAttributes: []string{"email", "username"},
+		InboundAuthProfile: inboundmodel.InboundAuthProfile{
+			Assertion: &inboundmodel.AssertionConfig{
+				UserAttributes: []string{"email", "username"},
+			},
 		},
 	}
 

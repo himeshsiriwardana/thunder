@@ -931,7 +931,7 @@ func (p *parameterizer) convertFieldToInterface(v reflect.Value) interface{} {
 }
 
 // convertStructPathsToYAMLPaths converts Go struct field paths to YAML field paths
-// e.g., "InboundAuthConfig[].OAuthAppConfig.ClientID" -> "inbound_auth_config[].config.client_id"
+// e.g., "InboundAuthConfig[].OAuthConfig.ClientID" -> "inbound_auth_config[].config.client_id"
 func (p *parameterizer) convertStructPathsToYAMLPaths(obj interface{}, rules *resourceRules) *resourceRules {
 	logger := log.GetLogger().With(log.String("component", "Parameterizer"))
 

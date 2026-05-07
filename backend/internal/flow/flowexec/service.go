@@ -111,7 +111,7 @@ func (s *flowExecService) Execute(ctx context.Context,
 					event.ComponentFlowEngine,
 				).
 					WithStatus(event.StatusFailure).
-					WithData(event.DataKey.AppID, appID).
+					WithData(event.DataKey.EntityID, appID).
 					WithData(event.DataKey.FlowType, flowType).
 					WithData(event.DataKey.Error, loadErr.Error.DefaultValue).
 					WithData(event.DataKey.ErrorCode, loadErr.Code).

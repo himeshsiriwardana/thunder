@@ -476,7 +476,7 @@ func resolveClientOUAttributes(
 	orgUnit, svcErr := ouService.GetOrganizationUnit(ctx, oauthApp.OUID)
 	if svcErr != nil {
 		return nil, fmt.Errorf("failed to fetch organization unit %s for app %s: %s",
-			oauthApp.OUID, oauthApp.AppID, svcErr.Error)
+			oauthApp.OUID, oauthApp.ID, svcErr.Error)
 	}
 
 	return map[string]interface{}{

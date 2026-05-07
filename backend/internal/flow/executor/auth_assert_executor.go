@@ -209,7 +209,7 @@ func (a *authAssertExecutor) generateAuthAssertion(ctx *core.NodeContext, logger
 		}
 	}
 
-	jwtClaims["aud"] = ctx.AppID
+	jwtClaims["aud"] = ctx.EntityID
 	token, _, err := a.jwtService.GenerateJWT(
 		ctx.Context, tokenSub, iss, validityPeriod, jwtClaims, jwt.TokenTypeJWT, "")
 	if err != nil {
@@ -599,8 +599,8 @@ func (a *authAssertExecutor) buildGetAttributesMetadata(ctx *core.NodeContext) *
 	// Extract client IDs from InboundAuthConfig
 	var clientIDs []string
 	for _, inboundConfig := range ctx.Application.InboundAuthConfig {
-		if inboundConfig.OAuthAppConfig != nil && inboundConfig.OAuthAppConfig.ClientID != "" {
-			clientIDs = append(clientIDs, inboundConfig.OAuthAppConfig.ClientID)
+		if inboundConfig.OAuthConfig != nil && inboundConfig.OAuthConfig.ClientID != "" {
+			clientIDs = append(clientIDs, inboundConfig.OAuthConfig.ClientID)
 		}
 	}
 

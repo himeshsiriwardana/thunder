@@ -1010,8 +1010,8 @@ const (
 
 func newOAuthAppForClientAttributes(ouID string) *inboundmodel.OAuthClient {
 	return &inboundmodel.OAuthClient{
-		AppID: testBCCAppID,
-		OUID:  ouID,
+		ID:   testBCCAppID,
+		OUID: ouID,
 	}
 }
 

@@ -461,4 +461,17 @@ var (
 			DefaultValue: "One or more ACR values in acr_values are not recognized by the system",
 		},
 	}
+	// ErrorMultipleOAuthConfigs is returned when more than one OAuth inbound auth config is supplied.
+	ErrorMultipleOAuthConfigs = serviceerror.ServiceError{
+		Type: serviceerror.ClientErrorType,
+		Code: "APP-1034",
+		Error: core.I18nMessage{
+			Key:          "error.applicationservice.multiple_oauth_configs",
+			DefaultValue: "Multiple OAuth inbound auth configs are not allowed",
+		},
+		ErrorDescription: core.I18nMessage{
+			Key:          "error.applicationservice.multiple_oauth_configs_description",
+			DefaultValue: "An application may have at most one inbound auth config per protocol",
+		},
+	}
 )

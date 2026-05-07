@@ -178,8 +178,8 @@ func (e *inviteExecutor) generateInviteLink(ctx *core.NodeContext, inviteToken s
 		"inviteToken": []string{inviteToken},
 	}
 
-	if ctx.AppID != "" {
-		queryParams.Set(oauth2const.AppID, ctx.AppID)
+	if ctx.EntityID != "" {
+		queryParams.Set(oauth2const.AppID, ctx.EntityID)
 	}
 
 	return fmt.Sprintf("%s/invite?%s", gateAppURL, queryParams.Encode())
