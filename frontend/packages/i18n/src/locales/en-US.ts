@@ -363,6 +363,7 @@ const translations = {
     'pages.home': 'Home',
     'pages.users': 'Users',
     'pages.userTypes': 'User Types',
+    'pages.agentTypes': 'Agent Types',
     'pages.organizationUnits': 'Organization Units',
     'pages.groups': 'Groups',
     'pages.roles': 'Roles',
@@ -572,6 +573,234 @@ const translations = {
   },
 
   // ============================================================================
+  // Agent Types namespace - Agent types feature translations
+  // ============================================================================
+  agentTypes: {
+    // Listing page
+    title: 'Agent Types',
+    subtitle: 'Define and manage agent types with custom schemas',
+    addAgentType: 'Add Agent Type',
+    createAgentType: 'Create Agent Type',
+    editAgentType: 'Edit Agent Type',
+    deleteAgentType: 'Delete Agent Type',
+    agentTypeDetails: 'Agent Type Details',
+    typeName: 'Type Name',
+    typeNamePlaceholder: 'e.g., Worker, Assistant, Tool',
+    organizationUnit: 'Organization Unit',
+    ouSelectPlaceholder: 'Select an organization unit',
+    description: 'Description',
+    createDescription: 'Define a new agent type schema for your organization',
+    permissions: 'Permissions',
+    schemaProperties: 'Schema Properties',
+    propertyName: 'Property Name',
+    propertyNamePlaceholder: 'e.g., model, environment, team',
+    propertyType: 'Type',
+    addProperty: 'Add Property',
+    credential: 'Credential',
+    unique: 'Unique',
+    removeProperty: 'Remove property',
+    regexPattern: 'Regular Expression Pattern (Optional)',
+    regexPlaceholder: 'e.g., ^[a-zA-Z0-9]+$',
+    enumValues: 'Allowed Values (Enum) - Optional',
+    enumPlaceholder: 'Add value and press Enter',
+    'tooltips.required': 'Agents must provide a value for this field',
+    'tooltips.unique': 'Each agent must have a distinct value for this field',
+    'tooltips.credential': 'Values will be hashed and not returned in API responses',
+    credentialHint: 'This field will be treated as a secret. Values will be hashed and cannot be retrieved.',
+    'types.string': 'String',
+    'types.number': 'Number',
+    'types.boolean': 'Boolean',
+    'types.enum': 'Enum',
+    'types.array': 'Array',
+    'types.object': 'Object',
+    'validationErrors.nameRequired': 'Please enter an agent type name',
+    'validationErrors.ouIdRequired': 'Please provide an organization unit ID',
+    'validationErrors.propertiesRequired': 'Please add at least one property',
+    'validationErrors.duplicateProperties': 'Duplicate property names found: {{duplicates}}',
+    'errors.organizationUnitsFailedTitle': 'Failed to load organization units',
+    noAgentTypes: 'No agent types found',
+    'listing.columns.name': 'Name',
+    'listing.columns.id': 'Agent Type ID',
+    'listing.columns.organizationUnit': 'Organization Unit',
+    'listing.columns.actions': 'Actions',
+    noOrganizationUnits: 'No organization units available',
+    confirmDeleteAgentType: 'Are you sure you want to delete this agent type?',
+
+    // Edit page
+    'manageAgentType.title': 'Manage Agent Type',
+    'manageAgentType.subtitle': 'View and manage agent type information',
+
+    // Edit page (new UI)
+    'edit.back': 'Back to Agents',
+    'edit.title': 'Agent Schema',
+    'edit.editName': 'Edit agent type name',
+    'edit.copyId': 'Copy agent type ID',
+    'edit.tabs.general': 'General',
+    'edit.tabs.schema': 'Schema',
+    'edit.unsavedChanges': 'You have unsaved changes',
+    'edit.saveError': 'Failed to save agent type',
+    'edit.loadError': 'Failed to load agent type information',
+    'edit.notFound': 'Agent type not found',
+    'edit.general.organizationUnit.title': 'Organization Unit',
+    'edit.general.organizationUnit.description': 'The organization unit this agent type belongs to.',
+    'edit.general.displayAttribute.title': 'Display Attribute',
+    'edit.general.displayAttribute.description': 'The attribute used to display agent identity.',
+    'edit.general.dangerZone.title': 'Danger Zone',
+    'edit.general.dangerZone.description': 'Irreversible actions for this agent type.',
+    'edit.general.dangerZone.deleteAgentType': 'Delete Agent Type',
+    'edit.general.dangerZone.deleteAgentTypeDescription':
+      'Permanently delete this agent type and all associated schema definitions. This action cannot be undone.',
+
+    // Create page
+    'createAgentType.title': 'Create Agent Type',
+    'createAgentType.subtitle': 'Add a new agent type to your organization',
+
+    // Create wizard steps
+    'createWizard.steps.name': 'Create an Agent Type',
+    'createWizard.steps.general': 'General',
+    'createWizard.steps.properties': 'Properties',
+    'createWizard.name.title': "Let's name your agent type",
+    'createWizard.name.fieldLabel': 'Agent Type Name',
+    'createWizard.name.placeholder': 'Enter your agent type name',
+    'createWizard.name.suggestions.label': 'In a hurry? Pick a random name:',
+    'createWizard.general.title': 'Configure general settings',
+    'createWizard.general.subtitle': 'Choose an organization unit and set registration preferences',
+    'createWizard.properties.title': 'Define your schema properties',
+    'createWizard.properties.subtitle': 'Add the fields that make up this agent type',
+    'create.success': 'Agent type created successfully.',
+    'create.error': 'Failed to create agent type. Please try again.',
+    'update.success': 'Agent type updated successfully.',
+    'update.error': 'Failed to update agent type. Please try again.',
+    'delete.disclaimer': 'All associated schema definitions will be permanently removed.',
+    'delete.success': 'Agent type deleted successfully.',
+    'delete.error': 'Failed to delete agent type. Please try again.',
+    'removeCredentialDialog.title': 'Remove Credential Flag',
+    'removeCredentialDialog.description':
+      'Removing the credential flag will cause this field to no longer be hashed or protected. Existing hashed values may become inaccessible. Are you sure you want to proceed?',
+    'removeCredentialDialog.confirm': 'Remove Credential',
+  },
+
+  // ============================================================================
+  // Agents namespace - Agent management feature translations
+  // ============================================================================
+  agents: {
+    // Listing page
+    'listing.title': 'Agents',
+    'listing.subtitle': 'Manage service identities and machine clients',
+    'listing.addAgent': 'Add agent',
+    'listing.schema': 'Schema',
+    'listing.search.placeholder': 'Search agents',
+    'listing.loadError': 'Failed to load agents',
+    'listing.columns.name': 'Name',
+    'listing.columns.agentId': 'Agent ID',
+    'listing.columns.organizationUnit': 'Organization Unit',
+    'listing.columns.actions': 'Actions',
+
+    // Create wizard
+    'createWizard.createAgent': 'Create agent',
+    'createWizard.errors.createFailed': 'Failed to create agent. Please try again.',
+    'createWizard.errors.ouRequired': 'Organization unit is required',
+    'createWizard.errors.schemaRequired': 'Schema is required',
+    'createWizard.steps.name': 'Name',
+    'createWizard.steps.organizationUnit': 'Organization unit',
+    'createWizard.steps.profile': 'Profile',
+    'createWizard.steps.owner': 'Owner',
+    'createWizard.name.fieldLabel': 'Agent name',
+    'createWizard.name.placeholder': 'e.g. Billing Service',
+    'createWizard.name.suggestions.label': 'Need inspiration? Pick one:',
+    'createWizard.agentDetails.title': 'Agent attributes',
+    'createWizard.agentDetails.subtitle': 'Provide values for the attributes defined by the agent schema.',
+    'createWizard.owner.title': 'Owner',
+    'createWizard.owner.subtitle': 'Choose the user that owns this agent.',
+    'createWizard.owner.userLabel': 'Owner',
+    'createWizard.owner.userPlaceholder': 'Select a user',
+
+    // Client secret (creation)
+    'clientSecret.saveTitle': 'Save your client secret',
+    'clientSecret.saveSubtitle': "Copy your client secret and store it somewhere safe. It won't be shown again.",
+    'clientSecret.agentNameLabel': 'Agent name',
+    'clientSecret.clientIdLabel': 'Client ID',
+    'clientSecret.clientSecretLabel': 'Client Secret',
+    'clientSecret.copySecret': 'Copy client secret',
+    'clientSecret.copied': 'Copied',
+    'clientSecret.securityReminder.title': "You won't be able to see this secret again",
+    'clientSecret.securityReminder.description':
+      'Store the client secret somewhere safe. If you lose it, you will need to regenerate it from the agent settings.',
+
+    // Delete dialog
+    'delete.title': 'Delete agent',
+    'delete.message': 'Are you sure you want to delete this agent? This action cannot be undone.',
+    'delete.disclaimer': 'Deleting this agent will revoke all its credentials and access tokens.',
+    'delete.error': 'Failed to delete agent. Please try again.',
+
+    // Regenerate client secret
+    'regenerateSecret.dialog.title': 'Regenerate client secret?',
+    'regenerateSecret.dialog.message':
+      'A new client secret will be generated for this agent. Any service using the current client secret will stop working immediately.',
+    'regenerateSecret.dialog.disclaimer':
+      'This action cannot be undone. The current client secret will be invalidated as soon as you confirm.',
+    'regenerateSecret.dialog.confirmButton': 'Regenerate',
+    'regenerateSecret.dialog.regenerating': 'Regenerating…',
+    'regenerateSecret.dialog.error': 'Failed to regenerate client secret',
+    'regenerateSecret.success.title': 'Client secret regenerated',
+    'regenerateSecret.success.subtitle':
+      "Copy your new client secret and store it somewhere safe. It won't be shown again.",
+    'regenerateSecret.success.secretLabel': 'New Client Secret',
+    'regenerateSecret.success.copySecret': 'Copy client secret',
+    'regenerateSecret.success.copied': 'Copied',
+    'regenerateSecret.success.securityReminder.title': "You won't be able to see this secret again",
+    'regenerateSecret.success.securityReminder.description':
+      "Store the new client secret somewhere safe. If you lose it, you'll need to regenerate it again.",
+
+    // Edit page (header)
+    'edit.page.error': 'Failed to load agent',
+    'edit.page.notFound': 'Agent not found',
+    'edit.page.back': 'Back to agents',
+    'edit.page.description.empty': 'No description',
+    'edit.page.description.placeholder': 'Add a description',
+    'edit.page.tabs.attributes': 'Attributes',
+    'edit.page.unsavedChanges': 'You have unsaved changes',
+    'edit.page.reset': 'Discard',
+    'edit.page.save': 'Save',
+    'edit.page.saving': 'Saving…',
+
+    // Edit page — Attributes tab
+    'edit.attributes.title': 'Attributes',
+    'edit.attributes.description': 'View and manage agent attribute values.',
+    'edit.attributes.empty': 'No attributes available.',
+    'edit.attributes.noEditable': 'No editable attributes available.',
+
+    // Edit page — General tab
+    'edit.general.sections.quickCopy.title': 'Quick Copy',
+    'edit.general.sections.quickCopy.description': 'Copy agent identifiers for use in your code.',
+    'edit.general.labels.agentId': 'Agent ID',
+    'edit.general.labels.ownerId': 'Owner ID',
+    'edit.general.agentId.hint': 'Unique identifier for this agent',
+    'edit.general.clientId.hint': 'OAuth2 client identifier used by this agent to obtain tokens',
+    'edit.general.owner.hint': 'Identifier of the user that owns this agent',
+    'edit.general.dangerZone.deleteAgent.title': 'Delete Agent',
+    'edit.general.dangerZone.deleteAgent.description':
+      'Permanently delete this agent and all associated data. This action cannot be undone.',
+    'edit.general.dangerZone.deleteAgent.button': 'Delete Agent',
+
+    // Edit page — Flows tab
+    'edit.flows.allowedUserTypes.title': 'Allowed User Types',
+    'edit.flows.allowedUserTypes.description':
+      'Restrict which user types can authenticate or register through this agent.',
+    'edit.flows.allowedUserTypes.label': 'User Types',
+    'edit.flows.allowedUserTypes.placeholder': 'Select or add user types',
+    'edit.flows.allowedUserTypes.hint': 'Leave empty to allow any user type.',
+
+    // Edit page — Advanced tab
+    'edit.advanced.redirectUris.title': 'Redirect URIs',
+    'edit.advanced.redirectUris.description': 'Allowed redirect destinations for the authorization code grant.',
+    'edit.advanced.redirectUris.empty': 'No redirect URIs configured.',
+    'edit.advanced.redirectUris.addUri': 'Add Redirect URI',
+    'edit.advanced.redirectUris.error.empty': 'URI cannot be empty',
+    'edit.advanced.redirectUris.error.invalid': 'Enter a valid URL',
+  },
+
+  // ============================================================================
   // Organization Units namespace - Organization unit management feature translations
   // ============================================================================
   organizationUnits: {
@@ -772,9 +1001,11 @@ const translations = {
     'addMember.title': 'Add Member',
     'addMember.tabs.users': 'Users',
     'addMember.tabs.apps': 'Apps',
+    'addMember.tabs.agents': 'Agents',
     'addMember.search.placeholder': 'Search users...',
     'addMember.noResults': 'No users found',
     'addMember.noResultsApps': 'No apps found',
+    'addMember.noResultsAgents': 'No agents found',
     'addMember.add': 'Add Selected',
     'addMember.columns.displayName': 'Display Name',
     'addMember.columns.userType': 'User Type',
@@ -782,6 +1013,7 @@ const translations = {
     'addMember.error': 'Failed to add member. Please try again.',
     'addMember.fetchError': 'Failed to load users. Please try again.',
     'addMember.fetchAppsError': 'Failed to load apps. Please try again.',
+    'addMember.fetchAgentsError': 'Failed to load agents. Please try again.',
     'removeMember.error': 'Failed to remove member. Please try again.',
 
     // Delete dialog
@@ -871,11 +1103,12 @@ const translations = {
     'edit.permissions.selectedCount': '{{count}} selected',
 
     // Assignments settings
-    'edit.assignments.sections.manage.title': 'Assigned Users, Groups & Apps',
-    'edit.assignments.sections.manage.description': 'Manage users, groups, and apps assigned to this role',
+    'edit.assignments.sections.manage.title': 'Assigned Users, Groups, Apps & Agents',
+    'edit.assignments.sections.manage.description': 'Manage users, groups, apps, and agents assigned to this role',
     'edit.assignments.sections.manage.tabs.users': 'Users',
     'edit.assignments.sections.manage.tabs.groups': 'Groups',
     'edit.assignments.sections.manage.tabs.apps': 'Apps',
+    'edit.assignments.sections.manage.tabs.agents': 'Agents',
     'edit.assignments.sections.manage.listing.columns.name': 'Name',
     'edit.assignments.sections.manage.listing.columns.id': 'ID',
     'edit.assignments.sections.manage.listing.columns.type': 'Type',
@@ -886,6 +1119,7 @@ const translations = {
     'assignments.dialog.tabs.users': 'Users',
     'assignments.dialog.tabs.groups': 'Groups',
     'assignments.dialog.tabs.apps': 'Apps',
+    'assignments.dialog.tabs.agents': 'Agents',
     'assignments.dialog.columns.displayName': 'Display Name',
     'assignments.dialog.columns.name': 'Name',
     'assignments.dialog.columns.description': 'Description',
@@ -1373,13 +1607,12 @@ const translations = {
       "URL to your application's Terms of Service. May be displayed to users during consent or user sign-in, sign-up or recovery flows.",
     'edit.customization.policyUri.hint':
       "URL to your application's Privacy Policy. May be displayed to users during consent or user sign-in, sign-up or recovery flows.",
-    'edit.advanced.oauth2Config.intro':
-      'These OAuth 2.0 settings are read-only and were configured during application creation.',
+    'edit.advanced.oauth2Config.intro': 'Configure OAuth 2.0 settings for this {{entity}}.',
     'edit.advanced.redirectUris.hint':
       'Allowed callback URLs where users will be redirected after authentication. Must be exact matches for security.',
     'edit.advanced.grantTypes.placeholder': 'Select grant types',
     'edit.advanced.grantTypes.hint':
-      'OAuth 2.0 flows this application can use (e.g., authorization_code, client_credentials, refresh_token).',
+      'OAuth 2.0 flows this {{entity}} can use (e.g., authorization_code, client_credentials, refresh_token).',
     'edit.advanced.responseTypes.placeholder': 'Select response types',
     'edit.advanced.publicClient.public':
       'This is a public client (SPA, mobile app) that cannot securely store credentials.',
@@ -1390,8 +1623,8 @@ const translations = {
     'edit.advanced.pkce.requiresAuthorizationCode': 'PKCE applies only to the authorization code flow.',
     'edit.advanced.pkce.requiredForPublicClient': 'Always required for public clients.',
     'edit.advanced.publicClient.requiresAuthorizationCode':
-      'Available only for apps using the authorization code flow.',
-    'edit.advanced.publicClient.incompatibleWithClientCredentials': 'Not available for machine-to-machine apps.',
+      'Available only for clients using the authorization code flow.',
+    'edit.advanced.publicClient.incompatibleWithClientCredentials': 'Not available for machine-to-machine clients.',
     'edit.advanced.responseTypes.codeRequiredHint': 'Required for the authorization code flow.',
     'edit.advanced.responseTypes.notApplicable': 'Response types apply only to the authorization code flow.',
     'edit.advanced.tokenEndpointAuthMethod.placeholder': 'Select authentication method',
@@ -1432,7 +1665,7 @@ const translations = {
     'edit.general.sections.access': 'Access',
     'edit.general.sections.access.description': "Configure who can access this application, where it's hosted, etc.",
     'edit.general.sections.contacts': 'Contacts',
-    'edit.general.sections.contacts.description': 'Contact email addresses for application administrators.',
+    'edit.general.sections.contacts.description': 'Contact email addresses for {{entity}} administrators.',
     'edit.general.labels.applicationId': 'Application ID',
     'edit.general.labels.clientId': 'Client ID',
     'edit.general.labels.allowedUserTypes': 'Allowed User Types',
@@ -1469,23 +1702,21 @@ const translations = {
     'edit.flows.labels.authFlow.description': 'Choose the flow that handles user login and authentication.',
     'edit.flows.labels.registrationFlow': 'Registration Flow',
     'edit.flows.labels.registrationFlow.description': 'Choose the flow that handles user sign-up and account creation.',
-    'edit.flows.labels.enableRegistration': 'Enable Registration Flow',
     'edit.flows.authFlow.placeholder': 'Select an authentication flow',
-    'edit.flows.authFlow.hint': 'Select the flow that handles user sign-in for this application.',
+    'edit.flows.authFlow.hint': 'Select the flow that handles user sign-in for this {{entity}}.',
     'edit.flows.authFlow.alert':
       'To modify the selected flow, <0>open the flow builder</0>. To create a new flow, visit the <1>Flows page</1>.',
     'edit.flows.registrationFlow.placeholder': 'Select a registration flow',
-    'edit.flows.registrationFlow.hint': 'Select the flow that handles user registration for this application.',
+    'edit.flows.registrationFlow.hint': 'Select the flow that handles user registration for this {{entity}}.',
     'edit.flows.registrationFlow.alert':
       'To modify the selected flow, <0>open the flow builder</0>. To create a new flow, visit the <1>Flows page</1>.',
-    'edit.flows.enableRegistration.hint': 'Allow users to register new accounts through this application',
     'edit.flows.editFlow': 'Edit flow',
 
     // Customization section
     'edit.customization.sections.appearance': 'Appearance',
-    'edit.customization.sections.appearance.description': 'Customize the visual appearance of your application.',
+    'edit.customization.sections.appearance.description': 'Customize the visual appearance of your {{entity}}.',
     'edit.customization.sections.urls': 'URLs',
-    'edit.customization.sections.urls.description': 'Configure legal and policy URLs for your application.',
+    'edit.customization.sections.urls.description': 'Configure legal and policy URLs for your {{entity}}.',
     'edit.customization.labels.theme': 'Theme',
     'edit.customization.labels.tosUri': 'Terms of Service URI',
     'edit.customization.labels.policyUri': 'Privacy Policy URI',
@@ -1499,7 +1730,7 @@ const translations = {
     'edit.token.seconds': 'seconds',
     'edit.token.labels.token_validity': 'Token Validity',
     'edit.token.loading_attributes': 'Loading user attributes...',
-    'edit.token.no_user_attributes': 'No user attributes available. Configure allowed user types for this application.',
+    'edit.token.no_user_attributes': 'No user attributes available. Configure allowed user types for this {{entity}}.',
     'edit.token.click_to_add': 'Click to add',
     'edit.token.click_to_remove': 'Click to remove',
     'edit.token.configure_attributes': 'Add or Remove Attributes',
@@ -1520,7 +1751,7 @@ const translations = {
     'edit.token.scopes_card.title': 'Scopes & User Attribute Mappings',
     'edit.token.scopes_card.description': 'Configure the OAuth2 scopes and the user attributes exposed for each scope',
     'edit.token.scopes.title': 'Available Scopes',
-    'edit.token.scopes.hint': 'Toggle the OAuth2 scopes available to this application.',
+    'edit.token.scopes.hint': 'Toggle the OAuth2 scopes available to this {{entity}}.',
     'edit.token.scopes.active_label': 'Active',
     'edit.token.scopes.suggested_label': 'Suggested',
     'edit.token.scopes.custom_label': 'Custom',

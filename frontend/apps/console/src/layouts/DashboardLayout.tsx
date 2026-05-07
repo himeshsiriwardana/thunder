@@ -33,6 +33,7 @@ import {
   UserMenu,
 } from '@wso2/oxygen-ui';
 import {
+  Bot,
   Building,
   FileDown,
   Group,
@@ -148,6 +149,12 @@ export default function DashboardLayout(): ReactNode {
             text: t('navigation:pages.users'),
             icon: <UsersRound />,
             path: '/users',
+          },
+          {
+            id: 'agents',
+            text: t('navigation:pages.agents', 'Agents'),
+            icon: <Bot />,
+            path: '/agents',
           },
           {
             id: 'groups',
