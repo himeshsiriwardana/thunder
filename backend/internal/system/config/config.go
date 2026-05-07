@@ -36,6 +36,8 @@ import (
 	yaml "gopkg.in/yaml.v3"
 )
 
+const schemeHTTPS = "https"
+
 // SecurityConfig holds the security-related configuration details.
 //
 // JWKSCacheTTL controls how long fetched JWKS responses are reused from the in-process
@@ -562,7 +564,7 @@ func (c *TrustedIssuerConfig) Validate() error {
 		return fmt.Errorf("trusted_issuer.jwks_url is not a valid URL: %w", err)
 	}
 	switch parsed.Scheme {
-	case "https":
+	case schemeHTTPS:
 		return nil
 	case "http":
 		host := parsed.Hostname()
@@ -754,7 +756,7 @@ func GetServerURL(server *ServerConfig) string {
 	if server.PublicURL != "" {
 		return server.PublicURL
 	}
-	scheme := "https"
+	scheme := schemeHTTPS
 	if server.HTTPOnly {
 		scheme = "http"
 	}
