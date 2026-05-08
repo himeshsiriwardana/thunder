@@ -7,9 +7,15 @@
 [![GitHub issues](https://img.shields.io/github/issues/asgardeo/thunder.svg)](https://github.com/asgardeo/thunder/issues)
 [![codecov.io](https://codecov.io/github/asgardeo/thunder/coverage.svg?branch=main)](https://codecov.io/github/asgardeo/thunder?branch=main)
 
-ThunderID is a modern, open-source identity management service designed for teams building secure, customizable authentication experiences across applications, services, and AI agents. It enables developers to design and orchestrate login, registration, and recovery flows using a flexible identity flow designer.
+ThunderID is a lightweight, open-source Identity and Access Management (IAM) engine built to secure access for humans, AI agents, and machines.
 
-Designed for extensibility, scalability, and seamless containerized deployment, ThunderID integrates naturally with microservices and DevOps environments—serving as the core identity layer for your cloud platform.
+Designed for the agentic era, ThunderID provides a developer-first IAM platform and supporting tools for securing applications, APIs, services, and agent-driven workflows across traditional and decentralized identity ecosystems, with post-quantum-ready security built in from the start.
+
+Core design goals of ThunderID include:
+- **Agent-native identity:** Manage AI agents as first-class identities with delegated authority, consent-aware access, traceability, and support for issuing verifiable credentials to agents. ThunderID also aims to expose IAM capabilities through interfaces that agents can use safely and programmatically.
+- **Decentralized identity:** Bridge the adoption gap for relying parties by making it practical for service providers to consume, verify, and trust decentralized identity in real-world applications, including DIDs, verifiable credentials, digital wallets, trust registries, and issuer-verifier-holder interaction models.
+- **Cloud-native IAM:** Provide a lightweight, containerized identity product that can run across on-premises and cloud environments, with declarative identity flows, policies, and configuration suitable for automation, versioning, and GitOps practices.
+- **Post-quantum-safe security:** Build on a crypto-agile foundation where algorithms, key types, signing methods, and token protection mechanisms can evolve over time, including support for post-quantum-safe algorithms and hybrid transition approaches across key management, credential issuance, assertions, and secure service-to-service communication.
 
 ---
 
