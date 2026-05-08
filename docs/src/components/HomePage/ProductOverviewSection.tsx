@@ -373,11 +373,29 @@ const features = [
     description:
       'Deploy where your workloads live without infrastructure lock-in using a GitOps-driven approach and deployment artifacts for Kubernetes, Docker, and Helm.',
   },
+  {
+    icon: (
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+      </svg>
+    ),
+    title: 'Built for how you work',
+    description:
+      'Work your way, whether you are an app developer, IAM architect, or system admin. Your workflows, your default toolbox.',
+  },
 ];
 
 export default function ProductOverviewSection(): JSX.Element {
   const isDark = useIsDarkMode();
-  const diagramUrl = useBaseUrl('/assets/images/diagram.png');
   const {ref: titleRef, isVisible: titleVisible} = useScrollAnimation({threshold: 0.2});
   const {ref, isVisible} = useScrollAnimation({threshold: 0.05});
   const {siteConfig} = useDocusaurusContext();
@@ -385,7 +403,7 @@ export default function ProductOverviewSection(): JSX.Element {
 
   return (
     <Box sx={{py: {xs: 8, lg: 12}, background: isDark ? '#0a0a0a' : 'transparent'}}>
-      <Container maxWidth="lg" sx={{px: {xs: 2, sm: 4}}}>
+      <Container maxWidth="xl" sx={{px: {xs: 2, sm: 4}}}>
         <Box
           ref={titleRef}
           sx={{
@@ -447,47 +465,14 @@ export default function ProductOverviewSection(): JSX.Element {
           <Box
             sx={{
               gridColumn: '1 / -1',
-              my: 2,
-              borderRadius: '12px',
-              overflow: 'hidden',
-              border: '1px solid',
-              borderColor: isDark ? 'rgba(255, 140, 0, 0.15)' : 'rgba(255, 140, 0, 0.2)',
-              bgcolor: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
-              transition: 'transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease',
-              '&:hover': {
-                transform: 'translateY(-4px)',
-                borderColor: 'rgba(255, 107, 0, 0.5)',
-                boxShadow: isDark ? '0 8px 24px rgba(255, 107, 0, 0.1)' : '0 8px 24px rgba(255, 107, 0, 0.08)',
-              },
-            }}
-          >
-            <img src={diagramUrl} alt="ThunderID Architecture Diagram" style={{width: '100%', display: 'block'}} />
-          </Box>
-          <Box
-            sx={{
-              gridColumn: '1 / -1',
               display: 'grid',
               gridTemplateColumns: {xs: '1fr', sm: 'repeat(3, 1fr)'},
               gap: 3,
             }}
           >
-            {features.slice(4, 7).map((feature, index) => (
+            {features.slice(4).map((feature, index) => (
               <FeatureCard key={feature.title} {...feature} index={index + 4} isVisible={isVisible} />
             ))}
-          </Box>
-          <Box
-            sx={{
-              gridColumn: '1 / -1',
-              display: 'grid',
-              gridTemplateColumns: {xs: '1fr', sm: 'repeat(4, 1fr)'},
-              gap: 3,
-            }}
-          >
-            <Box sx={{display: {xs: 'none', sm: 'block'}}} />
-            {features.slice(7).map((feature, index) => (
-              <FeatureCard key={feature.title} {...feature} index={index + 7} isVisible={isVisible} />
-            ))}
-            <Box sx={{display: {xs: 'none', sm: 'block'}}} />
           </Box>
         </Box>
       </Container>
