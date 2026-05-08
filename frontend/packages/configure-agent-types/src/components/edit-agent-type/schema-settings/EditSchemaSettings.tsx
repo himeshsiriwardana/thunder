@@ -42,23 +42,23 @@ import {
 import {Trash2, Plus, Info} from '@wso2/oxygen-ui-icons-react';
 import {useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
-import {invalidateI18nCache} from '../../../../../i18n/invalidate-i18n-cache';
-import type {SchemaPropertyInput, PropertyType} from '../../../types/user-types';
+import type {SchemaPropertyInput, PropertyType} from '../../../models/property-definition';
+import {invalidateI18nCache} from '../../../utils/invalidateI18nCache';
 
 export interface EditSchemaSettingsProps {
   properties: SchemaPropertyInput[];
   onPropertiesChange: (properties: SchemaPropertyInput[]) => void;
-  userTypeName: string;
+  agentTypeName: string;
 }
 
 /**
- * Schema settings tab content for the User Type edit page.
- * Displays the property editor cards for defining user type schema fields.
+ * Schema settings tab content for the Agent Type edit page.
+ * Displays the property editor cards for defining agent type schema fields.
  */
 export default function EditSchemaSettings({
   properties,
   onPropertiesChange,
-  userTypeName,
+  agentTypeName,
 }: EditSchemaSettingsProps): JSX.Element {
   const {t} = useTranslation();
   const [enumInput, setEnumInput] = useState<Record<string, string>>({});
@@ -153,7 +153,7 @@ export default function EditSchemaSettings({
         >
           {/* Remove button - visible on hover */}
           {properties.length > 1 && (
-            <Tooltip title={t('userTypes:removeProperty', 'Remove property')}>
+            <Tooltip title={t('agentTypes:removeProperty', 'Remove property')}>
               <IconButton
                 className="property-delete-btn"
                 size="small"
@@ -169,50 +169,50 @@ export default function EditSchemaSettings({
           <Stack spacing={2}>
             <Box sx={{display: 'grid', gridTemplateColumns: {xs: '1fr', md: '1fr 1fr'}, gap: 2}}>
               <FormControl fullWidth>
-                <FormLabel>{t('userTypes:propertyName')}</FormLabel>
+                <FormLabel>{t('agentTypes:propertyName')}</FormLabel>
                 <TextField
                   value={property.name}
                   onChange={(e) => handlePropertyChange(property.id, 'name', e.target.value)}
-                  placeholder={t('userTypes:propertyNamePlaceholder', 'e.g., email, age, address')}
+                  placeholder={t('agentTypes:propertyNamePlaceholder', 'e.g., email, age, address')}
                   size="small"
                 />
               </FormControl>
 
               <FormControl fullWidth>
-                <FormLabel>{t('userTypes:propertyType', 'Type')}</FormLabel>
+                <FormLabel>{t('agentTypes:propertyType', 'Type')}</FormLabel>
                 <Select
                   value={property.type}
                   onChange={(e) => handlePropertyChange(property.id, 'type', e.target.value as PropertyType)}
                   size="small"
                 >
-                  <MenuItem value="string">{t('userTypes:types.string', 'String')}</MenuItem>
-                  <MenuItem value="number">{t('userTypes:types.number', 'Number')}</MenuItem>
-                  <MenuItem value="boolean">{t('userTypes:types.boolean', 'Boolean')}</MenuItem>
-                  <MenuItem value="enum">{t('userTypes:types.enum', 'Enum')}</MenuItem>
+                  <MenuItem value="string">{t('agentTypes:types.string', 'String')}</MenuItem>
+                  <MenuItem value="number">{t('agentTypes:types.number', 'Number')}</MenuItem>
+                  <MenuItem value="boolean">{t('agentTypes:types.boolean', 'Boolean')}</MenuItem>
+                  <MenuItem value="enum">{t('agentTypes:types.enum', 'Enum')}</MenuItem>
                 </Select>
               </FormControl>
             </Box>
 
             <I18nTextInput
-              label={t('userTypes:displayName', 'Display Name')}
+              label={t('agentTypes:displayName', 'Display Name')}
               value={property.displayName}
               onChange={(newValue: string) => handlePropertyChange(property.id, 'displayName', newValue)}
-              placeholder={t('userTypes:displayNamePlaceholder', 'e.g., First Name')}
+              placeholder={t('agentTypes:displayNamePlaceholder', 'e.g., First Name')}
               onTranslationCreated={invalidateI18nCache}
               labels={{
-                triggerTooltip: t('userTypes:displayNameI18n.tooltip', 'Configure translation'),
-                popoverTitle: t('userTypes:displayNameI18n.title', 'Translation'),
-                createTitle: t('userTypes:displayNameI18n.createTitle', 'Create New Translation'),
-                createTooltip: t('userTypes:displayNameI18n.createTooltip', 'Create a new translation key'),
-                languageLabel: t('userTypes:displayNameI18n.language', 'Language'),
-                keyLabel: t('userTypes:displayNameI18n.i18nKey', 'Translation Key'),
-                selectKeyPlaceholder: t('userTypes:displayNameI18n.selectKey', 'Select a translation key'),
-                valueLabel: t('userTypes:displayNameI18n.translationValue', 'Translation Value'),
-                resolvedValueLabel: t('userTypes:displayNameI18n.resolvedValue', 'Resolved value'),
-                keyRequiredError: t('userTypes:displayNameI18n.keyRequired', 'Translation key is required'),
-                valueRequiredError: t('userTypes:displayNameI18n.valueRequired', 'Translation value is required'),
+                triggerTooltip: t('agentTypes:displayNameI18n.tooltip', 'Configure translation'),
+                popoverTitle: t('agentTypes:displayNameI18n.title', 'Translation'),
+                createTitle: t('agentTypes:displayNameI18n.createTitle', 'Create New Translation'),
+                createTooltip: t('agentTypes:displayNameI18n.createTooltip', 'Create a new translation key'),
+                languageLabel: t('agentTypes:displayNameI18n.language', 'Language'),
+                keyLabel: t('agentTypes:displayNameI18n.i18nKey', 'Translation Key'),
+                selectKeyPlaceholder: t('agentTypes:displayNameI18n.selectKey', 'Select a translation key'),
+                valueLabel: t('agentTypes:displayNameI18n.translationValue', 'Translation Value'),
+                resolvedValueLabel: t('agentTypes:displayNameI18n.resolvedValue', 'Resolved value'),
+                keyRequiredError: t('agentTypes:displayNameI18n.keyRequired', 'Translation key is required'),
+                valueRequiredError: t('agentTypes:displayNameI18n.valueRequired', 'Translation value is required'),
                 invalidKeyFormatError: t(
-                  'userTypes:displayNameI18n.invalidKeyFormat',
+                  'agentTypes:displayNameI18n.invalidKeyFormat',
                   'Key may only contain letters, numbers, dots, hyphens, and underscores',
                 ),
                 cancelLabel: t('common:cancel', 'Cancel'),
@@ -221,8 +221,8 @@ export default function EditSchemaSettings({
                 unknownError: t('common:errors.unknown', 'An unknown error occurred'),
               }}
               defaultNewKey={
-                userTypeName.trim() && property.name.trim()
-                  ? `${userTypeName.trim()}.${property.name.trim()}`
+                agentTypeName.trim() && property.name.trim()
+                  ? `${agentTypeName.trim()}.${property.name.trim()}`
                   : undefined
               }
             />
@@ -230,7 +230,7 @@ export default function EditSchemaSettings({
             {/* Checkbox options with info tooltips */}
             <Box sx={{display: 'flex', gap: 3}}>
               <Tooltip
-                title={t('userTypes:tooltips.required', 'This field must be provided when creating a user')}
+                title={t('agentTypes:tooltips.required', 'This field must be provided when creating a user')}
                 placement="top"
                 arrow
               >
@@ -251,7 +251,7 @@ export default function EditSchemaSettings({
               </Tooltip>
               {(property.type === 'string' || property.type === 'number' || property.type === 'enum') && (
                 <Tooltip
-                  title={t('userTypes:tooltips.unique', 'Each user must have a distinct value for this field')}
+                  title={t('agentTypes:tooltips.unique', 'Each user must have a distinct value for this field')}
                   placement="top"
                   arrow
                 >
@@ -265,7 +265,7 @@ export default function EditSchemaSettings({
                     }
                     label={
                       <Stack direction="row" alignItems="center" spacing={0.5}>
-                        <span>{t('userTypes:unique', 'Unique')}</span>
+                        <span>{t('agentTypes:unique', 'Unique')}</span>
                         <Info size={14} color="inherit" />
                       </Stack>
                     }
@@ -274,7 +274,7 @@ export default function EditSchemaSettings({
               )}
               {(property.type === 'string' || property.type === 'number') && (
                 <Tooltip
-                  title={t('userTypes:tooltips.credential', 'Values will be hashed and not returned in API responses')}
+                  title={t('agentTypes:tooltips.credential', 'Values will be hashed and not returned in API responses')}
                   placement="top"
                   arrow
                 >
@@ -298,7 +298,7 @@ export default function EditSchemaSettings({
                     }
                     label={
                       <Stack direction="row" alignItems="center" spacing={0.5}>
-                        <span>{t('userTypes:credential', 'Credential')}</span>
+                        <span>{t('agentTypes:credential', 'Credential')}</span>
                         <Info size={14} color="inherit" />
                       </Stack>
                     }
@@ -311,7 +311,7 @@ export default function EditSchemaSettings({
             {property.credential && (
               <Alert severity="info" variant="outlined">
                 {t(
-                  'userTypes:credentialHint',
+                  'agentTypes:credentialHint',
                   'This field will be treated as a secret. Values will be hashed and cannot be retrieved.',
                 )}
               </Alert>
@@ -320,11 +320,11 @@ export default function EditSchemaSettings({
             {/* String: regex pattern */}
             {property.type === 'string' && (
               <FormControl fullWidth>
-                <FormLabel>{t('userTypes:regexPattern', 'Regular Expression Pattern (Optional)')}</FormLabel>
+                <FormLabel>{t('agentTypes:regexPattern', 'Regular Expression Pattern (Optional)')}</FormLabel>
                 <TextField
                   value={property.regex}
                   onChange={(e) => handlePropertyChange(property.id, 'regex', e.target.value)}
-                  placeholder={t('userTypes:regexPlaceholder', 'e.g., ^[a-zA-Z0-9]+$')}
+                  placeholder={t('agentTypes:regexPlaceholder', 'e.g., ^[a-zA-Z0-9]+$')}
                   size="small"
                 />
               </FormControl>
@@ -333,7 +333,7 @@ export default function EditSchemaSettings({
             {/* Enum: value input + chips */}
             {property.type === 'enum' && (
               <FormControl fullWidth>
-                <FormLabel>{t('userTypes:enumValues', 'Allowed Values (Enum)')}</FormLabel>
+                <FormLabel>{t('agentTypes:enumValues', 'Allowed Values (Enum)')}</FormLabel>
                 <Box sx={{display: 'flex', gap: 1, mb: 1}}>
                   <TextField
                     value={enumInput[property.id] ?? ''}
@@ -344,7 +344,7 @@ export default function EditSchemaSettings({
                         handleAddEnumValue(property.id);
                       }
                     }}
-                    placeholder={t('userTypes:enumPlaceholder', 'Add value and press Enter')}
+                    placeholder={t('agentTypes:enumPlaceholder', 'Add value and press Enter')}
                     size="small"
                     fullWidth
                   />
@@ -383,7 +383,7 @@ export default function EditSchemaSettings({
           '&:hover': {borderStyle: 'dashed'},
         }}
       >
-        {t('userTypes:addProperty', 'Add Property')}
+        {t('agentTypes:addProperty', 'Add Property')}
       </Button>
 
       {/* Credential Removal Confirmation Dialog */}
@@ -394,11 +394,11 @@ export default function EditSchemaSettings({
           setPendingCredentialRemoveId(null);
         }}
       >
-        <DialogTitle>{t('userTypes:removeCredentialDialog.title', 'Remove Credential Flag')}</DialogTitle>
+        <DialogTitle>{t('agentTypes:removeCredentialDialog.title', 'Remove Credential Flag')}</DialogTitle>
         <DialogContent>
           <DialogContentText>
             {t(
-              'userTypes:removeCredentialDialog.description',
+              'agentTypes:removeCredentialDialog.description',
               'Removing the credential flag will cause this field to no longer be hashed or protected. Existing hashed values may become inaccessible. Are you sure you want to proceed?',
             )}
           </DialogContentText>
@@ -427,7 +427,7 @@ export default function EditSchemaSettings({
               setPendingCredentialRemoveId(null);
             }}
           >
-            {t('userTypes:removeCredentialDialog.confirm', 'Remove Credential')}
+            {t('agentTypes:removeCredentialDialog.confirm', 'Remove Credential')}
           </Button>
         </DialogActions>
       </Dialog>

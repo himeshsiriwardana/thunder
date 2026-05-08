@@ -1,17 +1,16 @@
 {
-  "name": "@thunderid/components",
+  "name": "@thunderid/configure-agent-types",
   "version": "0.0.0",
-  "description": "Reusable Components & Oxygen UI Component lab for ⚡️ ThunderID applications",
+  "description": "Agent Types feature for ⚡️ ThunderID applications",
   "keywords": [
     "thunderid",
     "admin",
-    "components",
-    "labs",
+    "agent-types",
     "react",
     "feature",
     "wso2"
   ],
-  "homepage": "https://github.com/asgardeo/thunder/tree/main/frontend/packages/components#readme",
+  "homepage": "https://github.com/asgardeo/thunder/tree/main/frontend/packages/configure-agent-types#readme",
   "bugs": {
     "url": "https://github.com/asgardeo/thunder/issues"
   },
@@ -37,14 +36,13 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/asgardeo/thunder",
-    "directory": "frontend/packages/components"
+    "directory": "frontend/packages/configure-agent-types"
   },
   "scripts": {
     "build": "pnpm clean:dist && rolldown -c rolldown.config.js && tsc -p tsconfig.lib.json --emitDeclarationOnly --outDir dist",
     "clean": "pnpm clean:node_modules && pnpm clean:dist",
     "clean:dist": "rimraf dist",
     "clean:node_modules": "rimraf node_modules",
-    "codegen:emojis": "node scripts/update-emojis.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "vitest run --passWithNoTests",
@@ -58,6 +56,7 @@
     "@thunderid/eslint-plugin": "workspace:^",
     "@thunderid/prettier-config": "workspace:^",
     "@thunderid/test-utils": "workspace:^",
+    "@thunderid/types": "workspace:^",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "eslint": "catalog:",
@@ -79,12 +78,9 @@
     "@wso2/oxygen-ui": "catalog:",
     "@wso2/oxygen-ui-icons-react": "catalog:",
     "@tanstack/react-query": "catalog:",
+    "@thunderid/components": "workspace:^",
     "@thunderid/contexts": "workspace:^",
-    "@thunderid/design": "workspace:^",
-    "@thunderid/hooks": "workspace:^",
-    "@thunderid/i18n": "workspace:^",
     "@thunderid/logger": "workspace:^",
-    "@thunderid/utils": "workspace:^",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-i18next": "catalog:",

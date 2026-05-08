@@ -17,6 +17,7 @@
  */
 
 import {ProtectedRoute} from '@asgardeo/react-router';
+import {ViewAgentTypePage} from '@thunderid/configure-agent-types';
 import {
   CreateOrganizationUnitPage,
   OrganizationUnitProvider,
@@ -39,7 +40,6 @@ import {
 import {ToastProvider} from '@thunderid/contexts';
 import type {JSX} from 'react';
 import {BrowserRouter, Route, Routes} from 'react-router';
-import ViewAgentTypePage from './features/agent-types/pages/ViewAgentTypePage';
 import AgentCreateProvider from './features/agents/contexts/AgentCreate/AgentCreateProvider';
 import AgentCreatePage from './features/agents/pages/AgentCreatePage';
 import AgentEditPage from './features/agents/pages/AgentEditPage';

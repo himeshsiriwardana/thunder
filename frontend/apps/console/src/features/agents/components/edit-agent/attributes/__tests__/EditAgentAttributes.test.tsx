@@ -30,12 +30,9 @@ const {mockUseGetAgentTypes, mockUseGetAgentType, mockUseUpdateAgent, mockMutate
   mockMutateAsync: vi.fn(),
 }));
 
-vi.mock('../../../../../agent-types/api/useGetAgentTypes', () => ({
-  default: () => mockUseGetAgentTypes(),
-}));
-
-vi.mock('../../../../../agent-types/api/useGetAgentType', () => ({
-  default: (id?: string) => mockUseGetAgentType(id),
+vi.mock('@thunderid/configure-agent-types', () => ({
+  useGetAgentTypes: () => mockUseGetAgentTypes(),
+  useGetAgentType: (id?: string) => mockUseGetAgentType(id),
 }));
 
 vi.mock('../../../../api/useUpdateAgent', () => ({
