@@ -739,8 +739,14 @@ func validateRedirectURIs(p *inboundmodel.OAuthProfile) error {
 		if parsedURI.Fragment != "" {
 			return ErrOAuthRedirectURIFragmentNotAllowed
 		}
+		wildcardEnabled := config.GetServerRuntime().Config.OAuth.AllowWildcardRedirectURI
 		if strings.ContainsRune(parsedURI.Host, '*') {
-			return ErrOAuthInvalidRedirectURI
+			if !wildcardEnabled {
+				return ErrOAuthInvalidRedirectURI
+			}
+			if err := validateHostWildcardPattern(parsedURI.Host); err != nil {
+				return err
+			}
 		}
 		if strings.ContainsRune(parsedURI.RawQuery, '*') {
 			return ErrOAuthInvalidRedirectURI
@@ -748,7 +754,6 @@ func validateRedirectURIs(p *inboundmodel.OAuthProfile) error {
 		if containsInvalidWildcardSegment(parsedURI.Path) {
 			return ErrOAuthInvalidRedirectURI
 		}
-		wildcardEnabled := config.GetServerRuntime().Config.OAuth.AllowWildcardRedirectURI
 		if strings.ContainsRune(parsedURI.Path, '*') && !wildcardEnabled {
 			return ErrOAuthInvalidRedirectURI
 		}
@@ -756,6 +761,24 @@ func validateRedirectURIs(p *inboundmodel.OAuthProfile) error {
 	if slices.Contains(p.GrantTypes, string(oauth2const.GrantTypeAuthorizationCode)) &&
 		len(p.RedirectURIs) == 0 {
 		return ErrOAuthAuthCodeRequiresRedirectURIs
+	}
+	return nil
+}
+
+// validateHostWildcardPattern enforces structural rules for wildcards in the host
+// component: no * in the port portion of host:port, and no whole-label *. * matches one
+// or more alphanumeric characters at match time, enforced by the matcher itself.
+func validateHostWildcardPattern(host string) error {
+	if i := strings.LastIndex(host, ":"); i != -1 {
+		if strings.ContainsRune(host[i+1:], '*') {
+			return ErrOAuthInvalidRedirectURI
+		}
+		host = host[:i]
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "*" {
+			return ErrOAuthInvalidRedirectURI
+		}
 	}
 	return nil
 }

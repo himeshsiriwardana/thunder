@@ -1149,6 +1149,82 @@ func (suite *InboundClientServiceTestSuite) TestValidateRedirectURIs_QueryWildca
 	assert.ErrorIs(suite.T(), validateRedirectURIs(p), ErrOAuthInvalidRedirectURI)
 }
 
+// ----- Host wildcard registration with allow_wildcard_redirect_uri = true -----
+
+func (suite *InboundClientServiceTestSuite) enableWildcardConfig() {
+	sysconfig.ResetServerRuntime()
+	cfg := &sysconfig.Config{}
+	cfg.OAuth.AllowWildcardRedirectURI = true
+	suite.Require().NoError(sysconfig.InitializeServerRuntime("/tmp/test", cfg))
+}
+
+func (suite *InboundClientServiceTestSuite) TestValidateRedirectURIs_HostWildcardLabelInternal_Accepted() {
+	suite.enableWildcardConfig()
+	p := &inboundmodel.OAuthProfile{
+		RedirectURIs:  []string{"https://tenant-app-*-*.gateway.example.com/cb"},
+		GrantTypes:    []string{"authorization_code"},
+		ResponseTypes: []string{"code"},
+	}
+	assert.NoError(suite.T(), validateRedirectURIs(p))
+}
+
+func (suite *InboundClientServiceTestSuite) TestValidateRedirectURIs_HostWildcardSimplePattern_Accepted() {
+	suite.enableWildcardConfig()
+	p := &inboundmodel.OAuthProfile{
+		RedirectURIs:  []string{"https://app-*.example.com/cb"},
+		GrantTypes:    []string{"authorization_code"},
+		ResponseTypes: []string{"code"},
+	}
+	assert.NoError(suite.T(), validateRedirectURIs(p))
+}
+
+func (suite *InboundClientServiceTestSuite) TestValidateRedirectURIs_HostWildcardWholeLabel_Rejected() {
+	suite.enableWildcardConfig()
+	p := &inboundmodel.OAuthProfile{
+		RedirectURIs: []string{"https://*.example.com/cb"},
+		GrantTypes:   []string{"authorization_code"},
+	}
+	assert.ErrorIs(suite.T(), validateRedirectURIs(p), ErrOAuthInvalidRedirectURI)
+}
+
+func (suite *InboundClientServiceTestSuite) TestValidateRedirectURIs_HostWildcardInPort_Rejected() {
+	suite.enableWildcardConfig()
+	p := &inboundmodel.OAuthProfile{
+		RedirectURIs: []string{"https://app.example.com:80*0/cb"},
+		GrantTypes:   []string{"authorization_code"},
+	}
+	assert.ErrorIs(suite.T(), validateRedirectURIs(p), ErrOAuthInvalidRedirectURI)
+}
+
+func (suite *InboundClientServiceTestSuite) TestValidateRedirectURIs_HostWildcardWithPort_Accepted() {
+	suite.enableWildcardConfig()
+	p := &inboundmodel.OAuthProfile{
+		RedirectURIs:  []string{"https://app-*.example.com:8443/cb"},
+		GrantTypes:    []string{"authorization_code"},
+		ResponseTypes: []string{"code"},
+	}
+	assert.NoError(suite.T(), validateRedirectURIs(p))
+}
+
+func (suite *InboundClientServiceTestSuite) TestValidateRedirectURIs_HostWildcardFlagOff_Rejected() {
+	// SetupTest already initializes with AllowWildcardRedirectURI = false.
+	p := &inboundmodel.OAuthProfile{
+		RedirectURIs: []string{"https://app-*.example.com/cb"},
+		GrantTypes:   []string{"authorization_code"},
+	}
+	assert.ErrorIs(suite.T(), validateRedirectURIs(p), ErrOAuthInvalidRedirectURI)
+}
+
+func (suite *InboundClientServiceTestSuite) TestValidateRedirectURIs_HostWildcardMixedWithPath_Accepted() {
+	suite.enableWildcardConfig()
+	p := &inboundmodel.OAuthProfile{
+		RedirectURIs:  []string{"https://app-*.example.com/cb/*"},
+		GrantTypes:    []string{"authorization_code"},
+		ResponseTypes: []string{"code"},
+	}
+	assert.NoError(suite.T(), validateRedirectURIs(p))
+}
+
 func (suite *InboundClientServiceTestSuite) TestValidateRedirectURIs_MissingSchemeRejected() {
 	p := &inboundmodel.OAuthProfile{
 		RedirectURIs: []string{"//app/cb"},
