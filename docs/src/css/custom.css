@@ -65,6 +65,7 @@
     'Segoe UI Symbol';
   --ifm-font-family-monospace: 'Fira Code', SFMono-Regular, Menlo, Monaco,
     Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --ifm-font-size-base: 16px;
   --ifm-heading-color: var(--oxygen-palette-text-primary);
   --ifm-code-font-size: 95%;
   --ifm-font-weight-light: 200;

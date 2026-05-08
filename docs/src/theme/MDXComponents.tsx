@@ -20,6 +20,7 @@ import MDXComponents from '@theme-original/MDXComponents';
 import {Box, Card, CardContent, Typography} from '@wso2/oxygen-ui';
 import ApiReference from '@site/src/components/ApiReference';
 import CodeBlock from '@site/src/components/CodeBlock';
+import DocsGetStarted from '@site/src/components/DocsGetStarted';
 import CodeGroup from '@site/src/components/CodeGroup';
 import FloatingLogosBackground from '@site/src/components/FloatingLogosBackground';
 import AndroidLogo from '@site/src/components/icons/AndroidLogo';
@@ -48,6 +49,7 @@ export default {
   Card,
   CardContent,
   Typography,
+  DocsGetStarted,
   Stepper,
   TutorialHero,
   TutorialHeroItem,
