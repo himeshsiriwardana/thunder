@@ -39,6 +39,10 @@ interface EditFlowsSettingsProps {
    * @param value - The new value for the field
    */
   onFieldChange: (field: keyof Application, value: unknown) => void;
+  /**
+   * Singular noun used to refer to the entity in user-visible copy (default: 'application').
+   */
+  entityLabel?: string;
 }
 
 /**
@@ -51,11 +55,26 @@ interface EditFlowsSettingsProps {
  * @param props - Component props
  * @returns Flow settings sections wrapped in a Stack
  */
-export default function EditFlowsSettings({application, editedApp, onFieldChange}: EditFlowsSettingsProps) {
+export default function EditFlowsSettings({
+  application,
+  editedApp,
+  onFieldChange,
+  entityLabel = 'application',
+}: EditFlowsSettingsProps) {
   return (
     <Stack spacing={3}>
-      <AuthenticationFlowSection application={application} editedApp={editedApp} onFieldChange={onFieldChange} />
-      <RegistrationFlowSection application={application} editedApp={editedApp} onFieldChange={onFieldChange} />
+      <AuthenticationFlowSection
+        application={application}
+        editedApp={editedApp}
+        onFieldChange={onFieldChange}
+        entityLabel={entityLabel}
+      />
+      <RegistrationFlowSection
+        application={application}
+        editedApp={editedApp}
+        onFieldChange={onFieldChange}
+        entityLabel={entityLabel}
+      />
     </Stack>
   );
 }

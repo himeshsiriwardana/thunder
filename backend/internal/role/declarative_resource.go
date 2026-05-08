@@ -206,9 +206,9 @@ func parseToRole(data []byte) (*RoleWithPermissionsAndAssignments, error) {
 		permissions = append(permissions, toResourcePermissions(perm))
 	}
 
-	// Translate legacy 'user'/'app' assignment types to internal 'entity' type.
+	// Translate public 'user'/'app'/'agent' assignment types to the internal 'entity' type.
 	for i, a := range roleResource.Assignments {
-		if a.Type == AssigneeType("user") || a.Type == AssigneeType("app") {
+		if a.Type.IsEntityType() {
 			roleResource.Assignments[i].Type = assigneeTypeEntity
 		}
 	}

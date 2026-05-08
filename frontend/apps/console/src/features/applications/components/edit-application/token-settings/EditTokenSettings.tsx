@@ -52,6 +52,10 @@ interface EditTokenSettingsProps {
    */
   onFieldChange: (field: keyof Application, value: unknown) => void;
   onValidationChange?: (hasErrors: boolean) => void;
+  /**
+   * Singular noun used to refer to the entity in user-visible copy (default: 'application').
+   */
+  entityLabel?: string;
 }
 
 const createTokenConfigSchema = (t: (key: string) => string) => {
@@ -116,6 +120,7 @@ export default function EditTokenSettings({
   oauth2Config = undefined,
   onFieldChange,
   onValidationChange = undefined,
+  entityLabel = 'application',
 }: EditTokenSettingsProps) {
   const logger = useLogger('EditTokenSettings');
   const {t} = useTranslation();
@@ -621,6 +626,7 @@ export default function EditTokenSettings({
             pendingRemovals={visiblePendingRemovals}
             highlightedAttributes={visibleHighlightedAttributes}
             onAttributeClick={handleAttributeClick}
+            entityLabel={entityLabel}
           />
 
           {/* Scopes & Attribute Mapping */}
@@ -631,6 +637,7 @@ export default function EditTokenSettings({
             isLoadingUserAttributes={isLoadingUserAttributes}
             onScopesChange={handleScopesChange}
             onScopeClaimsChange={handleScopeClaimsChange}
+            entityLabel={entityLabel}
           />
 
           {/* Merged Token Validation (Access Token / ID Token tabs) */}
@@ -647,6 +654,7 @@ export default function EditTokenSettings({
             pendingRemovals={visiblePendingRemovals}
             highlightedAttributes={visibleHighlightedAttributes}
             onAttributeClick={handleAttributeClick}
+            entityLabel={entityLabel}
           />
 
           {/* Token Validation */}

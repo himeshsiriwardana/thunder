@@ -190,6 +190,48 @@ fi
 echo ""
 
 # ============================================================================
+# Create Default Agent Type
+# ============================================================================
+
+log_info "Creating default agent type..."
+
+RESPONSE=$(api_call POST "/agent-types" '{
+  "name": "default",
+  "ouId": "'${DEFAULT_OU_ID}'",
+  "schema": {
+    "model": {
+      "type": "string",
+      "displayName": "Model",
+      "required": false,
+      "enum": ["GPT-5", "Claude", "Gemini", "Llama", "Mistral", "Other"]
+    },
+    "department": {
+      "type": "string",
+      "displayName": "Department",
+      "required": false
+    },
+    "purpose": {
+      "type": "string",
+      "displayName": "Purpose",
+      "required": false
+    }
+  }
+}')
+
+HTTP_CODE="${RESPONSE: -3}"
+
+if [[ "$HTTP_CODE" == "201" ]] || [[ "$HTTP_CODE" == "200" ]]; then
+    log_success "Agent type created successfully"
+elif [[ "$HTTP_CODE" == "409" ]]; then
+    log_warning "Agent type already exists, skipping"
+else
+    log_error "Failed to create agent type (HTTP $HTTP_CODE)"
+    exit 1
+fi
+
+echo ""
+
+# ============================================================================
 # Create Admin User
 # ============================================================================
 

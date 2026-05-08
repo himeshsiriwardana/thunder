@@ -41,6 +41,10 @@ interface RegistrationFlowSectionProps {
    * @param value - The new value for the field
    */
   onFieldChange: (field: keyof Application, value: unknown) => void;
+  /**
+   * Singular noun used to refer to the entity in user-visible copy (default: 'application').
+   */
+  entityLabel?: string;
 }
 
 /**
@@ -56,7 +60,12 @@ interface RegistrationFlowSectionProps {
  * @param props - Component props
  * @returns Registration flow selection UI within a SettingsCard
  */
-export default function RegistrationFlowSection({application, editedApp, onFieldChange}: RegistrationFlowSectionProps) {
+export default function RegistrationFlowSection({
+  application,
+  editedApp,
+  onFieldChange,
+  entityLabel = 'application',
+}: RegistrationFlowSectionProps) {
   const {t} = useTranslation();
   const {data: regFlowsData, isLoading: loadingRegFlows} = useGetFlows({flowType: FlowType.REGISTRATION});
 
@@ -83,7 +92,11 @@ export default function RegistrationFlowSection({application, editedApp, onField
           <TextField
             {...params}
             placeholder={t('applications:edit.flows.registrationFlow.placeholder')}
-            helperText={t('applications:edit.flows.registrationFlow.hint')}
+            helperText={t(
+              'applications:edit.flows.registrationFlow.hint',
+              'Select the flow that handles user registration for this {{entity}}.',
+              {entity: entityLabel},
+            )}
             InputProps={{
               ...params.InputProps,
               endAdornment: (
