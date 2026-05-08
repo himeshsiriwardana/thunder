@@ -16,13 +16,13 @@
  * under the License.
  */
 
+import {useGetAgentTypes} from '@thunderid/configure-agent-types';
 import {useLogger} from '@thunderid/logger/react';
 import {Stack, Button, TextField, InputAdornment, PageContent, PageTitle} from '@wso2/oxygen-ui';
 import {FileCog, Plus, Search} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
-import useGetAgentTypes from '../../agent-types/api/useGetAgentTypes';
 import AgentsList from '../components/AgentsList';
 import {DEFAULT_AGENT_TYPE_NAME} from '../models/agent';
 

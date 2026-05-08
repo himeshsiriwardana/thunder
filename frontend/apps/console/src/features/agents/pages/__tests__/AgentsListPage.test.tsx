@@ -38,8 +38,8 @@ vi.mock('react-router', async () => {
 });
 
 const mockUseGetAgentTypes = vi.fn();
-vi.mock('../../../agent-types/api/useGetAgentTypes', () => ({
-  default: () => mockUseGetAgentTypes(),
+vi.mock('@thunderid/configure-agent-types', () => ({
+  useGetAgentTypes: () => mockUseGetAgentTypes(),
 }));
 
 // Mock translations

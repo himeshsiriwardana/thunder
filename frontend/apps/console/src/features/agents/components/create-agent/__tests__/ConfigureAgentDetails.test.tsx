@@ -16,9 +16,9 @@
  * under the License.
  */
 
+import type {ApiAgentType} from '@thunderid/configure-agent-types';
 import {render, screen} from '@thunderid/test-utils';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
-import type {ApiAgentType} from '../../../../agent-types/types/agent-types';
 import ConfigureAgentDetails, {type ConfigureAgentDetailsProps} from '../ConfigureAgentDetails';
 
 // Mock the configure-users package — renderSchemaField produces a simple test marker per field.

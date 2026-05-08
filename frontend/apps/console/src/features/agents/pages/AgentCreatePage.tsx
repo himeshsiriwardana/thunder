@@ -17,6 +17,7 @@
  */
 
 import {useAsgardeo} from '@asgardeo/react';
+import {useGetAgentType, useGetAgentTypes} from '@thunderid/configure-agent-types';
 import {useGetChildOrganizationUnits} from '@thunderid/configure-organization-units';
 import {ConfigureOrganizationUnit} from '@thunderid/configure-users';
 import {useLogger} from '@thunderid/logger/react';
@@ -26,8 +27,6 @@ import type {JSX} from 'react';
 import {useState, useCallback, useEffect, useMemo} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
-import useGetAgentType from '../../agent-types/api/useGetAgentType';
-import useGetAgentTypes from '../../agent-types/api/useGetAgentTypes';
 import useCreateAgent from '../api/useCreateAgent';
 import ConfigureAgentDetails from '../components/create-agent/ConfigureAgentDetails';
 import ConfigureName from '../components/create-agent/ConfigureName';
@@ -400,11 +399,12 @@ export default function AgentCreatePage(): JSX.Element {
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
-              py: 8,
+              pt: showCompleteScreen ? 2 : 8,
+              pb: 8,
               px: 20,
               mx: 'auto',
               alignItems: showCompleteScreen ? 'center' : 'flex-start',
-              justifyContent: showCompleteScreen ? 'center' : 'flex-start',
+              justifyContent: 'flex-start',
             }}
           >
             <Box sx={{width: '100%', maxWidth: 800, display: 'flex', flexDirection: 'column'}}>

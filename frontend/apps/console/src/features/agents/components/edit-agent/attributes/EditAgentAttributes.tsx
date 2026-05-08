@@ -17,6 +17,7 @@
  */
 
 import {SettingsCard} from '@thunderid/components';
+import {useGetAgentType, useGetAgentTypes} from '@thunderid/configure-agent-types';
 import {renderSchemaField} from '@thunderid/configure-users';
 import {useResolveDisplayName} from '@thunderid/hooks';
 import {Alert, Box, Button, CircularProgress, Stack, Typography} from '@wso2/oxygen-ui';
@@ -24,8 +25,6 @@ import {Save, X} from '@wso2/oxygen-ui-icons-react';
 import {useState, type JSX} from 'react';
 import {useForm} from 'react-hook-form';
 import {useTranslation} from 'react-i18next';
-import useGetAgentType from '../../../../agent-types/api/useGetAgentType';
-import useGetAgentTypes from '../../../../agent-types/api/useGetAgentTypes';
 import useUpdateAgent from '../../../api/useUpdateAgent';
 import type {Agent} from '../../../models/agent';
 

@@ -16,13 +16,13 @@
  * under the License.
  */
 
+import type {ApiAgentType} from '@thunderid/configure-agent-types';
 import {renderSchemaField} from '@thunderid/configure-users';
 import {useResolveDisplayName} from '@thunderid/hooks';
 import {Box, Stack, Typography} from '@wso2/oxygen-ui';
 import {useEffect, type JSX} from 'react';
 import {useForm} from 'react-hook-form';
 import {useTranslation} from 'react-i18next';
-import type {ApiAgentType} from '../../../agent-types/types/agent-types';
 
 export interface ConfigureAgentDetailsProps {
   schema: ApiAgentType;
