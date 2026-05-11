@@ -165,10 +165,6 @@ const config: Config = {
       },
       items: [
         {
-          type: 'custom-PersonaDropdown',
-          position: 'left',
-        },
-        {
           type: 'docSidebar',
           sidebarId: 'docsSidebar',
           position: 'right',
