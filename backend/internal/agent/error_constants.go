@@ -500,4 +500,19 @@ var (
 			DefaultValue: "The specified owner does not match any known user, application, or agent",
 		},
 	}
+
+	// ErrorInvalidUserAttribute is returned when a user attribute is not valid for any
+	// of the agent's allowed user types.
+	ErrorInvalidUserAttribute = serviceerror.ServiceError{
+		Type: serviceerror.ClientErrorType,
+		Code: "AGT-1040",
+		Error: core.I18nMessage{
+			Key:          "error.agentservice.invalid_user_attribute",
+			DefaultValue: "Invalid user attribute",
+		},
+		ErrorDescription: core.I18nMessage{
+			Key:          "error.agentservice.invalid_user_attribute_description",
+			DefaultValue: "One or more user attributes are not valid for the configured allowed user types",
+		},
+	}
 )
