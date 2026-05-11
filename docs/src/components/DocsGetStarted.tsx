@@ -17,9 +17,8 @@
  */
 
 import React, {JSX} from 'react';
-import {Box, Typography} from '@wso2/oxygen-ui';
+import {Box, Typography, useTheme} from '@wso2/oxygen-ui';
 import Link from '@docusaurus/Link';
-import useIsDarkMode from '../hooks/useIsDarkMode';
 import useScrollAnimation from '../hooks/useScrollAnimation';
 
 // ─── Step cards ──────────────────────────────────────────────────────────────
@@ -27,8 +26,8 @@ import useScrollAnimation from '../hooks/useScrollAnimation';
 const STEP_CARDS = [
   {
     number: '01',
-    title: 'Install',
-    description: 'Run ThunderID locally or with Docker Compose in minutes.',
+    title: 'Run ThunderID',
+    description: 'Start ThunderID locally with Docker or download the release artifact.',
     href: '/docs/next/guides/getting-started/get-thunderid',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
@@ -40,22 +39,9 @@ const STEP_CARDS = [
   },
   {
     number: '02',
-    title: 'Start the server',
-    description: 'Boot ThunderID and open the management console.',
-    href: '/docs/next/guides/getting-started/get-thunderid',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-        <rect width="20" height="14" x="2" y="3" rx="2"/>
-        <line x1="8" x2="16" y1="21" y2="21"/>
-        <line x1="12" x2="12" y1="17" y2="21"/>
-      </svg>
-    ),
-  },
-  {
-    number: '03',
-    title: 'Create an app',
-    description: 'Register an OAuth 2.0 application and get your client credentials.',
-    href: '/docs/next/guides/quick-start/create-your-first-application',
+    title: 'Register an application',
+    description: 'Create an application in the Console and get your client credentials.',
+    href: '/docs/next/guides/quick-start/quickstart',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <rect width="7" height="7" x="3" y="3" rx="1"/>
@@ -66,9 +52,9 @@ const STEP_CARDS = [
     ),
   },
   {
-    number: '04',
-    title: 'Build a flow',
-    description: 'Use the flow designer to wire up a complete sign-in experience.',
+    number: '03',
+    title: 'Build a sign-in flow',
+    description: 'Use the visual flow designer to configure how users authenticate.',
     href: '/docs/next/guides/guides/flows/build-a-flow',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
@@ -79,16 +65,27 @@ const STEP_CARDS = [
       </svg>
     ),
   },
+  {
+    number: '04',
+    title: 'Connect your app',
+    description: 'Add sign-in to a React app with the Asgardeo SDK in a few lines of code.',
+    href: '/docs/next/guides/quick-start/connect-your-application/react',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+      </svg>
+    ),
+  },
 ];
 
 interface StepItemProps {
   step: (typeof STEP_CARDS)[number];
   index: number;
   isVisible: boolean;
-  isDark: boolean;
 }
 
-function StepItem({step, index, isVisible, isDark}: StepItemProps): JSX.Element {
+function StepItem({step, index, isVisible}: StepItemProps): JSX.Element {
+  const theme = useTheme();
   return (
     <Box
       sx={{
@@ -98,8 +95,8 @@ function StepItem({step, index, isVisible, isDark}: StepItemProps): JSX.Element 
         p: 2.5,
         borderRadius: '12px',
         border: '1px solid',
-        borderColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)',
-        bgcolor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)',
+        borderColor: 'divider',
+        bgcolor: `rgba(${theme.vars?.palette.primary.main} / 0.02)`,
         opacity: isVisible ? 1 : 0,
         transform: isVisible ? 'translateY(0)' : 'translateY(16px)',
         transitionProperty: 'opacity, transform',
@@ -117,8 +114,8 @@ function StepItem({step, index, isVisible, isDark}: StepItemProps): JSX.Element 
             width: 36,
             height: 36,
             borderRadius: '8px',
-            bgcolor: 'rgba(250,123,63,0.12)',
-            color: '#fa7b3f',
+            bgcolor: `rgba(${theme.vars?.palette.primary.main} / 0.1)`,
+            color: 'primary.main',
           }}
         >
           {step.icon}
@@ -129,52 +126,47 @@ function StepItem({step, index, isVisible, isDark}: StepItemProps): JSX.Element 
             fontFamily: 'monospace',
             fontSize: '1.1rem',
             fontWeight: 700,
-            color: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)',
+            color: 'text.disabled',
             letterSpacing: '0.02em',
           }}
         >
           {step.number}
         </Typography>
       </Box>
-      <Typography
-        variant="body2"
-        sx={{fontWeight: 700, fontSize: '0.9rem', color: isDark ? 'rgba(255,255,255,0.9)' : '#1a1a2e'}}
-      >
+      <Typography variant="body2" sx={{fontWeight: 700, fontSize: '0.9rem', color: 'text.primary'}}>
         {step.title}
       </Typography>
-      <Typography
-        variant="body2"
-        sx={{fontSize: '0.8rem', lineHeight: 1.55, color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.5)'}}
-      >
+      <Typography variant="body2" sx={{fontSize: '0.8rem', lineHeight: 1.55, color: 'text.secondary'}}>
         {step.description}
       </Typography>
     </Box>
   );
 }
 
-function QuickstartPanel({isDark, isVisible}: {isDark: boolean; isVisible: boolean}): JSX.Element {
+function QuickstartPanel({isVisible}: {isVisible: boolean}): JSX.Element {
+  const theme = useTheme();
   return (
     <Box
       sx={{
         p: {xs: 3, md: 4},
         borderRadius: '16px',
         border: '1px solid',
-        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-        bgcolor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)',
+        borderColor: 'divider',
+        bgcolor: `rgba(${theme.vars?.palette.primary.main} / 0.02)`,
       }}
     >
       <Typography
         component="h2"
         variant="h4"
-        sx={{fontWeight: 800, mb: 0.5, fontSize: {xs: '1.4rem', md: '1.6rem'}, color: isDark ? '#ffffff' : '#1a1a2e', letterSpacing: '-0.01em'}}
+        sx={{fontWeight: 800, mb: 0.5, fontSize: {xs: '1.4rem', md: '1.6rem'}, color: 'text.primary', letterSpacing: '-0.01em'}}
       >
         New to ThunderID?
       </Typography>
       <Typography
         variant="body1"
-        sx={{fontWeight: 500, mb: 3, fontSize: '0.95rem', color: isDark ? 'rgba(250,123,63,0.75)' : 'rgba(200,80,20,0.75)'}}
+        sx={{fontWeight: 500, mb: 3, fontSize: '0.95rem', color: 'text.secondary'}}
       >
-        Start in minutes with these simple steps.
+        Follow the step-by-step guide to go from zero to your first working integration.
       </Typography>
       <Box
         sx={{
@@ -184,7 +176,7 @@ function QuickstartPanel({isDark, isVisible}: {isDark: boolean; isVisible: boole
         }}
       >
         {STEP_CARDS.map((step, index) => (
-          <StepItem key={step.number} step={step} index={index} isVisible={isVisible} isDark={isDark} />
+          <StepItem key={step.number} step={step} index={index} isVisible={isVisible} />
         ))}
       </Box>
       <Box sx={{mt: 2.5}}>
@@ -198,16 +190,84 @@ function QuickstartPanel({isDark, isVisible}: {isDark: boolean; isVisible: boole
             px: 3,
             py: 1.25,
             borderRadius: '8px',
-            bgcolor: '#fa7b3f',
+            background: `linear-gradient(135deg, ${theme.vars?.palette.primary.dark} 0%, ${theme.vars?.palette.primary.main} 100%)`,
             color: '#ffffff !important',
-            fontWeight: 800,
+            fontWeight: 700,
             fontSize: '0.925rem',
             textDecoration: 'none !important',
-            transition: 'background-color 0.2s',
-            '&:hover': {bgcolor: '#e06930', textDecoration: 'none !important'},
+            transition: 'transform 0.2s, box-shadow 0.2s',
+            '&:hover': {
+              transform: 'translateY(-1px)',
+              boxShadow: `0 4px 16px rgba(${theme.vars?.palette.primary.main} / 0.35)`,
+              textDecoration: 'none !important',
+            },
           }}
         >
           Get started →
+        </Box>
+      </Box>
+
+      {/* MCP callout strip */}
+      <Box
+        sx={{
+          mt: 2.5,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+          px: 2,
+          py: 1.25,
+          borderRadius: '10px',
+          border: '1px solid',
+          borderColor: 'rgba(123,92,246,0.25)',
+          bgcolor: 'rgba(123,92,246,0.08)',
+        }}
+      >
+        <Box
+          component="span"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            flexShrink: 0,
+            color: '#7B5CF6',
+            animation: 'ai-sparkle 2.5s ease-in-out infinite',
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74z"/>
+          </svg>
+        </Box>
+        <Typography
+          variant="body2"
+          sx={{flex: 1, fontSize: '0.85rem', color: 'text.secondary'}}
+        >
+          <strong>Want a faster setup?</strong> Start with AI assistance. Use the MCP server to configure apps, flows, and SDKs without leaving your editor.
+        </Typography>
+        <Box
+          component={Link}
+          to="/docs/next/guides/getting-started/mcp-server"
+          sx={{
+            flexShrink: 0,
+            display: 'inline-flex',
+            alignItems: 'center',
+            px: 2,
+            py: 0.75,
+            borderRadius: '7px',
+            bgcolor: 'rgba(123,92,246,0.15)',
+            border: '1px solid rgba(123,92,246,0.35)',
+            color: '#7B5CF6 !important',
+            fontWeight: 700,
+            fontSize: '0.825rem',
+            textDecoration: 'none !important',
+            whiteSpace: 'nowrap',
+            transition: 'background-color 0.15s, border-color 0.15s',
+            '&:hover': {
+              bgcolor: 'rgba(123,92,246,0.25)',
+              borderColor: 'rgba(123,92,246,0.55)',
+              textDecoration: 'none !important',
+            },
+          }}
+        >
+          Try MCP server →
         </Box>
       </Box>
     </Box>
@@ -219,20 +279,18 @@ function QuickstartPanel({isDark, isVisible}: {isDark: boolean; isVisible: boole
 const USE_CASE_CARDS = [
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <rect width="20" height="16" x="2" y="4" rx="2"/>
         <path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>
       </svg>
     ),
     label: 'Secure an application',
     description: 'Add sign-in to a web, mobile, or single-page app. Create an application, configure redirect URIs, and build a sign-in flow with OAuth 2.0 or OIDC.',
-    cta: 'Learn more',
-    featured: false,
     href: '/docs/next/guides/guides/applications/manage-applications',
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <rect width="20" height="8" x="2" y="2" rx="2"/>
         <rect width="20" height="8" x="2" y="14" rx="2"/>
         <line x1="6" x2="6.01" y1="6" y2="6"/>
@@ -241,13 +299,11 @@ const USE_CASE_CARDS = [
     ),
     label: 'Protect an API',
     description: 'Register a resource server, define granular scopes, and validate access tokens issued by ThunderID in your API or microservice.',
-    cta: 'Learn more',
-    featured: false,
     href: '/docs/next/guides/guides/resource-servers',
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/>
         <path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/>
         <path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/>
@@ -256,13 +312,11 @@ const USE_CASE_CARDS = [
     ),
     label: 'Build B2B SaaS',
     description: 'Create organization units for each customer, configure per-tenant identity providers, and delegate admin access to your customers.',
-    cta: 'Learn more',
-    featured: false,
     href: '/docs/next/use-cases/b2b/multi-tenant-saas',
   },
   {
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fa7b3f" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 8V4H8"/>
         <rect width="16" height="12" x="4" y="8" rx="2"/>
         <path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>
@@ -270,8 +324,6 @@ const USE_CASE_CARDS = [
     ),
     label: 'Connect AI agents',
     description: 'Secure MCP servers and issue delegated access tokens so AI agents can call APIs and act on behalf of users in autonomous workflows.',
-    cta: 'Learn more',
-    featured: false,
     href: '/docs/next/use-cases/ai-agents/agent-authentication',
   },
 ];
@@ -280,10 +332,10 @@ interface UseCaseCardProps {
   card: (typeof USE_CASE_CARDS)[number];
   index: number;
   isVisible: boolean;
-  isDark: boolean;
 }
 
-function UseCaseCard({card, index, isVisible, isDark}: UseCaseCardProps): JSX.Element {
+function UseCaseCard({card, index, isVisible}: UseCaseCardProps): JSX.Element {
+  const theme = useTheme();
   return (
     <Box
       component={Link}
@@ -296,12 +348,8 @@ function UseCaseCard({card, index, isVisible, isDark}: UseCaseCardProps): JSX.El
         borderRadius: '14px',
         textDecoration: 'none !important',
         border: '1px solid',
-        borderColor: card.featured
-          ? (isDark ? 'rgba(255, 140, 0, 0.3)' : 'rgba(255, 140, 0, 0.35)')
-          : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'),
-        bgcolor: card.featured
-          ? (isDark ? 'rgba(255, 143, 51, 0.06)' : 'rgba(255, 143, 51, 0.03)')
-          : (isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)'),
+        borderColor: 'divider',
+        bgcolor: `rgba(${theme.vars?.palette.primary.main} / 0.02)`,
         color: 'inherit',
         opacity: isVisible ? 1 : 0,
         transform: isVisible ? 'translateY(0)' : 'translateY(24px)',
@@ -310,42 +358,28 @@ function UseCaseCard({card, index, isVisible, isDark}: UseCaseCardProps): JSX.El
         transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)',
         transitionDelay: isVisible ? `${index * 0.07}s` : '0s',
         '&:hover': {
-          borderColor: card.featured
-            ? 'rgba(255,107,0,0.55)'
-            : 'rgba(255,107,0,0.3)',
-          boxShadow: isDark ? '0 4px 16px rgba(255,107,0,0.07)' : '0 4px 16px rgba(255,107,0,0.05)',
+          borderColor: `rgba(${theme.vars?.palette.primary.main} / 0.4)`,
+          boxShadow: `0 4px 16px rgba(${theme.vars?.palette.primary.main} / 0.08)`,
           textDecoration: 'none !important',
         },
       }}
     >
-      <Box sx={{display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between'}}>
-        <Box sx={{p: 1, borderRadius: '8px', bgcolor: 'rgba(255,143,51,0.12)', display: 'inline-flex'}}>
-          {card.icon}
-        </Box>
-        {card.featured && (
-          <Typography
-            component="span"
-            sx={{
-              fontSize: '0.65rem',
-              fontWeight: 700,
-              letterSpacing: '0.06em',
-              color: '#fa7b3f',
-              bgcolor: 'rgba(255,143,51,0.12)',
-              px: 1,
-              py: 0.4,
-              borderRadius: '4px',
-              border: '1px solid rgba(255,143,51,0.25)',
-            }}
-          >
-            NEW
-          </Typography>
-        )}
+      <Box
+        sx={{
+          p: 1,
+          borderRadius: '8px',
+          bgcolor: `rgba(${theme.vars?.palette.primary.main} / 0.1)`,
+          color: 'primary.main',
+          display: 'inline-flex',
+        }}
+      >
+        {card.icon}
       </Box>
       <Box sx={{flex: 1}}>
-        <Typography variant="h6" sx={{fontWeight: 700, fontSize: '1rem', mb: 0.75, color: isDark ? '#ffffff' : '#1a1a2e'}}>
+        <Typography variant="h6" sx={{fontWeight: 700, fontSize: '1rem', mb: 0.75, color: 'text.primary'}}>
           {card.label}
         </Typography>
-        <Typography variant="body2" sx={{fontSize: '0.875rem', lineHeight: 1.6, color: isDark ? 'rgba(255,255,255,0.72)' : 'rgba(0,0,0,0.62)'}}>
+        <Typography variant="body2" sx={{fontSize: '0.875rem', lineHeight: 1.6, color: 'text.secondary'}}>
           {card.description}
         </Typography>
       </Box>
@@ -399,10 +433,11 @@ const BROWSE_TOPICS = [
   },
 ];
 
-function BrowseTopics({isDark}: {isDark: boolean}): JSX.Element {
+function BrowseTopics(): JSX.Element {
+  const theme = useTheme();
   return (
     <Box>
-      <Typography component="h2" variant="h5" sx={{fontWeight: 700, mb: 2, fontSize: '1.2rem', color: isDark ? '#ffffff' : '#1a1a2e'}}>
+      <Typography component="h2" variant="h5" sx={{fontWeight: 700, mb: 2, fontSize: '1.2rem', color: 'text.primary'}}>
         Explore the platform
       </Typography>
       <Box sx={{display: 'grid', gridTemplateColumns: {xs: '1fr 1fr', md: 'repeat(4, 1fr)'}, gap: 1.5}}>
@@ -421,27 +456,27 @@ function BrowseTopics({isDark}: {isDark: boolean}): JSX.Element {
               textDecoration: 'none !important',
               fontSize: '0.875rem',
               fontWeight: 500,
-              color: isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.6)',
+              color: 'text.secondary',
               border: '1px solid',
-              borderColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)',
+              borderColor: 'divider',
               transition: 'color 0.15s, border-color 0.15s, background-color 0.15s',
               '&:hover': {
-                color: '#fa7b3f',
-                borderColor: 'rgba(255,107,0,0.3)',
-                bgcolor: isDark ? 'rgba(255,143,51,0.06)' : 'rgba(255,143,51,0.04)',
+                color: 'primary.main',
+                borderColor: `rgba(${theme.vars?.palette.primary.main} / 0.35)`,
+                bgcolor: `rgba(${theme.vars?.palette.primary.main} / 0.04)`,
                 textDecoration: 'none !important',
               },
             }}
           >
             <Box sx={{display: 'flex', alignItems: 'center', gap: 1}}>
-              <Box component="span" sx={{color: '#fa7b3f', display: 'flex', alignItems: 'center', flexShrink: 0}}>
+              <Box component="span" sx={{color: 'primary.main', display: 'flex', alignItems: 'center', flexShrink: 0}}>
                 {topic.icon}
               </Box>
-              <Typography component="span" sx={{fontWeight: 700, fontSize: '0.9rem', color: isDark ? 'rgba(255,255,255,0.9)' : '#1a1a2e'}}>
+              <Typography component="span" sx={{fontWeight: 700, fontSize: '0.9rem', color: 'text.primary'}}>
                 {topic.label}
               </Typography>
             </Box>
-            <Typography variant="body2" sx={{fontSize: '0.78rem', lineHeight: 1.4, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.45)'}}>
+            <Typography variant="body2" sx={{fontSize: '0.78rem', lineHeight: 1.4, color: 'text.secondary'}}>
               {topic.description}
             </Typography>
           </Box>
@@ -454,32 +489,41 @@ function BrowseTopics({isDark}: {isDark: boolean}): JSX.Element {
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 export default function DocsGetStarted(): JSX.Element {
-  const isDark = useIsDarkMode();
   const {ref: quickstartRef, isVisible: quickstartVisible} = useScrollAnimation({threshold: 0.05});
   const {ref: useCaseRef, isVisible: useCaseVisible} = useScrollAnimation({threshold: 0.05});
 
   return (
     <Box sx={{display: 'flex', flexDirection: 'column', gap: 5}}>
 
+      {/* Page title */}
+      <Box sx={{textAlign: 'center', pt: 6, pb: 2}}>
+        <Typography component="h1" variant="h1" sx={{fontWeight: 800, mb: 1, color: 'text.primary', letterSpacing: '-0.02em', fontSize: '2.5rem'}}>
+          ThunderID Docs
+        </Typography>
+        <Typography variant="body1" sx={{color: 'text.secondary', fontSize: '1.1rem'}}>
+          Learn how to add sign-in, secure APIs, manage organizations, and connect AI agents with ThunderID.
+        </Typography>
+      </Box>
+
       {/* Quickstart panel */}
       <Box ref={quickstartRef}>
-        <QuickstartPanel isDark={isDark} isVisible={quickstartVisible} />
+        <QuickstartPanel isVisible={quickstartVisible} />
       </Box>
 
       {/* Use cases */}
       <Box ref={useCaseRef}>
-        <Typography component="h2" variant="h5" sx={{fontWeight: 700, mb: 2.5, fontSize: '1.2rem', color: isDark ? '#ffffff' : '#1a1a2e'}}>
+        <Typography component="h2" variant="h5" sx={{fontWeight: 700, mb: 2.5, fontSize: '1.2rem', color: 'text.primary'}}>
           Know your use case?
         </Typography>
         <Box sx={{display: 'grid', gridTemplateColumns: {xs: '1fr', md: 'repeat(2, 1fr)'}, gap: 2}}>
           {USE_CASE_CARDS.map((card, index) => (
-            <UseCaseCard key={card.label} card={card} index={index} isVisible={useCaseVisible} isDark={isDark} />
+            <UseCaseCard key={card.label} card={card} index={index} isVisible={useCaseVisible} />
           ))}
         </Box>
       </Box>
 
       {/* Browse by topic */}
-      <BrowseTopics isDark={isDark} />
+      <BrowseTopics />
 
     </Box>
   );
