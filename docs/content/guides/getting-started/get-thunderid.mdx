@@ -24,7 +24,7 @@ Get the latest release of <ProductName /> and run it locally on your machine.
 
 <Stepper stepNode="h2" as="h3">
 
-## Step 1: Download the Distribution
+## Download the Distribution
 
 Download `{{productSlug}}-<version>-<os>-<arch>.zip` from the <RepoLink path="/releases/latest">latest release</RepoLink> for your operating system and architecture.
 
@@ -32,7 +32,7 @@ Download `{{productSlug}}-<version>-<os>-<arch>.zip` from the <RepoLink path="/r
 If you're using a MacOS machine with Apple Silicon (ARM64) processor, download `{{productSlug}}-<version>-macos-arm64.zip`
 :::
 
-## Step 2: Extract the Archive
+## Extract the Archive
 
 Unzip the downloaded file:
 
@@ -46,7 +46,7 @@ Navigate to the extracted directory:
 cd {{productSlug}}-<version>-<os>-<arch>/
 ```
 
-## Step 3: Setup <ProductName />
+## Setup <ProductName />
 
 Initialize <ProductName /> with the default configurations and data before starting the server for the first time.
 
@@ -71,7 +71,7 @@ Initialize <ProductName /> with the default configurations and data before start
 Note the sample app ID from the log line: `[INFO] Sample App ID: <id>`. You'll need this for configuring the sample application.
 :::
 
-## Step 4: Start <ProductName />
+## Start <ProductName />
 
 Launch the <ProductName /> server:
 
@@ -109,7 +109,9 @@ The quickest way to get <ProductName /> up and running with all dependencies con
 - Docker and Docker Compose installed on your machine
 - Terminal or command prompt access
 
-## Step 1: Download Docker Compose File
+<Stepper stepNode="h2" as="h3">
+
+## Download Docker Compose File
 
 Download the `docker-compose.yml` file from the <ProductName /> repository:
 
@@ -118,7 +120,7 @@ Download the `docker-compose.yml` file from the <ProductName /> repository:
 curl -o docker-compose.yml https://raw.githubusercontent.com/asgardeo/thunder/v0.16.0/install/quick-start/docker-compose.yml
 ```
 
-## Step 2: Start <ProductName />
+## Start <ProductName />
 
 Run the following command in the directory where you downloaded the `docker-compose.yml` file:
 
@@ -140,6 +142,8 @@ Note the sample app ID from the setup logs: `[INFO] Sample App ID: <id>`. You'll
 :::tip Success
 <ProductName /> will start on **https://localhost:8090**
 :::
+
+</Stepper>
 
 </TabItem>
 </Tabs>

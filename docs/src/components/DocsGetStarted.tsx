@@ -149,7 +149,7 @@ function QuickstartPanel({isVisible}: {isVisible: boolean}): JSX.Element {
     <Box
       sx={{
         px: {xs: 3, md: 4},
-        pt: {xs: 2.5, md: 3},
+        pt: 0,
         pb: {xs: 2.5, md: 3},
         borderRadius: '16px',
         border: '1px solid',
@@ -496,14 +496,14 @@ export default function DocsGetStarted(): JSX.Element {
   const {ref: useCaseRef, isVisible: useCaseVisible} = useScrollAnimation({threshold: 0.05});
 
   return (
-    <Box sx={{display: 'flex', flexDirection: 'column', gap: 5}}>
+    <Box sx={{display: 'flex', flexDirection: 'column', gap: 2}}>
 
       {/* Page title */}
-      <Box sx={{pt: 6, pb: 2}}>
+      <Box sx={{pt: 2, pb: 1}}>
         <Typography component="h1" variant="h1" sx={{fontWeight: 800, mb: 1, color: 'text.primary', letterSpacing: '-0.02em', fontSize: '3rem'}}>
           ThunderID Docs
         </Typography>
-        <Typography variant="body1" sx={{color: 'text.secondary', fontSize: '1rem'}}>
+        <Typography variant="body1" sx={{color: 'text.secondary', fontSize: '1rem', whiteSpace: 'nowrap'}}>
           Learn how to add sign-in, secure APIs, manage organizations, and connect AI agents with ThunderID.
         </Typography>
       </Box>

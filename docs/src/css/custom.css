@@ -86,7 +86,7 @@
   --ifm-navbar-background-color: var(--oxygen-palette-background-paper);
 
   /* Sidebar, TOC */
-  --doc-sidebar-width: 300px;
+  --doc-sidebar-width: 360px;
   --ifm-toc-border-color: var(--oxygen-palette-divider);
   --ifm-toc-padding-vertical: 0.8rem;
 
@@ -537,8 +537,21 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
 
 .theme-doc-sidebar-container {
   background: transparent;
-  padding-left: 1rem;
-  padding-right: 3.5rem;
+  padding-left: 0;
+  padding-right: 2rem;
+}
+
+.theme-doc-sidebar-container .menu {
+  padding: 0.5rem 5rem 1rem 0rem;
+}
+
+.theme-doc-sidebar-container .menu > .menu__list {
+  padding-left: 0;
+}
+
+/* Increase left padding of the main content column */
+[class*='docItemCol'] {
+  padding-left: 1rem !important;
 }
 
 /* Remove the right border on the sidebar container */
@@ -669,6 +682,10 @@ aside.theme-doc-sidebar-container {
   font-weight: 400;
   color: var(--ifm-color-emphasis-600);
   transition: color 0.15s ease, background 0.15s ease;
+}
+
+[data-theme='light'] .sidebar-section > .menu__list .menu__link {
+  color: var(--ifm-color-emphasis-800);
 }
 
 /* Item hover */
@@ -973,11 +990,11 @@ nav.theme-doc-breadcrumbs {
 .theme-doc-toc-desktop {
   padding-left: 0.75rem;
   margin-top: 2.7rem;
-  font-size: 0.97em;
+  font-size: 1.5em;
   line-height: 1.5;
 }
 
 .theme-doc-toc-desktop .table-of-contents__link {
-  padding-top: 0.18em;
-  padding-bottom: 0.18em;
+  padding-top: 0.08em;
+  padding-bottom: 0.08em;
 }

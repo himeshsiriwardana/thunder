@@ -26,6 +26,7 @@ interface StepperProps {
 }
 
 interface StepData {
+  id?: string;
   label: string;
   content: ReactNode[];
 }
@@ -78,8 +79,9 @@ export default function Stepper({children, stepNode = 'h2', as = 'h2'}: StepperP
       if (currentStep) {
         steps.push(currentStep);
       }
-      // Create new step
+      // Create new step, preserving the id Docusaurus generated for the heading
       currentStep = {
+        id: child.props.id as string | undefined,
         label:
           typeof child.props.children === 'string'
             ? child.props.children
@@ -111,6 +113,7 @@ export default function Stepper({children, stepNode = 'h2', as = 'h2'}: StepperP
           {/* Right column: title + content */}
           <Box sx={{flex: 1, minWidth: 0, pb: index < steps.length - 1 ? 4 : 0}}>
             <Typography
+              id={step.id}
               variant={as}
               component="p"
               sx={{margin: 0, padding: 0, lineHeight: '36px', fontWeight: 700}}

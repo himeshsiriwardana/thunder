@@ -107,6 +107,8 @@ const config: Config = {
     },
   },
 
+  clientModules: [require.resolve('./src/clientModules/tabTocSync.js')],
+
   plugins: [webpackPlugin, personaPlugin],
 
   presets: [
