@@ -148,7 +148,9 @@ function QuickstartPanel({isVisible}: {isVisible: boolean}): JSX.Element {
   return (
     <Box
       sx={{
-        p: {xs: 3, md: 4},
+        px: {xs: 3, md: 4},
+        pt: {xs: 2.5, md: 3},
+        pb: {xs: 2.5, md: 3},
         borderRadius: '16px',
         border: '1px solid',
         borderColor: 'divider',
@@ -158,13 +160,13 @@ function QuickstartPanel({isVisible}: {isVisible: boolean}): JSX.Element {
       <Typography
         component="h2"
         variant="h4"
-        sx={{fontWeight: 800, mb: 0.5, fontSize: {xs: '1.4rem', md: '1.6rem'}, color: 'text.primary', letterSpacing: '-0.01em'}}
+        sx={{fontWeight: 800, mb: 0.25, mt: 0, fontSize: {xs: '1.4rem', md: '1.6rem'}, color: 'text.primary', letterSpacing: '-0.01em'}}
       >
         New to ThunderID?
       </Typography>
       <Typography
         variant="body1"
-        sx={{fontWeight: 500, mb: 3, fontSize: '0.95rem', color: 'text.secondary'}}
+        sx={{fontWeight: 500, mb: 2.5, fontSize: '0.95rem', color: 'text.secondary'}}
       >
         Follow the step-by-step guide to go from zero to your first working integration.
       </Typography>
@@ -172,14 +174,14 @@ function QuickstartPanel({isVisible}: {isVisible: boolean}): JSX.Element {
         sx={{
           display: 'grid',
           gridTemplateColumns: {xs: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(4, 1fr)'},
-          gap: {xs: 2.5, lg: 3},
+          gap: {xs: 2, lg: 2.5},
         }}
       >
         {STEP_CARDS.map((step, index) => (
           <StepItem key={step.number} step={step} index={index} isVisible={isVisible} />
         ))}
       </Box>
-      <Box sx={{mt: 2.5}}>
+      <Box sx={{mt: 2}}>
         <Box
           component={Link}
           to="/docs/next/guides/getting-started/get-thunderid"
@@ -213,10 +215,10 @@ function QuickstartPanel({isVisible}: {isVisible: boolean}): JSX.Element {
           mt: 2.5,
           display: 'flex',
           alignItems: 'center',
-          gap: 1.5,
-          px: 2,
-          py: 1.25,
-          borderRadius: '10px',
+          gap: 2,
+          px: 2.5,
+          py: 1.75,
+          borderRadius: '12px',
           border: '1px solid',
           borderColor: 'rgba(123,92,246,0.25)',
           bgcolor: 'rgba(123,92,246,0.08)',
@@ -232,19 +234,20 @@ function QuickstartPanel({isVisible}: {isVisible: boolean}): JSX.Element {
             animation: 'ai-sparkle 2.5s ease-in-out infinite',
           }}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74z"/>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+            <path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/>
           </svg>
         </Box>
         <Typography
           variant="body2"
-          sx={{flex: 1, fontSize: '0.85rem', color: 'text.secondary'}}
+          sx={{flex: 1, fontSize: '0.9rem', color: 'text.secondary', lineHeight: 1.6}}
         >
-          <strong>Want a faster setup?</strong> Start with AI assistance. Use the MCP server to configure apps, flows, and SDKs without leaving your editor.
+          <strong>Want a quicker setup?</strong> Use the ThunderID MCP server to create apps, configure flows, and connect SDKs from your editor.
         </Typography>
         <Box
           component={Link}
-          to="/docs/next/guides/getting-started/mcp-server"
+          to="/docs/next/guides/working-with-ai/mcp-server"
           sx={{
             flexShrink: 0,
             display: 'inline-flex',
@@ -496,11 +499,11 @@ export default function DocsGetStarted(): JSX.Element {
     <Box sx={{display: 'flex', flexDirection: 'column', gap: 5}}>
 
       {/* Page title */}
-      <Box sx={{textAlign: 'center', pt: 6, pb: 2}}>
-        <Typography component="h1" variant="h1" sx={{fontWeight: 800, mb: 1, color: 'text.primary', letterSpacing: '-0.02em', fontSize: '2.5rem'}}>
+      <Box sx={{pt: 6, pb: 2}}>
+        <Typography component="h1" variant="h1" sx={{fontWeight: 800, mb: 1, color: 'text.primary', letterSpacing: '-0.02em', fontSize: '3rem'}}>
           ThunderID Docs
         </Typography>
-        <Typography variant="body1" sx={{color: 'text.secondary', fontSize: '1.1rem'}}>
+        <Typography variant="body1" sx={{color: 'text.secondary', fontSize: '1rem'}}>
           Learn how to add sign-in, secure APIs, manage organizations, and connect AI agents with ThunderID.
         </Typography>
       </Box>

@@ -69,9 +69,9 @@
   --ifm-heading-color: var(--oxygen-palette-text-primary);
   --ifm-code-font-size: 95%;
   --ifm-font-weight-light: 200;
-  --ifm-font-weight-normal: 300;
-  --ifm-font-weight-semibold: 400;
-  --ifm-font-weight-bold: 600;
+  --ifm-font-weight-normal: 400;
+  --ifm-font-weight-semibold: 600;
+  --ifm-font-weight-bold: 700;
   
   /* Colors */
   --ifm-color-primary: var(--oxygen-palette-primary-main);
@@ -86,9 +86,14 @@
   --ifm-navbar-background-color: var(--oxygen-palette-background-paper);
 
   /* Sidebar, TOC */
-  --doc-sidebar-width: 320px;
+  --doc-sidebar-width: 300px;
   --ifm-toc-border-color: var(--oxygen-palette-divider);
   --ifm-toc-padding-vertical: 0.8rem;
+
+  /* Constrain total page width and center it — Auth0-style */
+  --ifm-container-width: 1280px;
+  --ifm-container-width-xl: 1280px;
+  --ifm-spacing-horizontal: 2rem;
   --ifm-menu-link-sublist-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m18 15-6-6-6 6'/%3E%3C/svg%3E");
   --ifm-menu-color-background-hover: none;
 
@@ -139,7 +144,139 @@ h5 {
   font-family: Plus Jakarta Sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, sans-serif, Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol, Noto Color Emoji;
 }
 
+/* ------------------------------ Typography & Spacing ------------------- */
+:root {
+  /* Heading sizes */
+  --ifm-h1-font-size: 3rem;
+  --ifm-h2-font-size: 1.4rem;
+  --ifm-h3-font-size: 1.15rem;
+  --ifm-h4-font-size: 1rem;
+
+  /* Heading weight */
+  --ifm-heading-font-weight: 700;
+
+  /* Breathing room below headings before body text */
+  --ifm-heading-margin-bottom: 0.65rem;
+
+  /* Space above headings (separation between sections) */
+  --ifm-h2-vertical-rhythm-top: 2.5;
+  --ifm-h3-vertical-rhythm-top: 2;
+
+  /* Body line height — more readable, airier */
+  --ifm-line-height-base: 1.75;
+
+  /* Paragraph spacing */
+  --ifm-paragraph-margin-bottom: 1.1rem;
+}
+
+/* Extra top margin on h2 and h3 inside doc content to create section separation */
+.markdown h2 {
+  margin-top: 2.5rem;
+}
+
+.markdown h3 {
+  margin-top: 1.75rem;
+}
+
 /* ------------------------------ Announcement Banner ---------------------- */
+
+/* Override Docusaurus default 0.875rem prose size */
+.markdown {
+  font-size: 1rem;
+}
+
+/* Constrain prose width for readability, except on landing page */
+.theme-doc-markdown.markdown {
+  max-width: 760px;
+}
+.docs-doc-id-index .theme-doc-markdown.markdown {
+  max-width: none;
+}
+
+/* ------------------------------ Inline code ---------------------------- */
+
+/* Inline code pills — subtle tinted border */
+.markdown strong,
+.markdown b {
+  font-weight: 700;
+  color: var(--ifm-font-color-base);
+}
+
+.markdown code:not([class*='language-']):not(pre code) {
+  background-color: color-mix(in srgb, var(--ifm-color-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ifm-color-primary) 18%, transparent);
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+  font-size: 0.875em;
+  color: var(--ifm-color-primary-light, var(--ifm-color-primary));
+}
+
+/* ------------------------------ Code blocks ----------------------------- */
+
+/* Strip the outer container of any competing background / shadow / border */
+[class*='codeBlockContainer'] {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+  margin-bottom: 1rem;
+}
+
+/* Make the pre fill the container — sole visual layer */
+[class*='codeBlockContainer'] pre.prism-code {
+  border-radius: 8px !important;
+  margin: 0 !important;
+  padding: 1rem 1.25rem !important;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+/* Reset any inner content wrapper that might add its own background */
+[class*='codeBlockContent'] {
+  background: transparent !important;
+}
+
+/* Keep the copy button inside */
+[class*='codeBlockContainer'] [class*='buttonGroup'] {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+}
+
+/* Universal gap between tab bar and tab content */
+.tabs-container .margin-top--md {
+  margin-top: 1.5rem !important;
+}
+
+/* ------------------------------ Admonitions ----------------------------- */
+
+.admonition {
+  border-radius: 8px;
+  border-width: 1px;
+  border-style: solid;
+  padding: 0.875rem 1rem;
+}
+
+.admonition-heading h5 {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.admonition-content p {
+  margin-top: 0.35rem;
+  font-size: 0.9rem;
+}
+
+/* Uniform background — same color as left border line, translucent */
+.alert {
+  background-image: none !important;
+  background-color: color-mix(in srgb, var(--ifm-alert-border-color) 10%, transparent) !important;
+}
 
 .theme-announcement-bar {
   font-size: 1rem;
@@ -353,12 +490,45 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
 
 /* ------------------------------ Sidebar Adjustments ---------------------- */
 
-.menu__caret:before, .menu__link--sublist-caret:after {
-  background: var(--ifm-menu-link-sublist-icon) 50% / 1rem 1rem;
+/* Center the entire docs layout within the page */
+.main-wrapper {
+  max-width: var(--ifm-container-width-xl);
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Ensure the doc page row itself doesn't overflow */
+.docPage_node_modules-docusaurus-theme-classic-lib-theme-DocPage-Layout-styles-module,
+[class*='docPage_'] {
+  max-width: 100%;
+}
+
+/* Caret button (separate toggle button) uses SVG icon */
+.menu__caret:before {
+  background: var(--ifm-menu-link-sublist-icon) 50% / 1rem 1rem no-repeat;
+  filter: invert(1);
+  opacity: 0.5;
+}
+
+[data-theme='light'] .menu__caret:before {
+  filter: invert(0);
+}
+
+/* Sublist-caret link uses › text character — reset SVG background and filter */
+.menu__link--sublist-caret:after {
+  background: none !important;
+  filter: none !important;
 }
 
 .theme-doc-sidebar-container {
-  background: var(--oxygen-palette-background-paper);
+  background: transparent;
+  padding-left: 1.75rem;
+  padding-right: 1rem;
+}
+
+/* Remove the jarring right border on the sidebar container */
+[class*='docSidebarContainer'] {
+  border-right: none !important;
 }
 
 .navbar-sidebar {
@@ -366,28 +536,45 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
 }
 
 /* Docs Home sidebar entry */
+.sidebar-doc-home {
+  margin-top: 1.25rem;
+}
+
 .sidebar-doc-home > .menu__link {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.78rem;
-  font-weight: 700;
+  font-size: 0.95rem;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
-  padding: 0.35rem 0.75rem 0.35rem 0.5rem;
-  border-radius: 0;
-  margin-bottom: 0;
-  color: var(--ifm-color-emphasis-900);
-  background: transparent !important;
+  letter-spacing: 0.08em;
+  padding: 0.35rem 0.75rem 0.6rem 0.75rem;
+  color: var(--ifm-font-color-base);
+  background: none !important;
   cursor: pointer;
   user-select: none;
+}
+
+[data-theme='dark'] .sidebar-doc-home > .menu__link {
+  color: #ffffff;
+}
+
+.sidebar-doc-home > .menu__link:hover {
+  background: none !important;
+  color: var(--ifm-color-primary) !important;
+  text-decoration: none;
+}
+
+.sidebar-doc-home > .menu__link--active {
+  background: none !important;
+  color: var(--ifm-color-primary) !important;
 }
 
 .sidebar-doc-home > .menu__link::before {
   content: '';
   display: block;
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   flex-shrink: 0;
   background-color: var(--ifm-color-emphasis-700);
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3Cpolyline points='9 22 9 12 15 12 15 22'/%3E%3C/svg%3E");
@@ -398,29 +585,25 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
   mask-size: contain;
 }
 
-.sidebar-doc-home > .menu__link:hover {
-  color: var(--ifm-color-primary);
-  text-decoration: none;
-}
-
-.sidebar-doc-home > .menu__link--active {
-  color: var(--ifm-color-primary);
-  font-weight: 700;
-}
-
 /* Spacing for HTML section header items */
-.theme-doc-sidebar-menu > .menu__list > .sidebar-html-section-header {
-  margin-top: 0;
-  padding-top: 1.75rem;
+.sidebar-html-section-header {
+  margin-top: 1.25rem !important;
+  padding-top: 0 !important;
 }
 
-.theme-doc-sidebar-menu > .menu__list > .sidebar-html-section-header:first-child {
-  padding-top: 0.5rem;
+/* First section after HOME still needs breathing room */
+.sidebar-html-section-header:first-child {
+  margin-top: 1rem !important;
 }
 
-/* Divider line between sections */
+/* Add bottom margin to the items list so space appears below last item too */
+.sidebar-section {
+  margin-bottom: 0.5rem !important;
+}
+
+/* No dividers between sections */
 .sidebar-section + .sidebar-html-section-header {
-  border-top: 1px solid var(--ifm-toc-border-color);
+  border-top: none;
 }
 
 /* Hide the Docusaurus category header — replaced by the HTML item above */
@@ -433,71 +616,147 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-weight: 700;
-  font-size: 0.78rem;
+  font-weight: 800;
+  font-size: 0.95rem;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--ifm-color-emphasis-900);
-  padding: 0.35rem 0.75rem 0.35rem 0.5rem;
+  letter-spacing: 0.08em;
+  color: var(--ifm-font-color-base);
+  padding: 0.35rem 0.75rem 0.6rem 0.75rem;
   user-select: none;
+}
+
+[data-theme='dark'] .sidebar-section-label {
+  color: #ffffff;
 }
 
 /* Section header icon */
 .sidebar-section-label svg {
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   flex-shrink: 0;
   color: var(--ifm-color-emphasis-700);
 }
 
-/* ---- Items list — left border track ---- */
+/* ---- Items list ---- */
 .sidebar-section > .menu__list {
-  border-left: 1px solid var(--ifm-toc-border-color);
-  margin-left: 1rem;
+  margin-left: 0;
   padding-left: 0;
+  border-left: none;
 }
 
 /* Item links */
 .sidebar-section > .menu__list .menu__link {
-  border-radius: 0;
-  border-left: 2px solid transparent;
-  margin-left: -1px;
-  padding-left: 0.875rem;
+  border-radius: 6px;
+  padding: 0.45rem 0.75rem;
   font-size: 0.875rem;
   font-weight: 400;
-  color: var(--ifm-color-emphasis-700);
-  transition: color 0.15s ease, border-color 0.15s ease;
+  color: var(--ifm-color-emphasis-600);
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
 /* Item hover */
 .sidebar-section > .menu__list .menu__link:hover {
   color: var(--ifm-color-emphasis-900);
-  background: none;
-  border-left-color: var(--ifm-color-emphasis-400);
+  background: color-mix(in srgb, var(--ifm-color-emphasis-200) 40%, transparent);
 }
 
 /* Active item */
 .sidebar-section > .menu__list .menu__link--active {
   color: var(--ifm-color-primary);
-  font-weight: 500;
-  border-left-color: var(--ifm-color-primary);
-  background: none;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--ifm-color-primary) 10%, transparent);
 }
 
-/* Nested sub-category (e.g. "Connect Your Application") caret alignment */
+/* Nested sub-category caret alignment */
+.sidebar-section > .menu__list .menu__list-item-collapsible {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.sidebar-section > .menu__list .menu__list-item-collapsible:hover {
+  background: color-mix(in srgb, var(--ifm-color-emphasis-200) 40%, transparent);
+}
+
 .sidebar-section > .menu__list .menu__list-item-collapsible > .menu__link {
-  border-left: 2px solid transparent;
-  margin-left: -1px;
+  flex: 1;
+  border-radius: 0;
+  background: transparent !important;
+  padding-right: 0.5rem;
+}
+
+/* Show the sublist caret arrow on collapsible category links */
+.sidebar-section > .menu__list .menu__link--sublist-caret {
+  display: flex !important;
+  align-items: center;
+  overflow: visible !important;
+  position: relative;
+  padding-right: 2.25rem !important;
+}
+
+.sidebar-section > .menu__list .menu__link--sublist-caret::after {
+  content: '›' !important;
+  position: absolute;
+  right: 1.85rem;
+  top: 50%;
+  margin-top: -0.65rem;
+  transform: rotate(0deg);
+  transform-origin: center center;
+  font-size: 1.2rem;
+  line-height: 1;
+  width: 1.2rem;
+  height: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  background: none !important;
+  background-color: transparent !important;
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
+  color: var(--ifm-font-color-base);
+  transition: transform 0.2s ease, color 0.15s ease;
+}
+
+[data-theme='dark'] .sidebar-section > .menu__list .menu__link--sublist-caret::after {
+  color: #ffffff !important;
+}
+
+.sidebar-section > .menu__list .menu__list-item:not(.menu__list-item--collapsed) > .menu__list-item-collapsible > .menu__link--sublist-caret::after {
+  content: '›' !important;
+  transform: rotate(90deg);
+}
+
+.sidebar-section > .menu__list .menu__list-item-collapsible:hover .menu__link--sublist-caret::after {
+  color: inherit;
 }
 
 .sidebar-section > .menu__list .menu__list-item-collapsible > .menu__link:hover {
-  border-left-color: var(--ifm-color-emphasis-400);
-  background: none;
+  background: transparent !important;
 }
 
 .sidebar-section > .menu__list .menu__list-item-collapsible > .menu__link--active {
   color: var(--ifm-color-primary);
-  border-left-color: var(--ifm-color-primary);
+  background: transparent !important;
+}
+
+/* Caret button: always visible, right-aligned */
+.sidebar-section > .menu__list .menu__list-item-collapsible > .menu__caret {
+  opacity: 0.45;
+  flex-shrink: 0;
+  padding: 0.25rem 0.5rem;
+  transition: opacity 0.15s ease, transform 0.2s ease;
+}
+
+.sidebar-section > .menu__list .menu__list-item-collapsible:hover > .menu__caret {
+  opacity: 0.85;
+}
+
+/* Rotate caret when section is collapsed */
+.sidebar-section > .menu__list .menu__list-item--collapsed > .menu__list-item-collapsible > .menu__caret {
+  transform: rotate(-90deg);
+  opacity: 0.6;
 }
 
 /* Nested sub-list indentation */
@@ -568,181 +827,12 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
 /* Increase space between main content and right sidebar TOC */
 .theme-doc-toc-desktop {
   padding-left: 2rem;
+  margin-top: 2.7rem;
+  font-size: 0.97em;
+  line-height: 1.5;
 }
 
-.table-of-contents {
-  padding: 1.5rem 1rem;
-}
-
-/*
- * Homepage animation keyframes have been moved inline into their
- * respective components (HeroSection, ConstellationBackground, LoginBox)
- * to prevent Docusaurus from tree-shaking them during production builds.
- */
-
-/* Reduced-motion: disable animations for users who prefer it */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-  }
-
-  /* Also disable SVG <animate> elements */
-  animate {
-    animation-duration: 0.001ms !important;
-  }
-}
-
-/* ======================================================= */
-/* Persona Dropdown                                        */
-/* ======================================================= */
-
-.persona-dropdown {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.persona-dropdown__trigger {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.7rem;
-  background: transparent;
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--ifm-navbar-link-color);
-  white-space: nowrap;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
-  line-height: 1.4;
-}
-
-.persona-dropdown__trigger:hover {
-  border-color: var(--ifm-color-primary);
-  color: var(--ifm-color-primary);
-  background: transparent;
-}
-
-.persona-dropdown--open .persona-dropdown__trigger {
-  border-color: var(--ifm-color-primary);
-  color: var(--ifm-color-primary);
-}
-
-.persona-dropdown__label {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.persona-dropdown__chevron {
-  flex-shrink: 0;
-  transition: transform 0.2s ease;
-}
-
-.persona-dropdown__chevron--open {
-  transform: rotate(180deg);
-}
-
-.persona-dropdown__menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  min-width: 230px;
-  background: var(--ifm-background-surface-color);
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-  z-index: 200;
-  padding: 0.3rem;
-  list-style: none;
-  margin: 0;
-}
-
-[data-theme='dark'] .persona-dropdown__menu {
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-}
-
-.persona-dropdown__item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.12s ease;
-}
-
-.persona-dropdown__item:hover {
-  background: var(--ifm-color-emphasis-100);
-}
-
-.persona-dropdown__item--active {
-  background: var(--ifm-color-emphasis-100);
-}
-
-.persona-dropdown__item-label {
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--ifm-font-color-base);
-  line-height: 1.3;
-}
-
-.persona-dropdown__item--active .persona-dropdown__item-label {
-  color: var(--ifm-color-primary);
-  font-weight: 600;
-}
-
-.persona-dropdown__item-desc {
-  font-size: 0.73rem;
-  color: var(--ifm-color-emphasis-600);
-  margin-top: 0.15rem;
-  line-height: 1.3;
-}
-
-/* ======================================================= */
-/* Sidebar Persona Filtering                               */
-/* ======================================================= */
-
-/* When IAM persona is active, hide app-developer-only sections */
-[data-persona='iam'] .sidebar-persona-app {
-  display: none;
-}
-
-/* When App persona is active, hide IAM-developer-only sections */
-[data-persona='app'] .sidebar-persona-iam {
-  display: none;
-}
-
-/* When DevOps persona is active, hide non-deployment sections */
-[data-persona='devops'] .sidebar-persona-not-devops {
-  display: none;
-}
-
-@media (min-width: 997px) {
-  .container article {
-    max-width: var(--ifm-container-width);
-    margin: 2rem auto;
-  }
-
-  .container article .apis-page {
-    margin: -2rem 0;
-  }
-}
-
-@media (min-width: 997px) {
-  @supports (scrollbar-gutter: stable) {
-    .menu {
-      padding: 3rem 1.5rem 3rem 2rem;
-    }
-  }
+.theme-doc-toc-desktop .table-of-contents__link {
+  padding-top: 0.18em;
+  padding-bottom: 0.18em;
 }
