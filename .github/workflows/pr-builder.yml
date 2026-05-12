@@ -769,14 +769,14 @@ jobs:
       - name: Install Playwright System Dependencies
         run: npx playwright install-deps
         working-directory: tests/e2e
-        timeout-minutes: 5
+        timeout-minutes: 15
         env:
           DEBIAN_FRONTEND: noninteractive
 
       - name: Install Playwright Browsers
         run: npx playwright install
         working-directory: tests/e2e
-        timeout-minutes: 5
+        timeout-minutes: 15
 
       - name: Run Playwright tests
         run: npx playwright test
