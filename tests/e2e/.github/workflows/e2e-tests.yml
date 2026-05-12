@@ -34,14 +34,14 @@ jobs:
       - name: Install Playwright System Dependencies
         working-directory: tests/e2e
         run: npx playwright install-deps ${{ matrix.browser }}
-        timeout-minutes: 5
+        timeout-minutes: 15
         env:
           DEBIAN_FRONTEND: noninteractive
 
       - name: Install Playwright Browsers
         working-directory: tests/e2e
         run: npx playwright install ${{ matrix.browser }}
-        timeout-minutes: 5
+        timeout-minutes: 15
 
       - name: Run E2E tests
         working-directory: tests/e2e
