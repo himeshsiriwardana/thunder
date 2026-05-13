@@ -16,8 +16,8 @@
  * under the License.
  */
 
-import { screen, renderWithProviders } from '@thunderid/test-utils';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {screen, renderWithProviders} from '@thunderid/test-utils';
+import {describe, it, expect, vi, beforeEach} from 'vitest';
 import EditChildOrganizationUnitSettings from '../EditChildOrganizationUnitSettings';
 
 // Mock child component
@@ -68,7 +68,7 @@ describe('EditChildOrganizationUnitSettings', () => {
   });
 
   it('should handle different organization unit IDs and names', () => {
-    const { rerender } = renderWithProviders(
+    const {rerender} = renderWithProviders(
       <EditChildOrganizationUnitSettings organizationUnitId="ou-123" organizationUnitName="Engineering" />,
     );
 
