@@ -206,16 +206,16 @@ const config: Config = {
           position: 'right',
         },
         {
+          label: 'Releases',
+          to: productConfig.project.source.github.releasesUrl,
+          position: 'right',
+        },
+        {
           label: 'Resources',
           type: 'dropdown',
           position: 'right',
           className: 'navbar__link--dropdown',
           items: [
-            {
-              label: 'Releases',
-              href: '/docs/next/releases',
-              className: 'navbar-resources__releases',
-            },
             {
               label: 'Discussions',
               href: productConfig.project.source.github.discussionsUrl,
