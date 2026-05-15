@@ -17,6 +17,7 @@
  */
 
 let observer = null;
+let docsLandingReloadHandlerBound = false;
 
 function isHeadingVisible(id) {
   const el = document.getElementById(id);
@@ -44,6 +45,49 @@ function syncTocWithTabs() {
       li.style.display = '';
     }
   });
+}
+
+function bindDocsLandingReloadLinks() {
+  if (docsLandingReloadHandlerBound) return;
+
+  const normalizePathname = (path) => {
+    if (!path || path === '/') return '/';
+    return path.replace(/\/+$/, '');
+  };
+
+  const handler = (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const anchor = target.closest('.sidebar-doc-home > a.menu__link');
+    if (!(anchor instanceof HTMLAnchorElement)) return;
+
+    const href = anchor.getAttribute('href');
+    if (!href) return;
+
+    const targetUrl = new URL(anchor.href, window.location.origin);
+    const currentPath = normalizePathname(window.location.pathname);
+    const targetPath = normalizePathname(targetUrl.pathname);
+
+    // Only force a hard reload when re-clicking the same destination page.
+    if (currentPath !== targetPath) return;
+
+    event.preventDefault();
+    window.location.assign(targetUrl.href);
+  };
+
+  // In dev/HMR, modules can re-evaluate and leave stale listeners attached.
+  // Keep one global listener instance to prevent duplicate navigation handling.
+  const globalKey = '__thunderDocsLandingReloadClickHandler';
+  const previous = window[globalKey];
+  if (typeof previous === 'function') {
+    document.removeEventListener('click', previous);
+  }
+
+  document.addEventListener('click', handler);
+  window[globalKey] = handler;
+
+  docsLandingReloadHandlerBound = true;
 }
 
 function setup() {
@@ -83,11 +127,13 @@ function setup() {
 
 // Fires once when the client JS bundle is first loaded (initial hard page load).
 export function onClientEntry() {
+  bindDocsLandingReloadLinks();
   // Defer until after React has hydrated and set hidden attributes on inactive panels.
   requestAnimationFrame(() => requestAnimationFrame(setup));
 }
 
 // Fires after every SPA route change.
 export function onRouteDidUpdate() {
+  bindDocsLandingReloadLinks();
   requestAnimationFrame(setup);
 }
