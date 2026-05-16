@@ -42,7 +42,7 @@ const STEP_CARDS = [
     number: '02',
     title: 'Register an application',
     description: 'Create an application in the Console and get your client credentials.',
-    href: '/docs/next/guides/getting-started/register-an-application',
+    href: '/docs/next/guides/quick-start/register-an-application',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <rect width="7" height="7" x="3" y="3" rx="1"/>
@@ -70,7 +70,7 @@ const STEP_CARDS = [
     number: '04',
     title: 'Connect your app',
     description: 'Add sign-in to a React app with the Asgardeo SDK in a few lines of code.',
-    href: '/docs/next/guides/quick-start/connect-your-application/react',
+    href: '/docs/next/guides/quick-start/connect-your-application',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>

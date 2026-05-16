@@ -70,7 +70,7 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'guides/quick-start/quickstart',
+          id: 'guides/quick-start/register-an-application',
           label: 'Register an Application',
         },
         {
@@ -81,6 +81,10 @@ const sidebars: SidebarsConfig = {
         {
           type: 'category',
           label: 'Connect Your Application',
+          link: {
+            type: 'doc',
+            id: 'guides/quick-start/connect-your-application/index',
+          },
           collapsed: false,
           collapsible: true,
           items: [
