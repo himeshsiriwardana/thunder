@@ -132,7 +132,7 @@
 /* -------------------------------------------------------------------- */
 
 /* Manually inject the radial background since `@wso2/oxygen-ui` adds it to the body. */
-html[data-page^='thunder-docs-'] #__docusaurus,
+html[data-page^='docs-'] #__docusaurus,
 html[data-page='home'] #__docusaurus {
     background-color: var(--oxygen-palette-background-default);
     background-attachment: var(--site-background-attachment);
@@ -146,6 +146,20 @@ html[data-page='home'] #__docusaurus {
 html[data-page='home'] {
   background-color: var(--oxygen-palette-background-default);
   background-image: var(--site-background);
+}
+
+/* Keep html element color in sync with the Oxygen palette so there's no seam
+   where the Docusaurus Infima default dark color bleeds through. */
+html[data-page^='docs-'] {
+  background-color: var(--oxygen-palette-background-default);
+}
+
+/* The Oxygen UI site footer (MuiBox injected as last child of #__docusaurus)
+   carries background-color: var(--oxygen-palette-background-default) from MUI's
+   generated stylesheet, which blocks the gradient and creates the hard seam.
+   Make it transparent so the fixed gradient on #__docusaurus shows through. */
+#__docusaurus > .MuiBox-root {
+  background: transparent !important;
 }
 
 /* ------------------------------ Font Adjustments ---------------------- */
