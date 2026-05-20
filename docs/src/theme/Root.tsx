@@ -18,10 +18,10 @@
 
 import {useLocation} from '@docusaurus/router';
 import useBaseUrl from '@docusaurus/useBaseUrl';
-import {DefaultTheme} from '@thunderid/design';
 import {LoggerProvider, LogLevel} from '@thunderid/logger/react';
 import {OxygenUIThemeProvider} from '@wso2/oxygen-ui';
 import React, {PropsWithChildren, useEffect} from 'react';
+import DefaultTheme from '../../../frontend/packages/design/src/themes/DefaultTheme';
 import {applyPersona, PERSONAS, type Persona} from './NavbarItem/PersonaDropdown';
 
 const PERSONA_STORAGE_KEY = 'product-docs-persona';

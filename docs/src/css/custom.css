@@ -750,6 +750,19 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
   padding-right: 2rem;
 }
 
+@media (min-width: 997px) {
+  [class*='docRoot_']:not(:has([class*='docSidebarContainer'])):not(:has(.docs-home-page)):not(:has(.sdks-overview-page))::before {
+    content: '';
+    display: block;
+    flex: 0 0 var(--doc-sidebar-width);
+    width: var(--doc-sidebar-width);
+  }
+
+  [class*='docRoot_']:not(:has([class*='docSidebarContainer'])):not(:has(.docs-home-page)):not(:has(.sdks-overview-page)) main[class*='docMainContainer'] {
+    max-width: calc(100% - var(--doc-sidebar-width));
+  }
+}
+
 .theme-doc-sidebar-container .menu {
   padding: 0.5rem 5rem 1rem 0rem;
 }
