@@ -158,7 +158,23 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     },
   ],
 
-  plugins: [webpackPlugin, personaPlugin],
+  plugins: [
+    webpackPlugin,
+    personaPlugin,
+    '@docsearch/docusaurus-adapter',
+    [
+      'docusaurus-plugin-llms',
+      {
+        docsDir: 'content',
+        generateLLMsTxt: true,
+        generateLLMsFullTxt: true,
+        generateMarkdownFiles: true,
+        preserveDirectoryStructure: false,
+        excludeImports: true,
+        removeDuplicateHeadings: true,
+      },
+    ],
+  ],
 
   presets: [
     [
@@ -281,10 +297,16 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
       theme: prismThemes.nightOwlLight,
       darkTheme: prismThemes.nightOwl,
     },
-    algolia: {
+    docsearch: {
       appId: 'PML8PAKD9O',
       apiKey: '04e88f06bc04c51b7f246d180438cf25',
       indexName: 'thunderid-docs-prod',
+      askAi: {
+        assistantId: '3e6fb420-3ffa-4b8b-9f59-5d8fc76a6236',
+        agentStudio: true,
+        sidePanel: true,
+      },
+      contextualSearch: true,
     },
   } satisfies Preset.ThemeConfig,
 

@@ -245,6 +245,12 @@ importers:
 
   docs:
     dependencies:
+      '@asgardeo/react':
+        specifier: ^0.25.5
+        version: 0.25.5(@types/react@19.2.14)(react@19.2.3)
+      '@docsearch/docusaurus-adapter':
+        specifier: 4.6.3
+        version: 4.6.3(@algolia/client-search@5.52.1)(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(@types/react@19.2.14)(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(search-insights@2.17.3)(typescript@5.9.3)
       '@docusaurus/core':
         specifier: 3.9.2
         version: 3.9.2(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3)
@@ -287,6 +293,9 @@ importers:
       docusaurus-plugin-copy-page-button:
         specifier: 0.5.0
         version: 0.5.0(@docusaurus/core@3.9.2(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3))(react@19.2.3)
+      docusaurus-plugin-llms:
+        specifier: 0.4.0
+        version: 0.4.0(@docusaurus/core@3.9.2(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3))
       eslint:
         specifier: 9.39.4
         version: 9.39.4(jiti@2.7.0)
@@ -3039,6 +3048,21 @@ packages:
   '@asamuzakjp/nwsapi@2.3.9':
     resolution: {integrity: sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==}
 
+  '@asgardeo/browser@0.7.9':
+    resolution: {integrity: sha512-kwQ+brGx5+AqVwHaupLBRv13HNSjqcH7qkDNktL2b4oL0dVwWqrs3oeGFcNxbaS71Fege1cN5KMHGnh6hGszqg==}
+
+  '@asgardeo/i18n@0.4.5':
+    resolution: {integrity: sha512-p1DVVI7lNu7KeDqhRNgAuSrHvVgCbbVXc04koyiiwjDx+sJaXychuC9pwVJ2PDUnIyEp3Xgdb3KqMq+Sx4e7xA==}
+
+  '@asgardeo/javascript@0.23.0':
+    resolution: {integrity: sha512-r2DgG6lTEJV978cXIyGhTMhfQrtVXf1cNl3PS3GqxnTbf7z3lOkPvVRFRACZ2qtCVQo5co9XEiBV0L9vbd1Azg==}
+
+  '@asgardeo/react@0.25.5':
+    resolution: {integrity: sha512-ng8G9f55mSFciG1+L9n93q3wJWFx/kB+6Gge2lNZ+Hjnmw82AJVa15mbKFvH4FS9qm3G0cI7FSYhEW67PYkugw==}
+    peerDependencies:
+      '@types/react': '>=16.8.0'
+      react: '>=16.8.0'
+
   '@axe-core/playwright@4.3.0':
     resolution: {integrity: sha512-prkC9IyH19nOpZxnehnzFWBl+3e+gqg9/I11xOD1yPazMx89jLfDYFVANVZBdXoncQPYIDc/Avi/3PgU/mlyYw==}
     peerDependencies:
@@ -4122,6 +4146,13 @@ packages:
 
   '@docsearch/css@4.6.3':
     resolution: {integrity: sha512-nlOwcXcsNAptQl4vlL4MA78qNJKO0Qlds5GuBjCoePgkebTXLSf8Qt1oyZ3YBshYupKXG9VRGEsk1zr23d+bzQ==}
+
+  '@docsearch/docusaurus-adapter@4.6.3':
+    resolution: {integrity: sha512-moP2ITPazFjPbtJtTYHDu4AY22U+uWkCgzDRHRIEJdQLWLjyPwVt4UygVIz8wgP1l1ydLY9XjeBdqwEcWoEdfg==}
+    engines: {node: '>=20.0'}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
 
   '@docsearch/react@4.6.3':
     resolution: {integrity: sha512-Bg2wdDsoQVlNCcEKuEJAU04tvHCqgx8rIu+uIoM4pRtcx3TBKJuXutJik3LTA8LRc9YEyHkrYUrmcC0D7BYf+g==}
@@ -9806,6 +9837,12 @@ packages:
       '@docusaurus/core': ^3.0.0
       react: ^18.0.0 || ^19.0.0
 
+  docusaurus-plugin-llms@0.4.0:
+    resolution: {integrity: sha512-jYlj2HJ5+gu7oJZuJ83Hk8KlB65YlZZ/7UpHXiL7Qr+qpNBkVocmt2Molc6F3HNr5RqcfhWD/98CvgyNztg/ow==}
+    engines: {node: '>=18.0'}
+    peerDependencies:
+      '@docusaurus/core': ^3.0.0
+
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
 
@@ -11527,6 +11564,9 @@ packages:
 
   jose@5.2.0:
     resolution: {integrity: sha512-oW3PCnvyrcm1HMvGTzqjxxfnEs9EoFOFWi2HsEGhlFVOXxTE3K9GKWVMFoFw06yPUqwpvEWic1BmtUZBI/tIjw==}
+
+  jose@6.0.11:
+    resolution: {integrity: sha512-QxG7EaliDARm1O1S8BGakqncGT9s25bKL1WSf6/oa17Tkqwi8D2ZNglqCF+DsYF88/rV66Q/Q2mFAy697E1DUg==}
 
   jose@6.2.3:
     resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
@@ -13617,6 +13657,11 @@ packages:
     resolution: {integrity: sha512-yELu4WmLPw5Mr/lmeEpox5rw3RETacE++JgHqQzd2dg+YbJuat3jH4ingc+WPZhxaoFzdv9y33G+F7Nl5O0GBg==}
     peerDependencies:
       react: ^19.2.3
+
+  react-dom@19.2.4:
+    resolution: {integrity: sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ==}
+    peerDependencies:
+      react: ^19.2.4
 
   react-dom@19.2.6:
     resolution: {integrity: sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==}
@@ -16146,6 +16191,45 @@ snapshots:
 
   '@asamuzakjp/nwsapi@2.3.9': {}
 
+  '@asgardeo/browser@0.7.9':
+    dependencies:
+      '@asgardeo/javascript': 0.23.0
+      base64url: 3.0.1
+      buffer: 6.0.3
+      core-js: 3.42.0
+      crypto-browserify: 3.12.1
+      fast-sha256: 1.3.0
+      jose: 6.0.11
+      process: 0.11.10
+      randombytes: 2.1.0
+      stream-browserify: 3.0.0
+      tslib: 2.8.1
+
+  '@asgardeo/i18n@0.4.5':
+    dependencies:
+      tslib: 2.8.1
+
+  '@asgardeo/javascript@0.23.0':
+    dependencies:
+      '@asgardeo/i18n': 0.4.5
+      jose: 5.2.0
+      tslib: 2.8.1
+
+  '@asgardeo/react@0.25.5(@types/react@19.2.14)(react@19.2.3)':
+    dependencies:
+      '@asgardeo/browser': 0.7.9
+      '@asgardeo/i18n': 0.4.5
+      '@emotion/css': 11.13.5
+      '@floating-ui/react': 0.27.12(react-dom@19.2.4(react@19.2.3))(react@19.2.3)
+      '@types/react': 19.2.14
+      '@types/react-dom': 19.2.3(@types/react@19.2.14)
+      dompurify: 3.4.0
+      react: 19.2.3
+      react-dom: 19.2.4(react@19.2.3)
+      tslib: 2.8.1
+    transitivePeerDependencies:
+      - supports-color
+
   '@axe-core/playwright@4.3.0(playwright@1.60.0)':
     dependencies:
       axe-core: 4.11.4
@@ -17472,6 +17556,51 @@ snapshots:
       react-dom: 19.2.3(react@19.2.3)
 
   '@docsearch/css@4.6.3': {}
+
+  '@docsearch/docusaurus-adapter@4.6.3(@algolia/client-search@5.52.1)(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(@types/react@19.2.14)(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(search-insights@2.17.3)(typescript@5.9.3)':
+    dependencies:
+      '@docsearch/react': 4.6.3(@algolia/client-search@5.52.1)(@types/react@19.2.14)(algoliasearch@5.52.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(search-insights@2.17.3)
+      '@docusaurus/core': 3.9.2(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3)
+      '@docusaurus/plugin-content-docs': 3.9.2(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3)
+      '@docusaurus/theme-common': 3.10.1(@docusaurus/plugin-content-docs@3.9.2(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@docusaurus/theme-translations': 3.9.2
+      algoliasearch: 5.52.1
+      algoliasearch-helper: 3.29.1(algoliasearch@5.52.1)
+      clsx: 2.1.1
+      eta: 2.2.0
+      fs-extra: 11.3.5
+      joi: 18.2.1
+      lodash: 4.18.1
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
+      tslib: 2.8.1
+      utility-types: 3.11.0
+    transitivePeerDependencies:
+      - '@algolia/client-search'
+      - '@docusaurus/faster'
+      - '@mdx-js/react'
+      - '@minify-html/node'
+      - '@parcel/css'
+      - '@rspack/core'
+      - '@swc/core'
+      - '@swc/css'
+      - '@swc/html'
+      - '@types/react'
+      - bufferutil
+      - clean-css
+      - cssnano
+      - csso
+      - debug
+      - esbuild
+      - html-minifier-terser
+      - lightningcss
+      - postcss
+      - search-insights
+      - supports-color
+      - typescript
+      - uglify-js
+      - utf-8-validate
+      - webpack-cli
 
   '@docsearch/react@4.6.3(@algolia/client-search@5.52.1)(@types/react@19.2.14)(algoliasearch@5.52.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(search-insights@2.17.3)':
     dependencies:
@@ -19025,12 +19154,26 @@ snapshots:
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
+  '@floating-ui/react-dom@2.1.8(react-dom@19.2.4(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@floating-ui/dom': 1.7.6
+      react: 19.2.3
+      react-dom: 19.2.4(react@19.2.3)
+
   '@floating-ui/react@0.27.12(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@floating-ui/react-dom': 2.1.8(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@floating-ui/utils': 0.2.11
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
+      tabbable: 6.4.0
+
+  '@floating-ui/react@0.27.12(react-dom@19.2.4(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@floating-ui/react-dom': 2.1.8(react-dom@19.2.4(react@19.2.3))(react@19.2.3)
+      '@floating-ui/utils': 0.2.11
+      react: 19.2.3
+      react-dom: 19.2.4(react@19.2.3)
       tabbable: 6.4.0
 
   '@floating-ui/react@0.27.19(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
@@ -22897,7 +23040,7 @@ snapshots:
       magicast: 0.5.2
       obug: 2.1.1
       tinyrainbow: 3.1.0
-      vitest: 4.1.6(@opentelemetry/api@1.9.0)(@types/node@24.7.2)(@vitest/browser-playwright@4.1.6)(@vitest/coverage-istanbul@4.1.6)(jsdom@27.0.1)(rolldown-vite@7.1.14(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@types/node@24.7.2)(esbuild@0.25.12)(jiti@2.7.0)(sass-embedded@1.98.0)(sass@1.98.0)(terser@5.47.1)(tsx@4.22.4)(yaml@2.8.3))
+      vitest: 4.1.6(@opentelemetry/api@1.9.0)(@types/node@24.7.2)(@vitest/browser-playwright@4.1.6)(@vitest/coverage-istanbul@4.1.6)(jsdom@27.0.1)(vite@8.0.12(@types/node@24.7.2)(esbuild@0.28.0)(jiti@2.7.0)(sass-embedded@1.98.0)(sass@1.98.0)(terser@5.47.1)(tsx@4.22.4)(yaml@2.8.3))
     transitivePeerDependencies:
       - supports-color
 
@@ -24781,6 +24924,13 @@ snapshots:
     dependencies:
       '@docusaurus/core': 3.9.2(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3)
       react: 19.2.3
+
+  docusaurus-plugin-llms@0.4.0(@docusaurus/core@3.9.2(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3)):
+    dependencies:
+      '@docusaurus/core': 3.9.2(@mdx-js/react@3.0.0(@types/react@19.2.14)(react@19.2.3))(@swc/core@1.15.33(@swc/helpers@0.5.21))(postcss@8.5.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3)
+      gray-matter: 4.0.3
+      minimatch: 9.0.9
+      yaml: 2.8.3
 
   dom-accessibility-api@0.5.16: {}
 
@@ -26914,6 +27064,8 @@ snapshots:
       '@standard-schema/spec': 1.1.0
 
   jose@5.2.0: {}
+
+  jose@6.0.11: {}
 
   jose@6.2.3: {}
 
@@ -29735,6 +29887,11 @@ snapshots:
       strip-json-comments: 2.0.1
 
   react-dom@19.2.3(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      scheduler: 0.27.0
+
+  react-dom@19.2.4(react@19.2.3):
     dependencies:
       react: 19.2.3
       scheduler: 0.27.0
