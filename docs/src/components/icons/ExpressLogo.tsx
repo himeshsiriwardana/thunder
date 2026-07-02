@@ -17,9 +17,11 @@
  */
 
 
-export default function ExpressLogo({size = 64, fill = 'white'}: {size?: number, fill?: string}) {
+export default function ExpressLogo({size = 64, fill = undefined}: {size?: number, fill?: string}) {
+  const resolvedFill = fill ?? 'currentColor';
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 353 258" fill={fill}>
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 353 258" fill={resolvedFill} className={fill ? undefined : 'tf-express-svg'}>
+      {!fill && <style>{`.tf-express-svg{fill:#fff}html:not([data-theme='dark']) .tf-express-svg{fill:#1a1a1a}`}</style>}
       <g clipPath="url(#express-clip)">
         <path d="M180.477 197.464h20.699l102.5-137.0211h-20.972z" />
         <path d="M323.863 218.64v.045l-59.307-79.008-10.918 14.231 65.413 89.993H13.8905V13.8905H149.028l74.355 98.8675 10.849-14.1398-62.666-84.7277h.046L161.058 0H0v257.792h352.665z" />
