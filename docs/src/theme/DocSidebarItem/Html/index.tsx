@@ -19,16 +19,26 @@
 import OriginalDocSidebarItemHtml from '@theme-original/DocSidebarItem/Html';
 import React from 'react';
 import ConnectTypeSelector from '@site/src/components/ConnectTypeSelector';
+import type {ConnectType} from '@site/src/utils/connectType';
 
 type OriginalProps = React.ComponentProps<typeof OriginalDocSidebarItemHtml>;
 
+function connectCardType(value: string | undefined): ConnectType | null {
+  const match = value?.match(/connect-type-card:(app|agent|mcp)/);
+  return (match?.[1] as ConnectType | undefined) ?? null;
+}
+
 export default function DocSidebarItemHtml({item, ...rest}: OriginalProps): React.ReactElement {
-  if ((item as {className?: string}).className?.split(' ').includes('connect-type-selector-wrapper')) {
-    return (
-      <li className="menu__list-item connect-type-selector-item">
-        <ConnectTypeSelector />
-      </li>
-    );
+  const itemWithMeta = item as {className?: string; value?: string};
+  if (itemWithMeta.className?.split(' ').includes('connect-type-selector-wrapper')) {
+    const type = connectCardType(itemWithMeta.value);
+    if (type) {
+      return (
+        <li className="menu__list-item connect-type-selector-item">
+          <ConnectTypeSelector type={type} />
+        </li>
+      );
+    }
   }
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   return <OriginalDocSidebarItemHtml item={item} {...rest} />;

@@ -69,7 +69,7 @@ const sidebars: SidebarsConfig = {
       className: 'sidebar-section',
       items: [
         {type: 'doc', id: 'guides/getting-started/get-thunderid', label: 'Get ThunderID'},
-        {type: 'html', value: '<!-- connect-type-selector -->', className: 'connect-type-selector-wrapper'},
+        {type: 'html', value: '<!-- connect-type-card:app -->', className: 'connect-type-selector-wrapper'},
         {
           type: 'category',
           label: 'Application',
@@ -89,6 +89,8 @@ const sidebars: SidebarsConfig = {
             {type: 'doc', id: 'guides/getting-started/connect-your-application/flutter', label: 'Flutter', customProps: {icon: 'flutter'}},
           ],
         },
+        {type: 'html', value: '<!-- connect-type-card:agent -->', className: 'connect-type-selector-wrapper'},
+        {type: 'html', value: '<!-- connect-type-card:mcp -->', className: 'connect-type-selector-wrapper'},
       ],
     },
 

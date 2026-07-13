@@ -1516,22 +1516,22 @@ aside.theme-doc-sidebar-container {
   }
 }
 
-/* Show/hide connect sections based on selected type */
-html:not([data-connect-type]) .connect-section--agent,
-html:not([data-connect-type]) .connect-section--mcp,
-html[data-connect-type='app'] .connect-section--agent,
-html[data-connect-type='app'] .connect-section--mcp {
-  display: none;
+/* Connect sections start collapsed and animate open/closed, so the cards
+   below them (e.g. AI Agent, MCP Server) smoothly slide down as a section
+   expands, instead of snapping into place. */
+.connect-section {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 0.32s ease, opacity 0.18s ease;
 }
 
-html[data-connect-type='agent'] .connect-section--app,
-html[data-connect-type='agent'] .connect-section--mcp {
-  display: none;
-}
-
-html[data-connect-type='mcp'] .connect-section--app,
-html[data-connect-type='mcp'] .connect-section--agent {
-  display: none;
+html[data-connect-type='app'] .connect-section--app,
+html[data-connect-type='agent'] .connect-section--agent,
+html[data-connect-type='mcp'] .connect-section--mcp {
+  max-height: 520px;
+  opacity: 1;
+  transition: max-height 0.32s ease, opacity 0.28s ease 0.05s;
 }
 
 /* Hide the auto-generated category label — keep only the items list */

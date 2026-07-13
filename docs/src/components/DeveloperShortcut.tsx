@@ -19,7 +19,7 @@
 import Link from '@docusaurus/Link';
 import {useWindowSize} from '@docusaurus/theme-common';
 import {Box, Chip, Typography} from '@wso2/oxygen-ui';
-import {Bot, Check, Download, MonitorSmartphone, Server, Zap} from '@wso2/oxygen-ui-icons-react';
+import {ArrowLeft, Bot, Check, Download, MonitorSmartphone, Server, Zap} from '@wso2/oxygen-ui-icons-react';
 import React, {useCallback, useState} from 'react';
 import AndroidLogo from './icons/AndroidLogo';
 import ExpressLogo from './icons/ExpressLogo';
@@ -31,9 +31,7 @@ import NodeLogo from './icons/NodeLogo';
 import NuxtLogo from './icons/NuxtLogo';
 import ReactLogo from './icons/ReactLogo';
 import VueLogo from './icons/VueLogo';
-import {CONNECT_TYPE_STORAGE_KEY, applyConnectType, toConnectType} from '../utils/connectType';
-
-type ConnectType = 'app' | 'agent' | 'mcp';
+import {ConnectType, applyConnectType, replayConnectSectionAnimation} from '../utils/connectType';
 
 const ALL_FRAMEWORKS = [
   {Logo: ReactLogo,      href: '/docs/next/guides/getting-started/connect-your-application/react',   label: 'React'},
@@ -54,14 +52,121 @@ const CATEGORIES: {id: ConnectType; icon: React.ReactElement; label: string; des
   {id: 'mcp',   icon: <Server size={20} />,            label: 'MCP Server',  description: 'Model Context Protocol servers.', comingSoon: true},
 ];
 
+const HOMEPAGE_WIZARD_SEEN_KEY = 'thunderid-homepage-wizard-seen';
+
+function markWizardSeen(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(HOMEPAGE_WIZARD_SEEN_KEY, '1');
+}
+
 function selectCategory(type: ConnectType): void {
   applyConnectType(type);
-  const items = document.querySelectorAll<HTMLElement>(`.connect-section--${type} > .menu__list > li`);
-  items.forEach(el => {
-    el.style.animation = 'none';
-    void el.offsetHeight;
-    el.style.animation = '';
-  });
+  replayConnectSectionAnimation(type);
+}
+
+function CategorySelector({selected, onSelect}: {selected: ConnectType; onSelect: (id: ConnectType, comingSoon: boolean) => void}): React.ReactElement {
+  return (
+    <Box sx={{px: {xs: 2.5, md: 3.5}, pb: 2.5}}>
+      <Typography sx={{color: 'text.disabled', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.1em', mb: 1, textTransform: 'uppercase'}}>
+        What are you building?
+      </Typography>
+      <Box sx={{display: 'grid', gap: 1.25, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'}}>
+        {CATEGORIES.map(({id, icon, label, description, comingSoon}) => {
+          const isSelected = selected === id && !comingSoon;
+          return (
+            <Box
+              key={id}
+              component={comingSoon ? 'div' : 'button'}
+              onClick={comingSoon ? undefined : () => onSelect(id, comingSoon)}
+              sx={{
+                background: 'none',
+                border: '1.5px solid',
+                borderColor: isSelected
+                  ? 'color-mix(in srgb, var(--ifm-color-primary) 45%, transparent)'
+                  : 'rgba(255,255,255,0.08)',
+                borderRadius: '12px',
+                bgcolor: isSelected
+                  ? 'color-mix(in srgb, var(--ifm-color-primary) 8%, transparent)'
+                  : 'rgba(255,255,255,0.03)',
+                cursor: comingSoon ? 'default' : 'pointer',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.75,
+                opacity: comingSoon ? 0.45 : 1,
+                p: 2,
+                textAlign: 'left',
+                transition: 'border-color 0.15s, background-color 0.15s',
+                width: '100%',
+                '[data-theme="light"] &': {
+                  borderColor: isSelected ? '#93c5fd' : 'rgba(0,0,0,0.08)',
+                  bgcolor: isSelected ? '#eff6ff' : '#ffffff',
+                },
+                ...(!comingSoon && !isSelected && {
+                  '&:hover': {
+                    borderColor: 'color-mix(in srgb, var(--ifm-color-primary) 40%, transparent)',
+                    bgcolor: 'color-mix(in srgb, var(--ifm-color-primary) 7%, transparent)',
+                  },
+                }),
+              }}
+            >
+              <Box sx={{alignItems: 'center', display: 'flex', justifyContent: 'space-between'}}>
+                <Box sx={{alignItems: 'center', color: isSelected ? 'primary.main' : 'text.secondary', display: 'flex', gap: 0.75}}>
+                  {icon}
+                  <Typography sx={{color: isSelected ? 'primary.main' : 'text.primary', fontSize: '0.9rem', fontWeight: 700}}>
+                    {label}
+                  </Typography>
+                </Box>
+                {isSelected && (
+                  <Box sx={{alignItems: 'center', bgcolor: 'primary.main', borderRadius: '50%', color: '#fff', display: 'flex', height: 20, justifyContent: 'center', width: 20}}>
+                    <Check size={12} />
+                  </Box>
+                )}
+                {comingSoon && <Chip label="Soon" size="small" sx={{fontSize: '0.65rem', height: 18}} />}
+              </Box>
+              <Typography sx={{color: 'text.secondary', fontSize: '0.78rem', lineHeight: 1.5}}>
+                {description}
+              </Typography>
+            </Box>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+}
+
+function TechChip({Logo, href, label}: {Logo: (props: {size: number}) => React.ReactElement; href: string; label: string}): React.ReactElement {
+  return (
+    <Box
+      component={Link}
+      to={href}
+      sx={{
+        alignItems: 'center',
+        bgcolor: 'rgba(255,255,255,0.06)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '8px',
+        color: 'text.primary',
+        display: 'flex',
+        fontSize: '0.82rem',
+        fontWeight: 500,
+        gap: 0.75,
+        px: 1.5,
+        py: 0.75,
+        textDecoration: 'none !important',
+        transition: 'border-color 0.15s, color 0.15s',
+        '[data-theme="light"] &': {bgcolor: '#ffffff', border: '1px solid rgba(0,0,0,0.1)'},
+        '&:hover': {
+          borderColor: 'color-mix(in srgb, var(--ifm-color-primary) 50%, transparent)',
+          color: 'primary.main',
+          textDecoration: 'none !important',
+        },
+      }}
+    >
+      <Box sx={{display: 'flex', alignItems: 'center', opacity: 0.9}}>
+        <Logo size={16} />
+      </Box>
+      {label} →
+    </Box>
+  );
 }
 
 function openMobileSidebar(type: ConnectType): void {
@@ -90,12 +195,16 @@ export default function DeveloperShortcut({
   const windowSize = useWindowSize();
   const isMobile = windowSize === 'mobile';
 
-  const [selected, setSelected] = useState<ConnectType>(() => {
-    if (typeof window !== 'undefined') {
-      return toConnectType(localStorage.getItem(CONNECT_TYPE_STORAGE_KEY));
-    }
-    return 'app';
+  const [selected, setSelected] = useState<ConnectType>('app');
+
+  // Computed once at mount so mid-session step changes (below) never flip
+  // this — it answers "did this browser see the wizard before *this* visit",
+  // not "have they seen it yet during this visit."
+  const [isFirstVisit] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(HOMEPAGE_WIZARD_SEEN_KEY) === null;
   });
+  const [step, setStep] = useState<1 | 2>(1);
 
   const handleSelect = useCallback((type: ConnectType, comingSoon: boolean) => {
     if (comingSoon) return;
@@ -105,7 +214,9 @@ export default function DeveloperShortcut({
     } else {
       selectCategory(type);
     }
-  }, [isMobile]);
+    if (isFirstVisit) setStep(2);
+    markWizardSeen();
+  }, [isMobile, isFirstVisit]);
 
   // ─── Compact mode (used on Get ThunderID page) ───────────────────────────
   if (compact) {
@@ -183,126 +294,65 @@ export default function DeveloperShortcut({
         </Typography>
       </Box>
 
-      {/* Category selector */}
-      <Box sx={{px: {xs: 2.5, md: 3.5}, pb: 2.5}}>
-        <Typography sx={{color: 'text.disabled', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.1em', mb: 1, textTransform: 'uppercase'}}>
-          What are you building?
-        </Typography>
-        <Box sx={{display: 'grid', gap: 1.25, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'}}>
-          {CATEGORIES.map(({id, icon, label, description, comingSoon}) => {
-            const isSelected = selected === id && !comingSoon;
-            return (
-              <Box
-                key={id}
-                component={comingSoon ? 'div' : 'button'}
-                onClick={comingSoon ? undefined : () => handleSelect(id, comingSoon)}
-                sx={{
-                  background: 'none',
-                  border: '1.5px solid',
-                  borderColor: isSelected
-                    ? 'color-mix(in srgb, var(--ifm-color-primary) 45%, transparent)'
-                    : 'rgba(255,255,255,0.08)',
-                  borderRadius: '12px',
-                  bgcolor: isSelected
-                    ? 'color-mix(in srgb, var(--ifm-color-primary) 8%, transparent)'
-                    : 'rgba(255,255,255,0.03)',
-                  cursor: comingSoon ? 'default' : 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 0.75,
-                  opacity: comingSoon ? 0.45 : 1,
-                  p: 2,
-                  textAlign: 'left',
-                  transition: 'border-color 0.15s, background-color 0.15s',
-                  width: '100%',
-                  '[data-theme="light"] &': {
-                    borderColor: isSelected ? '#93c5fd' : 'rgba(0,0,0,0.08)',
-                    bgcolor: isSelected ? '#eff6ff' : '#ffffff',
-                  },
-                  ...(!comingSoon && !isSelected && {
-                    '&:hover': {
-                      borderColor: 'color-mix(in srgb, var(--ifm-color-primary) 40%, transparent)',
-                      bgcolor: 'color-mix(in srgb, var(--ifm-color-primary) 7%, transparent)',
-                    },
-                  }),
-                }}
-              >
-                <Box sx={{alignItems: 'center', display: 'flex', justifyContent: 'space-between'}}>
-                  <Box sx={{alignItems: 'center', color: isSelected ? 'primary.main' : 'text.secondary', display: 'flex', gap: 0.75}}>
-                    {icon}
-                    <Typography sx={{color: isSelected ? 'primary.main' : 'text.primary', fontSize: '0.9rem', fontWeight: 700}}>
-                      {label}
-                    </Typography>
-                  </Box>
-                  {isSelected && (
-                    <Box sx={{alignItems: 'center', bgcolor: 'primary.main', borderRadius: '50%', color: '#fff', display: 'flex', height: 20, justifyContent: 'center', width: 20}}>
-                      <Check size={12} />
-                    </Box>
-                  )}
-                  {comingSoon && <Chip label="Soon" size="small" sx={{fontSize: '0.65rem', height: 18}} />}
-                </Box>
-                <Typography sx={{color: 'text.secondary', fontSize: '0.78rem', lineHeight: 1.5}}>
-                  {description}
-                </Typography>
-              </Box>
-            );
-          })}
-        </Box>
-      </Box>
+      {/* First visit, step 1: category cards only — nothing to pick a technology from yet */}
+      {isFirstVisit && step === 1 && (
+        <CategorySelector selected={selected} onSelect={handleSelect} />
+      )}
 
-      {/* Quickstart links */}
-      <Box sx={{px: {xs: 2.5, md: 3.5}, pb: 3}}>
-
-        {selected === 'app' ? (
-          <Box>
-            <Typography sx={{color: 'text.disabled', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.08em', mb: 1, textTransform: 'uppercase'}}>
-              Popular quickstarts
-            </Typography>
-            <Box sx={{display: 'flex', flexWrap: 'wrap', gap: 0.875, mb: 2}}>
-              {ALL_FRAMEWORKS.filter(f => ['React','Next.js','Express','Vue'].includes(f.label)).map(({Logo, href, label}) => (
-                <Box
-                  key={label}
-                  component={Link}
-                  to={href}
-                  sx={{
-                    alignItems: 'center',
-                    bgcolor: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: 'text.primary',
-                    display: 'flex',
-                    fontSize: '0.82rem',
-                    fontWeight: 500,
-                    gap: 0.75,
-                    px: 1.5,
-                    py: 0.75,
-                    textDecoration: 'none !important',
-                    transition: 'border-color 0.15s, color 0.15s',
-                    '[data-theme="light"] &': {bgcolor: '#ffffff', border: '1px solid rgba(0,0,0,0.1)'},
-                    '&:hover': {
-                      borderColor: 'color-mix(in srgb, var(--ifm-color-primary) 50%, transparent)',
-                      color: 'primary.main',
-                      textDecoration: 'none !important',
-                    },
-                  }}
-                >
-                  <Box sx={{display: 'flex', alignItems: 'center', opacity: 0.9}}>
-                    <Logo size={16} />
-                  </Box>
-                  {label} →
-                </Box>
-              ))}
+      {/* First visit, step 2: guided technology picker, reached only via the Application card */}
+      {isFirstVisit && step === 2 && (
+        <Box sx={{px: {xs: 2.5, md: 3.5}, pb: 3}}>
+          <Box sx={{alignItems: 'center', display: 'flex', gap: 0.75, mb: 1.5}}>
+            <Box
+              component="button"
+              onClick={() => setStep(1)}
+              type="button"
+              aria-label="Back"
+              sx={{
+                alignItems: 'center', bgcolor: 'transparent', border: 'none',
+                borderRadius: '6px', color: 'text.secondary', cursor: 'pointer',
+                display: 'inline-flex', p: 0.4,
+                '&:hover': {bgcolor: 'rgba(255,255,255,0.08)', color: 'text.primary'},
+              }}
+            >
+              <ArrowLeft size={16} />
             </Box>
-            <Typography sx={{color: 'text.secondary', fontSize: '0.8rem'}}>
-              All application quickstarts are available in the sidebar.
+            <Typography sx={{color: 'text.disabled', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase'}}>
+              Which technology?
             </Typography>
           </Box>
-        ) : (
-          <Typography sx={{color: 'text.disabled', fontSize: '0.85rem'}}>
-            {selectedCategory.label} quickstarts are coming soon.
-          </Typography>
-        )}
-      </Box>
+          <Box sx={{display: 'flex', flexWrap: 'wrap', gap: 0.875}}>
+            {ALL_FRAMEWORKS.map(({Logo, href, label}) => (
+              <TechChip Logo={Logo} href={href} key={label} label={label} />
+            ))}
+          </Box>
+        </Box>
+      )}
+
+      {/* Returning visit: everything visible at once, no step ceremony */}
+      {!isFirstVisit && (
+        <>
+          <CategorySelector selected={selected} onSelect={handleSelect} />
+          <Box sx={{px: {xs: 2.5, md: 3.5}, pb: 3}}>
+            {selected === 'app' ? (
+              <Box>
+                <Typography sx={{color: 'text.disabled', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.08em', mb: 1, textTransform: 'uppercase'}}>
+                  All quickstarts
+                </Typography>
+                <Box sx={{display: 'flex', flexWrap: 'wrap', gap: 0.875}}>
+                  {ALL_FRAMEWORKS.map(({Logo, href, label}) => (
+                    <TechChip Logo={Logo} href={href} key={label} label={label} />
+                  ))}
+                </Box>
+              </Box>
+            ) : (
+              <Typography sx={{color: 'text.disabled', fontSize: '0.85rem'}}>
+                {selectedCategory.label} quickstarts are coming soon.
+              </Typography>
+            )}
+          </Box>
+        </>
+      )}
 
       {/* Install path */}
       {showInstallPath && (

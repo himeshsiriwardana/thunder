@@ -16,15 +16,54 @@
  * under the License.
  */
 
-export const CONNECT_TYPE_STORAGE_KEY = 'thunder-connect-type';
+export type ConnectType = 'app' | 'agent' | 'mcp';
 
-const VALID_TYPES = new Set(['app', 'agent', 'mcp']);
+const CONNECT_TYPE_EVENT = 'connect-type-change';
 
-export function toConnectType(raw: string | null): 'app' | 'agent' | 'mcp' {
-  return raw !== null && VALID_TYPES.has(raw) ? (raw as 'app' | 'agent' | 'mcp') : 'app';
+function isConnectType(value: string | undefined): value is ConnectType {
+  return value === 'app' || value === 'agent' || value === 'mcp';
 }
 
-export function applyConnectType(type: 'app' | 'agent' | 'mcp'): void {
-  localStorage.setItem(CONNECT_TYPE_STORAGE_KEY, type);
-  document.documentElement.dataset.connectType = type;
+// The card components are mounted as independent sidebar entries (one per
+// category), so a click on one needs to notify the others — there's no
+// shared parent to hold this in ordinary React state.
+export function applyConnectType(type: ConnectType | null): void {
+  if (typeof document === 'undefined') return;
+  if (type) {
+    document.documentElement.dataset.connectType = type;
+  } else {
+    delete document.documentElement.dataset.connectType;
+  }
+  window.dispatchEvent(new CustomEvent<ConnectType | null>(CONNECT_TYPE_EVENT, {detail: type}));
+}
+
+export function getConnectType(): ConnectType | null {
+  if (typeof document === 'undefined') return null;
+  const current = document.documentElement.dataset.connectType;
+  return isConnectType(current) ? current : null;
+}
+
+export function subscribeConnectType(callback: (type: ConnectType | null) => void): () => void {
+  function handler(event: Event): void {
+    callback((event as CustomEvent<ConnectType | null>).detail);
+  }
+  window.addEventListener(CONNECT_TYPE_EVENT, handler);
+  return () => window.removeEventListener(CONNECT_TYPE_EVENT, handler);
+}
+
+export function connectTypeFromPath(pathname: string): ConnectType | null {
+  return pathname.includes('/guides/getting-started/connect-your-application/') ? 'app' : null;
+}
+
+// Forces the per-item entrance animation on a connect section's tech list to
+// replay. CSS animations don't re-trigger just because a max-height transition
+// reveals the element again, so restart them manually via a reflow.
+export function replayConnectSectionAnimation(type: ConnectType): void {
+  if (typeof document === 'undefined') return;
+  const items = document.querySelectorAll<HTMLElement>(`.connect-section--${type} > .menu__list > li`);
+  items.forEach(el => {
+    el.style.animation = 'none';
+    void el.offsetHeight;
+    el.style.animation = '';
+  });
 }

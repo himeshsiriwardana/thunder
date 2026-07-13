@@ -16,257 +16,160 @@
  * under the License.
  */
 
+import {useLocation} from '@docusaurus/router';
 import {Box} from '@wso2/oxygen-ui';
-import {Bot, Check, ChevronDown, MonitorSmartphone, Server} from '@wso2/oxygen-ui-icons-react';
-import React, {useEffect, useRef, useState} from 'react';
-import {CONNECT_TYPE_STORAGE_KEY, applyConnectType, toConnectType} from '../utils/connectType';
+import {Bot, MonitorSmartphone, Server} from '@wso2/oxygen-ui-icons-react';
+import React, {useEffect, useState} from 'react';
+import {
+  ConnectType,
+  applyConnectType,
+  connectTypeFromPath,
+  getConnectType,
+  replayConnectSectionAnimation,
+  subscribeConnectType,
+} from '../utils/connectType';
 
-const OPTIONS = [
-  {Icon: MonitorSmartphone, description: 'Web, mobile & desktop apps', label: 'Application', value: 'app', comingSoon: false},
-  {Icon: Bot, description: 'LLM-powered AI agents', label: 'AI Agent', value: 'agent', comingSoon: true},
-  {Icon: Server, description: 'Model Context Protocol servers', label: 'MCP Server', value: 'mcp', comingSoon: true},
-] as const;
+// ── Category metadata, keyed by type ───────────────────────────────────────────
 
-type ConnectType = (typeof OPTIONS)[number]['value'];
-
-
-const triggerSx = {
-  alignItems: 'center',
-  background: 'rgba(255, 255, 255, 0.07)',
-  border: '1px solid rgba(255, 255, 255, 0.22)',
-  borderRadius: '10px',
-  color: 'var(--ifm-font-color-base)',
-  cursor: 'pointer',
-  display: 'flex',
-  fontSize: '0.9rem',
-  fontWeight: 600,
-  gap: '0.65rem',
-  margin: '0.1rem var(--ifm-menu-link-padding-horizontal, 0.75rem) 0.5rem',
-  padding: '0.65rem 0.75rem',
-  textAlign: 'left',
-  transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
-  width: 'calc(100% - 2 * var(--ifm-menu-link-padding-horizontal, 0.75rem))',
-  '&:hover': {
-    borderColor: 'color-mix(in srgb, var(--ifm-color-primary) 55%, transparent)',
-    boxShadow: '0 0 0 3px color-mix(in srgb, var(--ifm-color-primary) 10%, transparent)',
-  },
-  '[data-theme="light"] &': {
-    background: 'rgba(0, 0, 0, 0.04)',
-    borderColor: 'rgba(0, 0, 0, 0.12)',
-  },
+const CATEGORY_INFO: Record<ConnectType, {Icon: typeof MonitorSmartphone; label: string; tagline: string; comingSoon: boolean}> = {
+  app: {Icon: MonitorSmartphone, label: 'Application', tagline: 'Add sign-in to your app', comingSoon: false},
+  agent: {Icon: Bot, label: 'AI Agent', tagline: 'Secure agentic workflows', comingSoon: true},
+  mcp: {Icon: Server, label: 'MCP Server', tagline: 'Expose tools via MCP', comingSoon: true},
 };
 
-const triggerOpenSx = {
-  borderColor: 'color-mix(in srgb, var(--ifm-color-primary) 55%, transparent)',
-  boxShadow: '0 0 0 3px color-mix(in srgb, var(--ifm-color-primary) 10%, transparent)',
-};
+const px = 'var(--ifm-menu-link-padding-horizontal, 0.75rem)';
 
-const triggerIconSx = {
-  alignItems: 'center',
-  background: 'color-mix(in srgb, var(--ifm-color-primary) 18%, transparent)',
-  borderRadius: '7px',
-  color: 'var(--ifm-color-primary)',
-  display: 'inline-flex',
-  flexShrink: 0,
-  height: '2rem',
-  justifyContent: 'center',
-  width: '2rem',
-};
+interface ConnectTypeCardProps {
+  type: ConnectType;
+}
 
-const panelSx = {
-  animation: 'connect-panel-enter 0.16s ease',
-  background: '#ffffff',
-  border: '1px solid var(--ifm-color-emphasis-200)',
-  borderRadius: '12px',
-  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-  left: 0,
-  marginTop: '0.3rem',
-  padding: '0.35rem',
-  position: 'absolute',
-  right: 0,
-  zIndex: 300,
-  '[data-theme="dark"] &': {
-    background: '#0e1929',
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
-  },
-};
+// ── Component ─────────────────────────────────────────────────────────────────
+// Renders a single "what are you building?" card. Each category (app/agent/mcp)
+// mounts its own instance as a separate sidebar entry, immediately followed by
+// that category's real doc items — this is what lets the tech list expand
+// directly underneath the card that was clicked, rather than below all three.
 
-const optionSx = {
-  alignItems: 'center',
-  background: 'transparent',
-  border: 'none',
-  borderRadius: '9px',
-  color: 'var(--ifm-font-color-base)',
-  cursor: 'pointer',
-  display: 'flex',
-  gap: '0.75rem',
-  padding: '0.6rem 0.65rem',
-  textAlign: 'left',
-  transition: 'background 0.12s ease',
-  width: '100%',
-  '&:hover': {
-    background: 'var(--ifm-color-emphasis-200)',
-  },
-  '&:hover .cts-opt-icon': {
-    background: 'color-mix(in srgb, var(--ifm-color-primary) 10%, transparent)',
-    color: 'var(--ifm-color-primary)',
-  },
-};
+export default function ConnectTypeSelector({type}: ConnectTypeCardProps): React.ReactElement {
+  const location = useLocation();
+  const {Icon, label, tagline, comingSoon} = CATEGORY_INFO[type];
 
-const optionActiveSx = {
-  background: 'color-mix(in srgb, var(--ifm-color-primary) 10%, transparent)',
-  '&:hover': {
-    background: 'color-mix(in srgb, var(--ifm-color-primary) 14%, transparent)',
-  },
-  '& .cts-opt-icon': {
-    background: 'color-mix(in srgb, var(--ifm-color-primary) 22%, transparent)',
-    color: 'var(--ifm-color-primary)',
-  },
-  '& .cts-opt-label': {color: 'var(--ifm-color-primary)'},
-};
+  const [activeType, setActiveType] = useState<ConnectType | null>(
+    () => getConnectType() ?? connectTypeFromPath(location.pathname),
+  );
 
-const optionIconSx = {
-  alignItems: 'center',
-  background: 'color-mix(in srgb, var(--ifm-color-primary) 14%, transparent)',
-  borderRadius: '8px',
-  color: 'var(--ifm-color-content-secondary)',
-  display: 'inline-flex',
-  flexShrink: 0,
-  height: '2.2rem',
-  justifyContent: 'center',
-  transition: 'background 0.12s ease, color 0.12s ease',
-  width: '2.2rem',
-};
+  useEffect(() => subscribeConnectType(setActiveType), []);
 
-export default function ConnectTypeSelector(): React.ReactElement {
-  const [selected, setSelected] = useState<ConnectType>(() => {
-    if (typeof window !== 'undefined') {
-      return toConnectType(localStorage.getItem(CONNECT_TYPE_STORAGE_KEY));
-    }
-    return 'app';
-  });
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
+  // Auto-expand (or auto-collapse) this specific card based on the current
+  // page, so landing directly on a technology page reveals the right section
+  // without requiring a click.
   useEffect(() => {
-    applyConnectType(selected);
+    const fromPath = connectTypeFromPath(location.pathname);
+    if (fromPath === type) {
+      applyConnectType(type);
+      replayConnectSectionAnimation(type);
+    } else if (getConnectType() === type) {
+      applyConnectType(null);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location.pathname]);
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent): void {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  const isExpanded = activeType === type;
 
-  function handleSelect(value: ConnectType): void {
-    setSelected(value);
-    applyConnectType(value);
-    setOpen(false);
+  function handleClick(): void {
+    const next = isExpanded ? null : type;
+    applyConnectType(next);
+    if (next) replayConnectSectionAnimation(next);
   }
 
-  const selectedOption = OPTIONS.find(o => o.value === selected)!;
-
   return (
-    <Box ref={ref} sx={{position: 'relative'}}>
-      <Box sx={{
-        color: 'var(--ifm-color-content-secondary)',
-        fontSize: '0.72rem',
-        fontWeight: 500,
-        letterSpacing: '0.03em',
-        marginTop: '0.75rem',
-        padding: '0 var(--ifm-menu-link-padding-horizontal, 0.75rem) 0.3rem',
-        textTransform: 'uppercase',
-      }}>What are you building?</Box>
-      <Box
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        component="button"
-        onClick={() => setOpen(v => !v)}
-        sx={open ? {...triggerSx, ...triggerOpenSx} : triggerSx}
-        type="button"
-      >
-        <Box component="span" sx={triggerIconSx}>
-          <selectedOption.Icon aria-hidden size={20} />
-        </Box>
-        <Box component="span" sx={{flex: 1}}>{selectedOption.label}</Box>
-        <Box
-          component="span"
-          sx={{
-            color: 'var(--ifm-color-content-secondary)',
-            display: 'inline-flex',
-            flexShrink: 0,
-            transform: open ? 'rotate(180deg)' : 'none',
-            transition: 'transform 0.2s ease',
-          }}
-        >
-          <ChevronDown aria-hidden size={14} />
-        </Box>
-      </Box>
-
-      {open && (
-        <Box role="listbox" sx={panelSx}>
-          {OPTIONS.map(({Icon, description, label, value, comingSoon}) => {
-            const isActive = selected === value;
-            return (
-              <Box
-                aria-disabled={comingSoon}
-                aria-selected={isActive}
-                component="button"
-                disabled={comingSoon}
-                key={value}
-                onClick={comingSoon ? undefined : () => handleSelect(value)}
-                role="option"
-                sx={{
-                  ...(isActive ? {...optionSx, ...optionActiveSx} : optionSx),
-                  ...(comingSoon ? {
-                    cursor: 'default',
-                    opacity: 0.45,
-                    pointerEvents: 'none',
-                  } : {}),
-                }}
-                type="button"
-              >
-                <Box className="cts-opt-icon" component="span" sx={optionIconSx}>
-                  <Icon aria-hidden size={18} />
-                </Box>
-                <Box component="span" sx={{display: 'flex', flex: 1, flexDirection: 'column', gap: '0.1rem', minWidth: 0}}>
-                  <Box className="cts-opt-label" component="span" sx={{alignItems: 'center', display: 'flex', fontSize: '0.875rem', fontWeight: 600, gap: '0.5rem', lineHeight: 1.2}}>
-                    {label}
-                    {comingSoon && (
-                      <Box component="span" sx={{
-                        background: 'color-mix(in srgb, var(--ifm-color-emphasis-400) 30%, transparent)',
-                        borderRadius: '20px',
-                        color: 'var(--ifm-color-content-secondary)',
-                        fontSize: '0.6rem',
-                        fontWeight: 600,
-                        letterSpacing: '0.04em',
-                        padding: '0.1rem 0.4rem',
-                        textTransform: 'uppercase',
-                      }}>
-                        Coming Soon
-                      </Box>
-                    )}
-                  </Box>
-                  <Box component="span" sx={{color: 'var(--ifm-color-content-secondary)', fontSize: '0.72rem', lineHeight: 1.3}}>
-                    {description}
-                  </Box>
-                </Box>
-                {isActive && (
-                  <Box component="span" sx={{color: 'var(--ifm-color-primary)', display: 'inline-flex', flexShrink: 0}}>
-                    <Check aria-hidden size={14} />
-                  </Box>
-                )}
-              </Box>
-            );
-          })}
+    <Box sx={{px}}>
+      {type === 'app' && (
+        <Box sx={{
+          color: 'var(--ifm-color-content-secondary)',
+          fontSize: '0.72rem', fontWeight: 500, letterSpacing: '0.03em',
+          marginTop: '0.75rem', marginBottom: '0.55rem', textTransform: 'uppercase',
+        }}>
+          What are you building?
         </Box>
       )}
+      <Box
+        aria-expanded={comingSoon ? undefined : isExpanded}
+        component="button"
+        disabled={comingSoon}
+        onClick={comingSoon ? undefined : handleClick}
+        type="button"
+        sx={{
+          alignItems: 'center',
+          background: isExpanded
+            ? 'color-mix(in srgb, var(--ifm-color-primary) 8%, transparent)'
+            : 'rgba(255,255,255,0.04)',
+          border: '1px solid',
+          borderColor: isExpanded
+            ? 'color-mix(in srgb, var(--ifm-color-primary) 45%, transparent)'
+            : 'rgba(255,255,255,0.1)',
+          borderRadius: '12px',
+          color: 'var(--ifm-font-color-base)',
+          cursor: comingSoon ? 'default' : 'pointer',
+          display: 'flex', gap: '0.75rem',
+          marginBottom: '0.45rem',
+          opacity: comingSoon ? 0.5 : 1,
+          padding: '0.8rem 0.9rem',
+          textAlign: 'left',
+          transition: 'border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease',
+          width: '100%',
+          '[data-theme="light"] &': {
+            background: isExpanded
+              ? 'color-mix(in srgb, var(--ifm-color-primary) 8%, transparent)'
+              : 'rgba(0,0,0,0.03)',
+            borderColor: isExpanded
+              ? 'color-mix(in srgb, var(--ifm-color-primary) 45%, transparent)'
+              : 'rgba(0,0,0,0.09)',
+          },
+          ...(!comingSoon ? {
+            '&:hover': {
+              background: 'color-mix(in srgb, var(--ifm-color-primary) 8%, transparent)',
+              borderColor: 'color-mix(in srgb, var(--ifm-color-primary) 45%, transparent)',
+              boxShadow: '0 0 0 3px color-mix(in srgb, var(--ifm-color-primary) 10%, transparent)',
+            },
+            '&:active': {transform: 'scale(0.98)'},
+          } : {}),
+        }}
+      >
+        <Box component="span" sx={{
+          alignItems: 'center',
+          background: 'color-mix(in srgb, var(--ifm-color-primary) 18%, transparent)',
+          borderRadius: '9px', color: 'var(--ifm-color-primary)',
+          display: 'inline-flex', flexShrink: 0, height: '2.4rem',
+          justifyContent: 'center', width: '2.4rem',
+        }}>
+          <Icon aria-hidden size={20} />
+        </Box>
+        <Box component="span" sx={{display: 'flex', flex: 1, flexDirection: 'column', gap: '0.1rem', minWidth: 0}}>
+          <Box component="span" sx={{alignItems: 'center', display: 'flex', fontSize: '0.875rem', fontWeight: 700, gap: '0.45rem', lineHeight: 1.2}}>
+            {label}
+            {comingSoon && (
+              <Box component="span" sx={{
+                background: 'rgba(255,255,255,0.08)', borderRadius: '20px',
+                color: 'var(--ifm-color-content-secondary)',
+                fontSize: '0.58rem', fontWeight: 600, letterSpacing: '0.05em',
+                padding: '0.1rem 0.45rem', textTransform: 'uppercase',
+                '[data-theme="light"] &': {background: 'rgba(0,0,0,0.07)'},
+              }}>Soon</Box>
+            )}
+          </Box>
+          <Box component="span" sx={{color: 'var(--ifm-color-content-secondary)', fontSize: '0.72rem', lineHeight: 1.35}}>
+            {tagline}
+          </Box>
+        </Box>
+        {!comingSoon && (
+          <Box component="span" sx={{
+            color: 'color-mix(in srgb, var(--ifm-color-primary) 60%, transparent)',
+            display: 'inline-flex', flexShrink: 0, opacity: 0.7,
+            transform: isExpanded ? 'rotate(90deg)' : 'none',
+            transition: 'transform 0.18s ease',
+          }}>→</Box>
+        )}
+      </Box>
     </Box>
   );
 }
