@@ -162,6 +162,10 @@ jobs:
           # For org-wide use, swap this line for an API key instead:
           #   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_AUTH_TOKEN }}
+          # Use the repo's GITHUB_TOKEN instead of the Claude GitHub App (which is not
+          # installed on this repo), so the action skips the app-token exchange that
+          # otherwise fails with "Claude Code is not installed on this repository".
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: ${{ env.SCAN_PROMPT }}
           claude_args: |
             --model claude-sonnet-5
