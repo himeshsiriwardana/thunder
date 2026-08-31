@@ -25,6 +25,7 @@ jobs:
       contents: read
       id-token: write
       actions: read # download the previous run's metrics artifact for trend
+      issues: write # maintain the health dashboard + high-priority gap issues
 
     steps:
       - name: 📥 Checkout Code
@@ -58,6 +59,12 @@ jobs:
             echo "## Backend services (backend/internal/*/)"
             echo
             for d in backend/internal/*/; do echo "- ${d}"; done
+            echo
+            echo "## Code-only capability signals (features that may have NO API spec; check docs for each user-relevant one)"
+            echo "### system subpackages (backend/internal/system/*/) - cross-cutting features; many are internal plumbing, judge which are user-relevant"
+            for d in backend/internal/system/*/; do echo "- ${d#backend/internal/}"; done
+            echo "### services without a matching api/<name>.yaml (verify: some are covered under a differently-named spec, e.g. oauth -> oauth2.yaml)"
+            for d in backend/internal/*/; do s=$(basename "$d"); [ -f "api/${s}.yaml" ] || echo "- backend/internal/${s}/"; done
             echo
             echo "## Deployment config (backend/cmd/server/deployment.yaml)"
             echo
@@ -211,6 +218,14 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "⚠️ No report was produced (\`docs-gap-report.md\` not found). Check the scan step logs." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: 🗂 Sync docs-gap issues
+        # Turn the report into a living backlog: one pinned health dashboard plus
+        # deduplicated, auto-closing issues for the high-priority actions.
+        if: hashFiles('docs-gap-metrics.json') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/docs-gap-issues.sh docs-gap-metrics.json
 
       - name: 📦 Persist report + metrics
         if: always()
