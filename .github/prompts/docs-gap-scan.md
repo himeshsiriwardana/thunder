@@ -41,9 +41,21 @@ NOTE: `docs/content/apis.mdx` is auto-generated from the specs, so REFERENCE is 
 
 ## The measurable spine: maturity level (L0-L5)
 
-For each **capability** (each user-facing `api/*.yaml` spec and each user-facing
-`backend/internal/*` service), determine which Diataxis quadrants cover it by grepping
-`docs/content/`, then assign a level:
+For each **capability**, determine which Diataxis quadrants cover it by grepping
+`docs/content/`, then assign a level. Draw capabilities from every source in the inventory,
+not just API specs:
+
+- each user-facing `api/*.yaml` spec,
+- each user-facing `backend/internal/*` service,
+- each user-facing `backend/internal/system/*` subpackage (these are cross-cutting features
+  that often have NO API spec, e.g. post-quantum crypto lives in `system/cryptolib`; this is
+  where undocumented, code-only features hide, so check them),
+- each "specless service" listed in the inventory (a service with no matching `api/<name>.yaml`,
+  verify against docs by grepping, since some are covered under a differently-named spec).
+
+For any code-only capability (no spec), if it is user-relevant and has zero prose in
+`docs/content/`, that is an L0/L1 undocumented-feature finding, grounded in the code path.
+Assign a level:
 
 - **L0 Undocumented** - no page and no reference anywhere.
 - **L1 Reference only** - an auto-generated spec / SDK reference exists, but no prose.
@@ -144,6 +156,36 @@ Match queries to capabilities and doc paths by their terms. Do NOT invent demand
 what the file contains. If the file says no data is available, note that demand weighting was
 unavailable and fall back to severity-only ordering.
 
+## Scoring: the Documentation Health Score (0-100)
+
+Compute one objective, reproducible score so runs can be compared over time. Show the four
+components so the number is transparent, do not hand-wave it.
+
+- **Coverage (0-50)** - how completely features are documented. For each user-facing
+  capability, `ratio = min(level / target, 1)`. `Coverage = round(mean(ratio) * 50)`.
+- **Pillars (0-20)** - whether the four flagship capabilities meet their target (all target
+  L4): Agent-native Identity, Post-quantum-safe by Design, Decentralized Identity, Lightweight
+  Runtime with GitOps Support. `Pillars = round(pillars_meeting_target / 4 * 20)`.
+- **Accuracy (0-20)** - whether docs match the product. Start at 20; subtract 4 per HIGH
+  inaccuracy, 2 per MEDIUM, 3 per dangling reference; floor at 0.
+- **Config (0-10)** - whether settings are documented.
+  `Config = round(documented_applicable_keys / total_applicable_keys * 10)`.
+- **Health Score = Coverage + Pillars + Accuracy + Config.**
+- **Grade:** A = 90+, B = 75-89, C = 60-74, D = 40-59, F = below 40.
+
+## Write for someone who will act, not an architect
+
+The report is read by a documentation manager assigning work, not by whoever built the scanner.
+So:
+
+- **No internal jargon in the reader-facing sections.** Do not write "L2", "L3", "Diataxis",
+  or "quadrant". Use plain terms: **Explainer** (a page explaining what it is and why it
+  matters), **How-to** (step-by-step instructions for one task), **Walkthrough** (a
+  start-to-finish worked example), **Reference** (the API spec, mostly auto-generated).
+- **Every gap becomes a concrete action.** The Action Plan is the point of the report: a
+  writer should be able to pick up any row and start. Name the page to create or edit, and say
+  the reader impact in one plain sentence.
+
 ## Output: two files at the repository root
 
 Run `date -u '+%Y-%m-%d %H:%M UTC'` for the timestamp and `git rev-parse --short HEAD` for
@@ -157,88 +199,131 @@ Exact shape, integers only:
 {
   "generated": "<timestamp>",
   "commit": "<short sha>",
+  "health_score": 0,
+  "grade": "<A-F>",
+  "score_breakdown": { "coverage": 0, "pillars": 0, "accuracy": 0, "config": 0 },
   "capabilities_assessed": 0,
   "maturity": { "L0": 0, "L1": 0, "L2": 0, "L3": 0, "L4": 0, "L5": 0 },
   "below_standard": 0,
-  "quadrant_gaps": { "tutorial": 0, "explanation": 0, "howto": 0, "journey": 0 },
+  "actions": { "high": 0, "medium": 0, "low": 0 },
+  "action_items": [
+    {
+      "id": "post-quantum-cryptography",
+      "priority": "high",
+      "points": 7,
+      "effort": "L",
+      "title": "Document post-quantum signing end to end",
+      "why": "A flagship pillar the product ships is completely undocumented.",
+      "where": "new key-concepts/post-quantum-cryptography.mdx + guides/crypto/post-quantum-signing.mdx"
+    }
+  ],
   "config_gaps": 0,
   "dangling_refs": 0,
   "inaccuracies_high": 0,
   "inaccuracies_medium": 0,
   "drift_unchecked": 0,
-  "product_signals": 0,
   "unmet_search_intents": 0
 }
 ```
 
-`below_standard` = count of user-facing capabilities below L2. `quadrant_gaps` = count of
-capabilities missing each quadrant. `dangling_refs` = Tier A findings. `inaccuracies_high` /
-`inaccuracies_medium` = Tier B mismatches by severity. `drift_unchecked` = drift candidates
-beyond the top-12 cap. `unmet_search_intents` = frequent no-result searches with no matching
-doc page (0 if demand signals were unavailable).
+`below_standard` = user-facing capabilities that lack even an explainer. `actions` = count of
+Action Plan items per priority. `action_items` = one object per Action Plan row, in the same
+Points order, with a **stable `id`**: a kebab-case slug of the feature (e.g.
+`post-quantum-cryptography`, `server-configuration-api`). The `id` must stay the same across
+runs for the same gap so downstream automation can track it without duplicating; derive it from
+the feature, never from the wording. `priority` is `high` / `medium` / `low`. `dangling_refs` /
+`inaccuracies_*` feed the Accuracy score. `unmet_search_intents` = frequent no-result searches
+with no matching page (0 if demand signals were unavailable).
 
-### 2. `docs-gap-report.md` (human-readable scorecard)
+### 2. `docs-gap-report.md` (the human-readable report)
 
 Use exactly this structure:
 
 ```
-# Documentation Architecture Scan
+# Documentation Health Report
 
 _Generated: <timestamp> - commit: <short sha>_
 
-## Overall
+## Health Score: <N>/100 (Grade <A-F>)
 
-- Capabilities assessed: <n>
-- Maturity distribution: L0 <n> · L1 <n> · L2 <n> · L3 <n> · L4 <n> · L5(candidate) <n>
-- Below standard (user-facing < L2): **<n>**
-- Product pillars below L4: <list, or "none">
-- Unmet reader search intents: <n> (or "demand data unavailable")
+<One plain sentence on what the score means for the reader experience.>
 
-## Priority backlog (demand-weighted)
+| Component | Score | What it measures |
+|---|---|---|
+| Coverage | <c>/50 | How completely each feature is documented |
+| Pillars | <p>/20 | Whether the four flagship capabilities are fully documented |
+| Accuracy | <a>/20 | Whether the docs still match the product |
+| Config | <w>/10 | Whether every setting is documented |
 
-The highest-value fixes first, combining gap severity with reader demand. Cite the demand
-signal where one backs the item. Omit this ranking only if no findings exist.
+## In plain terms
 
-| Rank | Fix | Type | Severity | Reader demand | Evidence |
+<3 to 5 short sentences, zero jargon: what is solid, what is missing, and the single most
+important thing to do first. For someone assigning the work.>
+
+## Action plan
+
+The complete, prioritized list of what to do, most important first. Every gap found anywhere in
+this scan appears here as one concrete task.
+
+The **Points** column is how many Health Score points the action recovers when done, computed
+from the score formula (a pillar going to full depth is worth ~5 Pillar points; a feature going
+from reference-only to fully documented is worth about `(1 - current_ratio) / capabilities * 50`
+Coverage points; fixing a wrong/broken item restores its Accuracy penalty). Round to whole
+points. **Order the whole plan by Points, highest first** (this, not just severity, is the
+priority), and within the same Points band keep the higher-impact item first.
+
+Effort key: S = a few hours, M = about a day, L = several days.
+
+### High priority
+
+| # | Points | What to do | Why it matters | Effort | Where |
 |---|---|---|---|---|---|
-| 1 | ... | maturity / config / accuracy / product | ... | "query" (N no-result searches) or "-" | ... |
+| 1 | +N | <plain task, e.g. "Write an explainer and a how-to for post-quantum signing"> | <reader impact in one sentence> | S/M/L | <page to create or edit> |
 
-## Capability maturity
+### Medium priority
 
-| Capability | Explanation | How-to | Tutorial/Journey | Reference | Level | Target | Notes |
+(same columns, continue numbering)
+
+### Low priority
+
+(same columns, continue numbering)
+
+At the end of the Action Plan, add one line: "Completing all High-priority items would raise the
+score from `<current>` to about `<projected>`." so the payoff of the top items is explicit.
+
+## Scorecard (the detail behind the score)
+
+"Explainer" = a what/why page. "How-to" = task steps. "Walkthrough" = a worked example.
+"Reference" = the API spec.
+
+| Feature | Explainer | How-to | Walkthrough | Reference | Complete | Target | What is missing |
 |---|---|---|---|---|---|---|---|
-| ... | ✓ / – | ✓ / – | ✓ / – | ✓ / – | L2 | L2 | ... |
+| ... | yes / no | yes / no | yes / no | yes / no | <pct> | <pct> | ... |
 
-(One row per user-facing capability. Sort lowest level first. Use ✓ / – for quadrant presence.)
+(One row per user-facing feature, least complete first. "Complete" = level / target as a
+percentage, e.g. reference-only against a full target = 25%.)
 
-## Quadrant deficits
+## Accuracy check
 
-Which Diataxis quadrant is most under-served, with the capabilities that need it most.
+- **Broken references** (docs mention something that no longer exists): <count or "none found">
+- **Wrong information** (docs that would give a wrong result): <count or "none found">
 
-## Config coverage
+<If any, a table: | Page | What it says | What is actually true | Severity | Evidence |. >
 
-| Config key/section | Evidence (deployment.yaml) | Suggested location | Confidence |
-|---|---|---|---|
-| ... | ... | ... | ... |
+_Checked the <n> most at-risk pages of <total>; <n> not yet checked, so this is not a clean
+bill of health for the whole site._
 
-## Accuracy & staleness (drift)
+## For the product team (optional)
 
-_Drift candidates deep-checked: <n> of <total> (cap 12). Unchecked: <n>._
+<Only if the scan surfaced product friction (a capability exposed as a raw API with no task
+path, an over-complex surface, config with no safe default, inconsistent naming). Plain
+hypotheses, not confirmed bugs. Omit the section entirely if nothing solid surfaced.>
 
-| Doc page | Claim in doc | Current source truth | Severity | Evidence |
-|---|---|---|---|---|
-| ... | ... | ... | HIGH / MEDIUM | api/... or deployment.yaml |
+## How this was measured
 
-## Product signals (docs-as-diagnostic)
-
-_Advisory hypotheses for the product team, inferred from documentation friction. Not confirmed bugs._
-
-| Signal | Capability / area | Evidence | Hypothesis | Confidence |
-|---|---|---|---|---|
-| ... | ... | ... | ... | LOW / MEDIUM |
+<One or two lines: the score formula, whether reader-demand data was available, and the caps
+applied (e.g. accuracy deep-checked at most 12 pages).>
 ```
 
-Under the Accuracy table, list Tier A dangling references first (HIGH by nature), then Tier B
-drift mismatches. If a section has no findings, keep its heading and write "No gaps found."
-underneath. The two files are the deliverable; do not print them to stdout beyond what the
-tools require.
+If a section has no findings, keep its heading and write "None found." underneath. The two
+files are the deliverable; do not print them to stdout beyond what the tools require.
