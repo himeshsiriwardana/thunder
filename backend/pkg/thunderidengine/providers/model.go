@@ -692,6 +692,34 @@ type OAuthProfile struct {
 	AcrValues                          []string            `json:"acrValues,omitempty"`
 }
 
+// User represents a user in the system.
+type User struct {
+	ID         string          `json:"id,omitempty"`
+	OUID       string          `json:"ouId,omitempty"`
+	OUHandle   string          `json:"ouHandle,omitempty"`
+	Type       string          `json:"type,omitempty"`
+	Attributes json.RawMessage `json:"attributes,omitempty"`
+	Display    string          `json:"display,omitempty"`
+	IsReadOnly bool            `json:"isReadOnly"`
+}
+
+// Agent is the service-level model for agent create operations.
+type Agent struct {
+	ID          string          `json:"id,omitempty"`
+	OUID        string          `json:"ouId"`
+	OUHandle    string          `json:"ouHandle,omitempty"`
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	LogoURL     string          `json:"logoUrl,omitempty"`
+	Owner       string          `json:"owner,omitempty"`
+	Attributes  json.RawMessage `json:"attributes,omitempty"`
+
+	// The service-level model carries the full internal profile.
+	InboundAuthProfile
+	InboundAuthConfig []InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
+}
+
 // InboundClient is the persistence shape for protocol-agnostic inbound client record.
 type InboundClient struct {
 	ID                        string
@@ -1359,7 +1387,10 @@ type CryptoDetails struct {
 
 // PublicKeyInfo describes a public key returned by GetPublicKeys.
 type PublicKeyInfo struct {
-	KeyID               string
+	KeyID string // Unique identifier for the key within the system.
+	Kid   string // Key ID used in JWKS and JWT headers; may be the same as KeyID or thumbprint
+	// Algorithm is the JWA algorithm name for this key (e.g. "RS256", "ES256", "EdDSA", "ML-DSA-65").
+	// Providers must always populate it: it is published verbatim as the JWK "alg" with no fallback.
 	Algorithm           string
 	PublicKey           gocrypto.PublicKey
 	Thumbprint          string
