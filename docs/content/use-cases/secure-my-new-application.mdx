@@ -1,0 +1,57 @@
+---
+title: Restrict Access to an Application
+docType: use-case
+sidebar_position: 2
+description: Require users to sign in and establish an authenticated session before they can access protected parts of your application.
+---
+
+import AuthenticationPreview from '@site/src/components/AuthenticationPreview';
+
+# Restrict Access to an Application
+
+## Problem
+
+Some applications should only be accessed by a selected set of users
+
+For example, an internal employee portal may contain company information that should not be available to anonymous visitors. Before the application can decide whether a user should be allowed in, it first needs to know who that user is.
+
+Without authentication, anyone who can reach the application may be able to access it. The application has no reliable way to distinguish a known user from an anonymous visitor.
+
+You need a way to require users to sign in before they can access protected parts of the application.
+
+## Stakeholders
+
+Restricting access through authentication usually involves three groups.
+
+* **Application owners or administrators** decide who gets access to the application or which parts of the application should require users to sign in.
+* **Identity administrators** configure how users authenticate and which sign-in methods are available.
+* **Application users** sign in before accessing protected parts of the application.
+
+Together, these stakeholders define where authentication is required, configure the sign-in experience, and use the resulting authenticated session to control access.
+
+## Solution
+
+Controlling access starts with telling users apart. Until the application can do that, an anonymous visitor and someone the business actually trusts look identical to it.
+
+A sign-in step closes that gap. When someone reaches a protected part of the application, they are asked to prove who they are, typically with something they know, something they hold, or an account they already control elsewhere. Once that check succeeds, the application has an answer it did not have a moment ago.
+
+That answer needs to persist. Proving who you are on every single request is not realistic, so the application establishes a session: a record that this particular visitor has already been verified, valid until it expires or the user signs out. Later requests check the session instead of repeating the proof.
+
+With that in place, the application can finally tell "signed in" apart from "not signed in," and gate protected content on the difference. Authentication only answers who the user is. What that user should be allowed to do is a separate question.
+
+## How <ProductName /> solves it
+
+<ProductName /> provides a hosted sign-in experience that identifies users before they enter your application. It presents the sign-in screen, verifies their identity, and can require a second factor before completing sign-in, so your application does not need to collect or check passwords, or build its own multi-factor prompt.
+
+<AuthenticationPreview withMfa />
+
+After successful authentication, the user returns to your application. The application establishes a session and knows who the user is, so it can keep anonymous visitors out of protected content.
+
+See the [React Quickstart](../../getting-started/connect-your-application/react) to connect your application to <ProductName />.
+
+## As your access requirements grow
+
+A basic sign-in flow is often not the end of the story.
+
+* **Not every signed-in user should have the same access.** Knowing who someone is does not always tell the application what they should be allowed to do. For example, every employee may be able to sign in to the company identity system, while only Finance employees should be able to use an expense administration application. See [Restrict Access Within an Application](../restrict-access-within-application).
+* **Some users already have an account somewhere else.** Instead of creating a new set of credentials just for this application, they may want to continue with an account they already use, such as Google or the company's own identity system. See [What are Identity Providers?](../../guides/identity-providers/overview).

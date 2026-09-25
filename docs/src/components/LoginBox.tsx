@@ -353,7 +353,7 @@ export default function LoginBox({variant, delay = 0, sideCard = false, sx = {}}
             opacity: 0.7,
           }}
         >
-          Enter your username to continue sign-in to the application
+          Enter your username and password to sign in
         </Typography>
       </Box>
       <FormControl fullWidth sx={{mb: 2.5}}>
@@ -362,6 +362,26 @@ export default function LoginBox({variant, delay = 0, sideCard = false, sx = {}}
           fullWidth
           id="username-input"
           placeholder="Your username/email"
+          size="small"
+          slotProps={{
+            input: {
+              readOnly: true,
+            },
+          }}
+          sx={{
+            '& .MuiOutlinedInput-root': {
+              borderRadius: 2,
+            },
+          }}
+        />
+      </FormControl>
+      <FormControl fullWidth sx={{mb: 2.5}}>
+        <FormLabel htmlFor="password-input">Password</FormLabel>
+        <TextField
+          fullWidth
+          id="password-input"
+          type="password"
+          placeholder="Your password"
           size="small"
           slotProps={{
             input: {

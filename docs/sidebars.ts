@@ -151,6 +151,8 @@ const sidebars: SidebarsConfig = {
       className: 'sidebar-section',
       items: [
         {type: 'doc', id: 'use-cases/overview', label: 'Choose your usecase'},
+        {type: 'doc', id: 'use-cases/secure-my-new-application', label: 'Restrict Access to an Application'},
+        {type: 'doc', id: 'use-cases/restrict-access-within-application', label: 'Restrict Access Within an Application'},
         {
           type: 'category',
           label: 'Secure Consumer Applications',
