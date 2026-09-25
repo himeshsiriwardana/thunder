@@ -20,6 +20,7 @@ import (
 	agentmodel "github.com/thunder-id/thunderid/internal/agent/model"
 	"github.com/thunder-id/thunderid/internal/application"
 	"github.com/thunder-id/thunderid/internal/application/model"
+	"github.com/thunder-id/thunderid/internal/connection/authzenpdp"
 	layoutmgt "github.com/thunder-id/thunderid/internal/design/layout/mgt"
 	thememgt "github.com/thunder-id/thunderid/internal/design/theme/mgt"
 	"github.com/thunder-id/thunderid/internal/entitytype"
@@ -173,6 +174,34 @@ type fakeIDPService struct {
 	byName    map[string]*providers.IDPDTO
 	updateErr *tidcommon.ServiceError
 	getErr    *tidcommon.ServiceError
+}
+
+type fakeAuthZENPDPService struct {
+	created *authzenpdp.AuthZENPDPConnection
+}
+
+func (f *fakeAuthZENPDPService) CreateAuthZENPDPConnection(
+	_ context.Context,
+	request authzenpdp.ConnectionRequest,
+) (*authzenpdp.AuthZENPDPConnection, *tidcommon.ServiceError) {
+	if f.created != nil {
+		return f.created, nil
+	}
+	return &authzenpdp.AuthZENPDPConnection{ID: request.ID, Name: request.Name}, nil
+}
+
+func (f *fakeAuthZENPDPService) GetAuthZENPDP(
+	_ context.Context, _ string,
+) (*authzenpdp.AuthZENPDPConnection, *tidcommon.ServiceError) {
+	return nil, nil
+}
+
+func (f *fakeAuthZENPDPService) UpdateAuthZENPDPConnection(
+	_ context.Context,
+	id string,
+	request authzenpdp.ConnectionRequest,
+) (*authzenpdp.AuthZENPDPConnection, *tidcommon.ServiceError) {
+	return &authzenpdp.AuthZENPDPConnection{ID: id, Name: request.Name}, nil
 }
 
 func (f *fakeIDPService) CreateIdentityProvider(
@@ -872,6 +901,27 @@ func runOAuthClientSecretImport(
 	})
 
 	return appSvc, resp, err
+}
+
+func TestImportConnectionAuthZENPDP_CreateUsesGeneratedConnectionID(t *testing.T) {
+	service := &importService{
+		authZENPDPService: &fakeAuthZENPDPService{
+			created: &authzenpdp.AuthZENPDPConnection{
+				ID:   "generated-pdp-id",
+				Name: "Generated PDP",
+			},
+		},
+	}
+
+	outcome := service.importConnectionAuthZENPDP(context.Background(), &authzenpdp.AuthZENPDPConnection{
+		Name:     "Imported PDP",
+		Endpoint: "https://pdp.example.com/evaluate",
+	}, nil, false)
+
+	assert.Equal(t, statusSuccess, outcome.Status)
+	assert.Equal(t, operationCreate, outcome.Operation)
+	assert.Equal(t, "generated-pdp-id", outcome.ResourceID)
+	assert.Equal(t, "Generated PDP", outcome.ResourceName)
 }
 
 func TestImportResources_CreateApplication(t *testing.T) {
@@ -2383,16 +2433,18 @@ func TestImportResources_CarriesOAuthTokenBindingFlags(t *testing.T) {
 
 func TestOrderDocumentsByDependencies(t *testing.T) {
 	docs := []parsedDocument{
-		{ResourceType: resourceTypeApplication, Sequence: 2},
-		{ResourceType: resourceTypeFlow, Sequence: 1},
+		{ResourceType: resourceTypeApplication, Sequence: 3},
+		{ResourceType: resourceTypeFlow, Sequence: 2},
+		{ResourceType: resourceTypeResourceServer, Sequence: 1},
 		{ResourceType: resourceTypeConnection, Sequence: 0},
 	}
 
 	ordered := orderDocumentsByDependencies(docs)
-	require.Len(t, ordered, 3)
+	require.Len(t, ordered, 4)
 	assert.Equal(t, resourceTypeConnection, ordered[0].ResourceType)
-	assert.Equal(t, resourceTypeFlow, ordered[1].ResourceType)
-	assert.Equal(t, resourceTypeApplication, ordered[2].ResourceType)
+	assert.Equal(t, resourceTypeResourceServer, ordered[1].ResourceType)
+	assert.Equal(t, resourceTypeFlow, ordered[2].ResourceType)
+	assert.Equal(t, resourceTypeApplication, ordered[3].ResourceType)
 }
 
 func TestImportResources_FileTargetReturnsError(t *testing.T) {
@@ -2496,6 +2548,42 @@ func TestImportResources_ApplicationTypePassedToService(t *testing.T) {
 	assert.Equal(t, statusSuccess, resp.Results[0].Status)
 	require.Len(t, appSvc.created, 1)
 	assert.Equal(t, model.ApplicationTypeBrowser, appSvc.created[0].Type)
+}
+
+func TestImportResources_ApplicationAttestationPassedToService(t *testing.T) {
+	appSvc := &fakeApplicationService{existing: map[string]*providers.Application{}}
+	svc := newImportService(
+		appSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{
+		Content: strings.Join([]string{
+			"resource_type: application",
+			"name: My Mobile App",
+			"type: mobile",
+			"attestation:",
+			"  devMode: true",
+			"  android:",
+			"    packageName: com.example.app",
+			"    certificateSha256Digests:",
+			"      - AA:BB:CC",
+			"    serviceAccountCredentials: '{\"type\":\"service_account\"}'",
+			"",
+		}, "\n"),
+	})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	require.Len(t, appSvc.created, 1)
+
+	attestation := appSvc.created[0].Attestation
+	require.NotNil(t, attestation)
+	assert.True(t, attestation.DevMode)
+	require.NotNil(t, attestation.Android)
+	assert.Equal(t, "com.example.app", attestation.Android.PackageName)
+	assert.Equal(t, []string{"AA:BB:CC"}, attestation.Android.CertificateSha256Digests)
+	assert.Equal(t, `{"type":"service_account"}`, attestation.Android.ServiceAccountCredentials)
 }
 
 func TestImportResources_ApplicationAuthFlowHandlePassedToService(t *testing.T) {

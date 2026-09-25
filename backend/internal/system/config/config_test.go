@@ -17,6 +17,19 @@ import (
 	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
 
+func TestAuthZENPDPDefaultsMergeAndValidation(t *testing.T) {
+	defaultRetries, zeroRetries := 1, 0
+	base := Config{AuthZENPDP: AuthZENPDPConfig{TimeoutMS: 500, RetryCount: &defaultRetries}}
+	user := Config{AuthZENPDP: AuthZENPDPConfig{TimeoutMS: 2000, RetryCount: &zeroRetries}}
+	mergeConfigs(&base, &user)
+	assert.Equal(t, 2000, base.AuthZENPDP.TimeoutMS)
+	assert.Equal(t, 0, *base.AuthZENPDP.RetryCount)
+	assert.NoError(t, base.AuthZENPDP.Validate())
+	negative := -1
+	assert.Error(t, (AuthZENPDPConfig{TimeoutMS: -1}).Validate())
+	assert.Error(t, (AuthZENPDPConfig{RetryCount: &negative}).Validate())
+}
+
 type ConfigTestSuite struct {
 	suite.Suite
 	originalEnvVars map[string]string
@@ -1108,6 +1121,73 @@ notification:
 			}
 		})
 	}
+}
+
+// TestLoadConfig_GateAudiences round-trips server.security.rest.audience and
+// server.security.mcp.audience, and locks in that a block carrying no audience leaves it unset —
+// the shape deployment.yaml ships, where the keys are present only as commented-out examples.
+func (suite *ConfigTestSuite) TestLoadConfig_GateAudiences() {
+	load := func(content string) *Config {
+		tempDir := suite.T().TempDir()
+		userFile := suite.createTempFile(tempDir, "rest-audience*.yaml", content)
+		cfg, err := LoadConfig(userFile, "", tempDir)
+		suite.Require().NoError(err)
+		suite.Require().NotNil(cfg)
+		return cfg
+	}
+
+	suite.Run("configured audience reaches the loaded config", func() {
+		cfg := load(`
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+server:
+  hostname: "localhost"
+  port: 8090
+  security:
+    rest:
+      audience: "https://localhost:8090/mcp"
+`)
+		suite.Require().NotNil(cfg.Server.SecurityConfig.REST.Audience)
+		assert.Equal(suite.T(), "https://localhost:8090/mcp", *cfg.Server.SecurityConfig.REST.Audience)
+	})
+
+	suite.Run("mcp audience reaches the loaded config", func() {
+		cfg := load(`
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+server:
+  hostname: "localhost"
+  port: 8090
+  security:
+    mcp:
+      audience: "https://id.example.com/mcp"
+`)
+		suite.Require().NotNil(cfg.Server.SecurityConfig.MCP.Audience)
+		assert.Equal(suite.T(), "https://id.example.com/mcp", *cfg.Server.SecurityConfig.MCP.Audience)
+	})
+
+	suite.Run("rest block with no audience leaves it unset", func() {
+		cfg := load(`
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+server:
+  hostname: "localhost"
+  port: 8090
+  security:
+    rest:
+      # audience: "https://localhost:8090/mcp"
+`)
+		assert.Nil(suite.T(), cfg.Server.SecurityConfig.REST.Audience)
+	})
 }
 
 func (suite *ConfigTestSuite) TestLoadConfig_InvalidYAML() {

@@ -4,20 +4,20 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
-import androidSdkSidebar from './content/sdks/android/sidebar';
-import browserSdkSidebar from './content/sdks/browser/sidebar';
-import expressSdkSidebar from './content/sdks/express/sidebar';
-import flutterSdkSidebar from './content/sdks/flutter/sidebar';
-import iosSdkSidebar from './content/sdks/ios/sidebar';
-import javascriptSdkSidebar from './content/sdks/javascript/sidebar';
-import nextjsSdkSidebar from './content/sdks/nextjs/sidebar';
-import nodeSdkSidebar from './content/sdks/node/sidebar';
-import nuxtSdkSidebar from './content/sdks/nuxt/sidebar';
-import reactSdkSidebar from './content/sdks/react/sidebar';
-import reactRouterSdkSidebar from './content/sdks/react-router/sidebar';
-import springSecurityIntegrationSidebar from './content/sdks/spring-security/sidebar';
-import tanstackRouterSdkSidebar from './content/sdks/tanstack-router/sidebar';
-import vueSdkSidebar from './content/sdks/vue/sidebar';
+import androidSdkSidebar from './content/sdks-and-tools/android/sidebar';
+import browserSdkSidebar from './content/sdks-and-tools/browser/sidebar';
+import expressSdkSidebar from './content/sdks-and-tools/express/sidebar';
+import flutterSdkSidebar from './content/sdks-and-tools/flutter/sidebar';
+import iosSdkSidebar from './content/sdks-and-tools/ios/sidebar';
+import javascriptSdkSidebar from './content/sdks-and-tools/javascript/sidebar';
+import nextjsSdkSidebar from './content/sdks-and-tools/nextjs/sidebar';
+import nodeSdkSidebar from './content/sdks-and-tools/node/sidebar';
+import nuxtSdkSidebar from './content/sdks-and-tools/nuxt/sidebar';
+import reactSdkSidebar from './content/sdks-and-tools/react/sidebar';
+import reactRouterSdkSidebar from './content/sdks-and-tools/react-router/sidebar';
+import springSecurityIntegrationSidebar from './content/sdks-and-tools/spring-security/sidebar';
+import tanstackRouterSdkSidebar from './content/sdks-and-tools/tanstack-router/sidebar';
+import vueSdkSidebar from './content/sdks-and-tools/vue/sidebar';
 import productConfig from './docusaurus.product.config';
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
@@ -169,9 +169,10 @@ const sidebars: SidebarsConfig = {
                 {type: 'doc', id: 'use-cases/b2c/build-environment', label: 'Set Up Your Environment'},
                 {type: 'doc', id: 'use-cases/b2c/build-users', label: 'Model Your Users'},
                 {type: 'doc', id: 'use-cases/b2c/build-access', label: 'Define Access'},
-                {type: 'doc', id: 'use-cases/b2c/build-flows', label: 'Build the Sign-In Flows'},
+                {type: 'doc', id: 'use-cases/b2c/build-flows', label: 'Build the Flows'},
                 {type: 'doc', id: 'use-cases/b2c/build-application', label: 'Register the Application'},
                 {type: 'doc', id: 'use-cases/b2c/build-onboarding', label: 'Onboard Internal Staff'},
+                {type: 'doc', id: 'use-cases/b2c/build-sessions', label: 'Keep Them Signed In'},
                 {type: 'doc', id: 'use-cases/b2c/build-run', label: 'How It All Runs'},
               ],
             },
@@ -212,6 +213,8 @@ const sidebars: SidebarsConfig = {
                 {type: 'doc', id: 'use-cases/b2c/integration-patterns', label: 'Choose Integration'},
                 {type: 'doc', id: 'use-cases/b2c/identity-sources', label: 'Identity Sources'},
                 {type: 'doc', id: 'use-cases/b2c/tokens-and-apis', label: 'Protect APIs'},
+                {type: 'doc', id: 'use-cases/b2c/sessions-and-logout', label: 'Sessions & Logout'},
+                {type: 'doc', id: 'use-cases/b2c/notification-delivery', label: 'Notification Delivery'},
                 {type: 'doc', id: 'use-cases/b2c/operations', label: 'Run & Observe'},
               ],
             },
@@ -223,6 +226,19 @@ const sidebars: SidebarsConfig = {
           collapsible: true,
           collapsed: true,
           items: [{type: 'doc', id: 'use-cases/b2b/multi-tenant-saas', label: 'Multi-Tenant SaaS'}],
+        },
+        {
+          type: 'category',
+          label: 'Managed Deployments',
+          collapsible: true,
+          collapsed: true,
+          items: [
+            {
+              type: 'doc',
+              id: 'use-cases/managed-deployments/centralized-configuration',
+              label: 'Centralized Configuration',
+            },
+          ],
         },
         {
           type: 'category',
@@ -1156,6 +1172,11 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'deployment/observability',
           label: 'Observability',
+        },
+        {
+          type: 'doc',
+          id: 'deployment/agent-analytics',
+          label: 'Agent Analytics',
         },
       ],
     },
