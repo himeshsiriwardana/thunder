@@ -5,6 +5,7 @@ package agent
 
 import (
 	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 const (
@@ -13,7 +14,6 @@ const (
 
 // Field keys stored in the entity SystemAttributes JSON blob.
 const (
-	fieldName         = "name"
 	fieldDescription  = "description"
 	fieldOwner        = "owner"
 	fieldClientID     = "clientId"
@@ -22,3 +22,23 @@ const (
 
 // propLogoURL is the inbound-client PROPERTIES key holding the agent logo.
 const propLogoURL = "logo_url"
+
+// defaultGrantTypes are the grant types every agent holds.
+var defaultGrantTypes = []providers.GrantType{
+	providers.GrantTypeClientCredentials,
+}
+
+// delegationGrantTypes are the grant types that let an agent act for a signed-in user. A delegated
+// agent needs at least one of them.
+var delegationGrantTypes = []providers.GrantType{
+	providers.GrantTypeAuthorizationCode,
+	providers.GrantTypeCIBA,
+	providers.GrantTypeTokenExchange,
+}
+
+// defaultDelegatedGrantTypes are the grant types added to a delegated agent that requests none
+// beyond client credentials.
+var defaultDelegatedGrantTypes = []providers.GrantType{
+	providers.GrantTypeAuthorizationCode,
+	providers.GrantTypeRefreshToken,
+}

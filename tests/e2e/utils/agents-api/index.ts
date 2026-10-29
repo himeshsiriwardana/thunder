@@ -12,24 +12,45 @@
  */
 
 import type { APIRequestContext } from "@playwright/test";
-import { send, sendOk } from "../api-request";
+import { send, sendOk, type ApiAccessStatus } from "../api-request";
 
 /** An agent as returned by `/agents`. */
 export type ApiAgent = {
   id: string;
-  name?: string;
+  display?: string;
   clientId?: string;
   owner?: string;
   type?: string;
   ouId?: string;
   attributes?: Record<string, unknown>;
+  status?: ApiAccessStatus;
 };
 
 export class AgentsApi {
   constructor(private readonly request: APIRequestContext) {}
 
   /**
-   * Every agent in the system. The list endpoint has no name filter and `limit` caps at 100,
+   * Create an agent of the default type directly via the API, in the organization unit that type
+   * belongs to. Agent types are limited to the one bootstrap `default` schema.
+   */
+  async create(name: string): Promise<ApiAgent> {
+    const types = (await (await sendOk(this.request, "GET", "/agent-types")).json()) as {
+      types?: { handle: string; ouId: string }[];
+    };
+    const agentType = types.types?.find(type => type.handle === "default");
+    if (!agentType) {
+      throw new Error('GET /agent-types returned no "default" agent type');
+    }
+    const response = await sendOk(this.request, "POST", "/agents", {
+      ouId: agentType.ouId,
+      type: agentType.handle,
+      attributes: { name },
+    });
+    return (await response.json()) as ApiAgent;
+  }
+
+  /**
+   * Every agent in the system. The list endpoint has no name filter (agents are matched on their display value) and `limit` caps at 100,
    * so this pages until every page has been read.
    */
   async list(): Promise<ApiAgent[]> {
@@ -37,7 +58,7 @@ export class AgentsApi {
     const all: ApiAgent[] = [];
 
     for (let offset = 0; ; offset += pageSize) {
-      const response = await sendOk(this.request, "GET", `/agents?limit=${pageSize}&offset=${offset}`);
+      const response = await sendOk(this.request, "GET", `/agents?limit=${pageSize}&offset=${offset}&include=display`);
       const body = (await response.json()) as { agents?: ApiAgent[]; totalResults?: number };
       const agents = body.agents ?? [];
       all.push(...agents);
@@ -48,7 +69,7 @@ export class AgentsApi {
 
   /** Resolve an agent by name, the way a test names the one it just created. */
   async findByName(name: string): Promise<ApiAgent | undefined> {
-    return (await this.list()).find(agent => agent.name === name);
+    return (await this.list()).find(agent => agent.display === name);
   }
 
   /**

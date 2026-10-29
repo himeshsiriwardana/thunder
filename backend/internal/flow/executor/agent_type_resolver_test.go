@@ -14,7 +14,7 @@ import (
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
-	"github.com/thunder-id/thunderid/tests/mocks/oumock"
+	"github.com/thunder-id/thunderid/tests/mocks/ouprovidermock"
 )
 
 const agentTypeExecutionID = "flow-agent-type-1"
@@ -26,7 +26,7 @@ type AgentTypeResolverTestSuite struct {
 	suite.Suite
 	mockFlowFactory       *coremock.FlowFactoryInterfaceMock
 	mockEntityTypeService *entitytypemock.EntityTypeServiceInterfaceMock
-	mockOUService         *oumock.OrganizationUnitServiceInterfaceMock
+	mockOUService         *ouprovidermock.OrganizationUnitProviderMock
 	executor              *agentTypeResolver
 }
 
@@ -37,7 +37,7 @@ func TestAgentTypeResolverSuite(t *testing.T) {
 func (suite *AgentTypeResolverTestSuite) SetupTest() {
 	suite.mockFlowFactory = coremock.NewFlowFactoryInterfaceMock(suite.T())
 	suite.mockEntityTypeService = entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	suite.mockOUService = oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
+	suite.mockOUService = ouprovidermock.NewOrganizationUnitProviderMock(suite.T())
 
 	mockExec := coremock.NewExecutorInterfaceMock(suite.T())
 	mockExec.On("GetName").Return(ExecutorNameAgentTypeResolver).Maybe()
@@ -70,13 +70,14 @@ func (suite *AgentTypeResolverTestSuite) listReturns(types ...entitytype.EntityT
 
 // One candidate is no choice, so it is taken without a prompt.
 func (suite *AgentTypeResolverTestSuite) TestSingleTypeResolvesWithoutPrompting() {
-	suite.listReturns(entitytype.EntityTypeListItem{Name: "default", OUID: "ou-agents"})
+	suite.listReturns(entitytype.EntityTypeListItem{Handle: "default", OUID: "ou-agents"})
 
 	resp, err := suite.executor.Execute(agentTypeNodeContext())
 
 	suite.NoError(err)
 	suite.Equal(providers.ExecComplete, resp.Status)
 	suite.Equal("default", resp.RuntimeData[categoryTypeKey], "the shared runtime slot both categories use")
+	suite.Equal(string(entitytype.TypeCategoryAgent), resp.RuntimeData[categoryNameKey])
 	suite.Equal("ou-agents", resp.RuntimeData[defaultOUIDKey])
 	suite.Empty(resp.Inputs)
 }
@@ -84,8 +85,8 @@ func (suite *AgentTypeResolverTestSuite) TestSingleTypeResolvesWithoutPrompting(
 // Several candidates are offered rather than narrowed, so the count is not assumed anywhere.
 func (suite *AgentTypeResolverTestSuite) TestMultipleTypesArePrompted() {
 	suite.listReturns(
-		entitytype.EntityTypeListItem{Name: "default", OUID: "ou-agents"},
-		entitytype.EntityTypeListItem{Name: "worker", OUID: "ou-agents"},
+		entitytype.EntityTypeListItem{Handle: "default", OUID: "ou-agents"},
+		entitytype.EntityTypeListItem{Handle: "worker", OUID: "ou-agents"},
 	)
 
 	resp, err := suite.executor.Execute(agentTypeNodeContext())
@@ -98,6 +99,37 @@ func (suite *AgentTypeResolverTestSuite) TestMultipleTypesArePrompted() {
 	suite.Equal(resp.Inputs, resp.ForwardedData[common.ForwardedDataKeyInputs])
 }
 
+// The prompt offers the type handles as options.
+func (suite *AgentTypeResolverTestSuite) TestPromptOffersHandles() {
+	suite.listReturns(
+		entitytype.EntityTypeListItem{Handle: "default", DisplayName: "Default Agent", OUID: "ou-agents"},
+		entitytype.EntityTypeListItem{Handle: "worker", DisplayName: "Worker", OUID: "ou-agents"},
+	)
+
+	resp, err := suite.executor.Execute(agentTypeNodeContext())
+
+	suite.NoError(err)
+	suite.Equal(providers.ExecUserInputRequired, resp.Status)
+	suite.Require().Len(resp.Inputs, 1)
+	suite.Equal([]string{"default", "worker"}, resp.Inputs[0].Options)
+}
+
+// A submitted handle is written to the runtime data.
+func (suite *AgentTypeResolverTestSuite) TestSubmittedHandleResolves() {
+	ctx := agentTypeNodeContext()
+	ctx.UserInputs = map[string]string{agentTypeKey: "worker"}
+	suite.mockEntityTypeService.On("GetEntityTypeByHandle", mock.Anything, entitytype.TypeCategoryAgent, "worker").
+		Return(&entitytype.EntityType{Handle: "worker", DisplayName: "Worker", OUID: "ou-agents"}, nil).Once()
+
+	resp, err := suite.executor.Execute(ctx)
+
+	suite.NoError(err)
+	suite.Equal(providers.ExecComplete, resp.Status)
+	suite.Equal("worker", resp.RuntimeData[categoryTypeKey])
+	suite.Equal(string(entitytype.TypeCategoryAgent), resp.RuntimeData[categoryNameKey])
+	suite.Equal("ou-agents", resp.RuntimeData[defaultOUIDKey])
+}
+
 // The node property narrows the candidates before the count decides the outcome.
 func (suite *AgentTypeResolverTestSuite) TestAllowedAgentTypesNarrowsTheChoice() {
 	ctx := agentTypeNodeContext()
@@ -105,8 +137,8 @@ func (suite *AgentTypeResolverTestSuite) TestAllowedAgentTypesNarrowsTheChoice()
 		propertyKeyAllowedAgentTypes: []interface{}{"default"},
 	}
 	suite.listReturns(
-		entitytype.EntityTypeListItem{Name: "default", OUID: "ou-agents"},
-		entitytype.EntityTypeListItem{Name: "worker", OUID: "ou-other"},
+		entitytype.EntityTypeListItem{Handle: "default", OUID: "ou-agents"},
+		entitytype.EntityTypeListItem{Handle: "worker", OUID: "ou-other"},
 	)
 
 	resp, err := suite.executor.Execute(ctx)
@@ -114,6 +146,7 @@ func (suite *AgentTypeResolverTestSuite) TestAllowedAgentTypesNarrowsTheChoice()
 	suite.NoError(err)
 	suite.Equal(providers.ExecComplete, resp.Status, "narrowing to one removes the prompt")
 	suite.Equal("default", resp.RuntimeData[categoryTypeKey])
+	suite.Equal(string(entitytype.TypeCategoryAgent), resp.RuntimeData[categoryNameKey])
 	suite.Equal("ou-agents", resp.RuntimeData[defaultOUIDKey])
 }
 
@@ -167,6 +200,7 @@ func (suite *AgentTypeResolverTestSuite) TestRegistrationFlowIsRefused() {
 	suite.Require().NotNil(resp.Error)
 	suite.Equal(ErrSelfRegNotSupportedForAgents.Code, resp.Error.Code)
 	suite.Empty(resp.RuntimeData[categoryTypeKey], "a refused flow resolves no type")
+	suite.Empty(resp.RuntimeData[categoryNameKey])
 }
 
 // The refusal must not reach the type catalog, so a misplaced node cannot probe what exists.
@@ -198,6 +232,7 @@ func (suite *AgentTypeResolverTestSuite) TestUnrelatedFlowTypeIsANoOp() {
 			suite.Equal(providers.ExecComplete, resp.Status)
 			suite.Nil(resp.Error)
 			suite.Empty(resp.RuntimeData[categoryTypeKey])
+			suite.Empty(resp.RuntimeData[categoryNameKey])
 		})
 	}
 }
@@ -231,6 +266,7 @@ func (suite *AgentTypeResolverTestSuite) TestAuthenticationAllowedWhenAgentTypes
 	suite.Equal(providers.ExecComplete, resp.Status)
 	suite.Nil(resp.Error)
 	suite.Empty(resp.RuntimeData[categoryTypeKey])
+	suite.Empty(resp.RuntimeData[categoryNameKey])
 	suite.mockEntityTypeService.AssertNotCalled(suite.T(), "GetEntityTypeList",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

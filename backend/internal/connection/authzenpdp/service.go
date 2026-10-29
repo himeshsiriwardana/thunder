@@ -7,13 +7,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/thunder-id/thunderid/internal/connection/connectionou"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/outboundauth"
+	"github.com/thunder-id/thunderid/internal/system/outboundauth/httpauth"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -33,6 +37,7 @@ type AuthZENPDPServiceInterface interface {
 	DeleteAuthZENPDPConnection(ctx context.Context, id string) *tidcommon.ServiceError
 	ListAuthZENPDPs(ctx context.Context) ([]AuthZENPDPConnection, *tidcommon.ServiceError)
 	GetAuthZENPDP(ctx context.Context, id string) (*AuthZENPDPConnection, *tidcommon.ServiceError)
+	ResolveConnectionOU(ctx context.Context, connection *AuthZENPDPConnection) *tidcommon.ServiceError
 }
 
 // AuthZENPDPService provides storage operations for AuthZEN PDP connections.
@@ -41,6 +46,7 @@ type AuthZENPDPService struct {
 	defaults      config.AuthZENPDPConfig
 	transactioner providers.Transactioner
 	entityTypes   entitytype.EntityTypeServiceInterface
+	ouResolver    connectionou.ResolverInterface
 	logger        *log.Logger
 }
 
@@ -54,12 +60,14 @@ func newAuthZENPDPService(
 	defaults config.AuthZENPDPConfig,
 	transactioner providers.Transactioner,
 	entityTypes entitytype.EntityTypeServiceInterface,
+	ouResolver connectionou.ResolverInterface,
 ) *AuthZENPDPService {
 	return &AuthZENPDPService{
 		store:         store,
 		defaults:      defaults,
 		transactioner: transactioner,
 		entityTypes:   entityTypes,
+		ouResolver:    ouResolver,
 		logger:        log.GetLogger().With(log.String(log.LoggerKeyComponentName, "AuthZENPDPService")),
 	}
 }
@@ -69,7 +77,10 @@ func (s *AuthZENPDPService) CreateAuthZENPDPConnection(
 	ctx context.Context,
 	request ConnectionRequest,
 ) (*AuthZENPDPConnection, *tidcommon.ServiceError) {
-	connection := s.fromRequest(request)
+	connection, err := ConnectionFromRequest(request, s.defaults)
+	if err != nil {
+		return nil, &ErrorInvalidAuthentication
+	}
 	if svcErr := declarativeresource.CheckDeclarativeCreate(); svcErr != nil {
 		return nil, svcErr
 	}
@@ -82,11 +93,14 @@ func (s *AuthZENPDPService) CreateAuthZENPDPConnection(
 	if svcErr := s.validateSubjectAttributeMappings(ctx, connection.SubjectAttributeMappings); svcErr != nil {
 		return nil, svcErr
 	}
+	if svcErr := s.ResolveConnectionOU(ctx, &connection); svcErr != nil {
+		return nil, svcErr
+	}
 	if connection.ID == "" {
 		connection.ID = sysutils.GenerateUUID()
 	}
 	var svcErr *tidcommon.ServiceError
-	err := s.transactioner.Transact(ctx, func(txCtx context.Context) error {
+	err = s.transactioner.Transact(ctx, func(txCtx context.Context) error {
 		existing, getErr := s.GetAuthZENPDPByName(txCtx, connection.Name)
 		if getErr != nil {
 			return getErr
@@ -114,12 +128,8 @@ func (s *AuthZENPDPService) UpdateAuthZENPDPConnection(
 	id string,
 	request ConnectionRequest,
 ) (*AuthZENPDPConnection, *tidcommon.ServiceError) {
-	connection := s.fromRequest(request)
 	if svcErr := declarativeresource.CheckDeclarativeUpdate(); svcErr != nil {
 		return nil, svcErr
-	}
-	if connection.Name == "" {
-		return nil, &ErrorInvalidName
 	}
 	current, svcErr := s.GetAuthZENPDP(ctx, id)
 	if svcErr != nil {
@@ -128,6 +138,25 @@ func (s *AuthZENPDPService) UpdateAuthZENPDPConnection(
 	if current == nil {
 		return nil, &ErrorNotFound
 	}
+	properties, err := outboundauth.UpdateProperties(request.Authentication, current.AuthenticationProperties,
+		[]string{current.Endpoint, current.BatchEndpoint},
+		[]string{strings.TrimSpace(request.Endpoint), strings.TrimSpace(request.BatchEndpoint)},
+		httpauth.SupportedTypes(), httpauth.CanonicalizeForUpdate, httpauth.Canonicalize)
+	if err != nil {
+		if errors.Is(err, outboundauth.ErrAuthenticationRequiredForTargetChange) {
+			return nil, &ErrorAuthenticationRequiredForEndpointChange
+		}
+		return nil, &ErrorInvalidAuthentication
+	}
+	request.Authentication = nil
+	connection, err := ConnectionFromRequest(request, s.defaults)
+	if err != nil {
+		return nil, &ErrorInvalidAuthentication
+	}
+	if connection.Name == "" {
+		return nil, &ErrorInvalidName
+	}
+	connection.AuthenticationProperties = properties
 	if err := normalizeEndpoints(&connection); err != nil {
 		return nil, &ErrorInvalidEndpoint
 	}
@@ -143,6 +172,12 @@ func (s *AuthZENPDPService) UpdateAuthZENPDPConnection(
 	if existing != nil && existing.ID != id {
 		return nil, &ErrorAlreadyExists
 	}
+	// An owner cannot change. Leaving it out keeps the one the connection has.
+	ouID, ouErr := s.ouResolver.ResolveForUpdate(ctx, connection.OUID, connection.OUHandle, current.OUID)
+	if ouErr != nil {
+		return nil, ouErr
+	}
+	connection.OUID = ouID
 	connection.ID = id
 	if err := s.store.UpdateAuthZENPDP(ctx, id, connection); err != nil {
 		if errors.Is(err, ErrAuthZENPDPIsImmutable) {
@@ -159,6 +194,20 @@ func (s *AuthZENPDPService) UpdateAuthZENPDPConnection(
 		return nil, &tidcommon.InternalServerError
 	}
 	return updated, nil
+}
+
+// ResolveConnectionOU sets the organization unit an AuthZEN PDP connection is owned by. The owner is named by id or by
+// handle, and a handle is resolved to the id of the unit it names; when both are given the id wins. A connection has to
+// name an organization unit, and it has to exist.
+func (s *AuthZENPDPService) ResolveConnectionOU(
+	ctx context.Context, connection *AuthZENPDPConnection,
+) *tidcommon.ServiceError {
+	ouID, svcErr := s.ouResolver.Resolve(ctx, connection.OUID, connection.OUHandle)
+	if svcErr != nil {
+		return svcErr
+	}
+	connection.OUID = ouID
+	return nil
 }
 
 // DeleteAuthZENPDPConnection deletes an AuthZEN PDP connection.
@@ -240,8 +289,18 @@ func validateConnection(connection AuthZENPDPConnection) error {
 	if err := validateEndpoint(connection.Endpoint); err != nil {
 		return fmt.Errorf("invalid access evaluation endpoint: %w", err)
 	}
+	config, err := outboundauth.FromProperties(connection.AuthenticationProperties)
+	if err != nil {
+		return fmt.Errorf("invalid outbound authentication: %w", err)
+	}
+	if err := validateAuthenticationEndpoint(connection.Endpoint, string(config.Type)); err != nil {
+		return fmt.Errorf("invalid access evaluation endpoint: %w", err)
+	}
 	if connection.BatchEndpoint != "" {
 		if err := validateEndpoint(connection.BatchEndpoint); err != nil {
+			return fmt.Errorf("invalid access evaluations endpoint: %w", err)
+		}
+		if err := validateAuthenticationEndpoint(connection.BatchEndpoint, string(config.Type)); err != nil {
 			return fmt.Errorf("invalid access evaluations endpoint: %w", err)
 		}
 	}
@@ -256,6 +315,19 @@ func validateEndpoint(endpoint string) error {
 		return fmt.Errorf("endpoint must be an absolute URL")
 	}
 	return nil
+}
+
+func validateAuthenticationEndpoint(endpoint, scheme string) error {
+	scheme = strings.ToLower(strings.TrimSpace(scheme))
+	if scheme != string(outboundauth.TypeBearer) && scheme != string(outboundauth.TypeBasic) &&
+		scheme != string(outboundauth.TypeAPIKey) {
+		return nil
+	}
+	parsedEndpoint, err := url.Parse(endpoint)
+	if err != nil {
+		return err
+	}
+	return httpauth.ValidateCredentialTransport(&http.Request{URL: parsedEndpoint})
 }
 
 // validateSubjectAttributeMappings verifies mapped attributes against the declared subject type.
@@ -315,13 +387,13 @@ func (s *AuthZENPDPService) getSubjectTypeAttributes(
 	return nil, &ErrorInvalidSubjectAttributeMapping
 }
 
-// fromRequest converts an API request into the internal connection model with configured defaults.
-func (s *AuthZENPDPService) fromRequest(req ConnectionRequest) AuthZENPDPConnection {
+// ConnectionFromRequest converts an API or declarative request into a connection with configured defaults.
+func ConnectionFromRequest(req ConnectionRequest, defaults config.AuthZENPDPConfig) (AuthZENPDPConnection, error) {
 	timeoutMS := req.TimeoutMS
 	if timeoutMS <= 0 {
-		timeoutMS = s.defaults.TimeoutMS
+		timeoutMS = defaults.TimeoutMS
 	}
-	retryCount := retryCountDefault(s.defaults)
+	retryCount := retryCountDefault(defaults)
 	if req.RetryCount != nil {
 		retryCount = *req.RetryCount
 	}
@@ -329,13 +401,23 @@ func (s *AuthZENPDPService) fromRequest(req ConnectionRequest) AuthZENPDPConnect
 		ID:                       req.ID,
 		Name:                     strings.TrimSpace(req.Name),
 		Description:              req.Description,
+		OUID:                     req.OUID,
+		OUHandle:                 req.OUHandle,
 		Endpoint:                 req.Endpoint,
 		BatchEndpoint:            req.BatchEndpoint,
 		TimeoutMS:                timeoutMS,
 		RetryCount:               retryCount,
 		SubjectAttributeMappings: sanitizeSubjectAttributeMappings(req.SubjectAttributeMappings),
 	}
-	return connection
+	config, err := httpauth.Canonicalize(req.Authentication.Config())
+	if err != nil {
+		return AuthZENPDPConnection{}, err
+	}
+	connection.AuthenticationProperties, err = outboundauth.ToProperties(config)
+	if err != nil {
+		return AuthZENPDPConnection{}, err
+	}
+	return connection, nil
 }
 
 // cloneSubjectAttributeMappings returns an independent copy of subject attribute mappings.

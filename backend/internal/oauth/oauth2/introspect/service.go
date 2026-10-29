@@ -6,6 +6,7 @@ package introspect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -61,7 +62,25 @@ func (s *tokenIntrospectionService) IntrospectToken(
 		}, nil
 	}
 
-	return s.prepareValidResponse(payload), nil
+	response := s.prepareValidResponse(payload)
+	if _, present := payload[constants.ClaimAuthorizationDetails]; present {
+		response.AuthorizationDetails = authorizationDetailsClaim(token)
+	}
+	return response, nil
+}
+
+// authorizationDetailsClaim returns the token's authorization details as the claim's JSON text, so numbers are
+// kept exactly, or nil when the claim is not a non-empty array.
+func authorizationDetailsClaim(token string) json.RawMessage {
+	raw, ok, err := jwt.DecodeJWTClaim(token, constants.ClaimAuthorizationDetails)
+	if err != nil || !ok {
+		return nil
+	}
+	var details []json.RawMessage
+	if json.Unmarshal(raw, &details) != nil || len(details) == 0 {
+		return nil
+	}
+	return raw
 }
 
 // validateByType validates the token with the validator for its typ header and returns its claims.
@@ -73,6 +92,10 @@ func (s *tokenIntrospectionService) validateByType(
 		return nil, fmt.Errorf("failed to decode token header: %w", err)
 	}
 
+	// TokenTypeJWT covers refresh tokens minted before rt+jwt existed. ValidateRefreshToken asserts
+	// the refresh claim shape, so an ID token routed here by its shared generic type is rejected there.
+	// TODO: Drop the TokenTypeJWT arm on the next major version, once no pre-rt+jwt refresh token can
+	// still be valid.
 	switch typ, _ := header["typ"].(string); typ {
 	case jwt.TokenTypeAccessToken:
 		claims, validateErr := s.tokenValidator.ValidateAccessToken(ctx, token)
@@ -80,7 +103,7 @@ func (s *tokenIntrospectionService) validateByType(
 			return nil, validateErr
 		}
 		return claims.Claims, nil
-	case jwt.TokenTypeJWT:
+	case jwt.TokenTypeRefreshToken, jwt.TokenTypeJWT:
 		claims, validateErr := s.tokenValidator.ValidateRefreshToken(ctx, token)
 		if validateErr != nil {
 			return nil, validateErr

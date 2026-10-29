@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
+	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
 	"github.com/thunder-id/thunderid/internal/entityprovider"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/entitytype/model"
@@ -55,6 +57,8 @@ type ProvisioningExecutorTestSuite struct {
 	mockEntityTypeService     *entitytypemock.EntityTypeServiceInterfaceMock
 	mockAuthnProvider         *managermock.AuthnProviderManagerMock
 	executor                  *provisioningExecutor
+	// ownSignIn turns off the catch-all sign-in expectation, for a test that sets its own.
+	ownSignIn bool
 }
 
 func TestProvisioningExecutorSuite(t *testing.T) {
@@ -71,7 +75,9 @@ func (suite *ProvisioningExecutorTestSuite) SetupTest() {
 	suite.mockAgentMgtProvider = agentmgtprovidermock.NewAgentMgtProviderMock(suite.T())
 	suite.mockEntityTypeService = entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
 	suite.mockAuthnProvider = managermock.NewAuthnProviderManagerMock(suite.T())
-	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything, mock.Anything,
+	suite.ownSignIn = false
+	suite.mockAuthnProvider.On("AuthenticateUser",
+		mock.MatchedBy(func(any) bool { return !suite.ownSignIn }), mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything).
 		Return(newAuthenticatedAuthUser(), providers.AuthenticatedClaims{},
 			(*tidcommon.ServiceError)(nil)).Maybe()
@@ -108,7 +114,25 @@ func (suite *ProvisioningExecutorTestSuite) expectSchemaForProvisioning() {
 func (suite *ProvisioningExecutorTestSuite) expectSchemaForAgentProvisioning() {
 	suite.mockEntityTypeService.On("GetAttributes", mock.Anything, entitytype.TypeCategoryAgent, testAgentType,
 		model.AttributeFilter{AllowCredential: true, AllowNonCredential: true}).
-		Return([]model.AttributeInfo{{Attribute: "model", Required: false}}, nil).Maybe()
+		Return([]model.AttributeInfo{
+			{Attribute: "name", Required: true}, {Attribute: "model", Required: false},
+		}, nil).Maybe()
+}
+
+// expectProvisionedSignIn requires the created entity to be signed in with the provisioned-entity
+// credential, in place of the suite's catch-all expectation.
+func (suite *ProvisioningExecutorTestSuite) expectProvisionedSignIn(entityID string) {
+	suite.ownSignIn = true
+	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything,
+		map[string]interface{}{authnprovidercm.CredentialTypeProvisionedEntityID: entityID},
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(newAuthenticatedAuthUser(), providers.AuthenticatedClaims{}, (*tidcommon.ServiceError)(nil)).Once()
+}
+
+// expectNoExistingUserFor mocks the existing-user lookup over attrs as finding nothing.
+func (suite *ProvisioningExecutorTestSuite) expectNoExistingUserFor(attrs map[string]interface{}) {
+	suite.mockEntityProvider.On("IdentifyEntity", attrs).
+		Return(nil, entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
 }
 
 func (suite *ProvisioningExecutorTestSuite) createMockIdentifyingExecutor() providers.Executor {
@@ -139,6 +163,24 @@ func (suite *ProvisioningExecutorTestSuite) createMockProvisioningExecutor() pro
 				}
 			}
 			return len(execResp.Inputs) == 0
+		}).Maybe()
+	// Stands in for the embedded base (internal/flow/core/executor.go), which the mocked base
+	// intercepts: a pre-resolved user ID in runtime data wins, then the resolved entity reference.
+	mockExec.On("GetUserIDFromContext", mock.Anything, mock.Anything, mock.Anything).Return(
+		func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse,
+			authnProvider providers.AuthnProviderManager) string {
+			if val, ok := ctx.RuntimeData[userAttributeUserID]; ok && val != "" {
+				return val
+			}
+			if authnProvider == nil || !ctx.AuthUser.IsAuthenticated() {
+				return ""
+			}
+			authUser, entityRef, err := authnProvider.GetEntityReference(ctx.Context, ctx.AuthUser)
+			execResp.AuthUser = authUser
+			if err != nil || entityRef == nil {
+				return ""
+			}
+			return entityRef.EntityID
 		}).Maybe()
 	mockExec.On("GetInputs", mock.Anything).Return([]providers.Input{}).Maybe()
 	mockExec.On(methodGetRequiredInputs, mock.Anything).Return([]providers.Input{}).Maybe()
@@ -184,10 +226,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_Success() {
 		},
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", map[string]interface{}{
-		"username":     "newuser",
-		attributeEmail: "new@example.com",
-	}).Return(nil, entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+	suite.expectNoExistingUserFor(attrs)
 
 	createdUser := &providers.User{
 		ID:         testNewUserID,
@@ -200,6 +239,8 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_Success() {
 		mock.MatchedBy(func(u *providers.User) bool {
 			return u.OUID == testOUID && u.Type == testUserType
 		})).Return(createdUser, nil)
+	// A user the node creates is signed in with the provisioned-entity credential.
+	suite.expectProvisionedSignIn(testNewUserID)
 
 	suite.mockGroupService.On("AddMembersToGroups",
 		mock.Anything, []group.Member{{ID: testNewUserID, Type: group.MemberTypeUser}}, []string{"test-group-id"}).
@@ -217,6 +258,98 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_Success() {
 	suite.mockGroupService.AssertExpectations(suite.T())
 	suite.mockRoleService.AssertExpectations(suite.T())
 	suite.mockRoleAssignmentService.AssertExpectations(suite.T())
+}
+
+// Answered with the authentication error, as any failed bind of the created user is.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AFaultSigningInTheCreatedUserFailsTheNode() {
+	suite.expectSchemaForProvisioning()
+	attrs := map[string]interface{}{"username": "newuser", attributeEmail: "new@example.com"}
+	attrsJSON, _ := json.Marshal(attrs)
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeRegistration,
+		UserInputs:  map[string]string{"username": "newuser", attributeEmail: "new@example.com"},
+		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testUserType},
+		NodeInputs: []providers.Input{
+			{Identifier: "username", Type: "string", Required: true},
+			{Identifier: attributeEmail, Type: "string", Required: true},
+		},
+	}
+	suite.expectNoExistingUserFor(attrs)
+	suite.mockUserMgtProvider.On("CreateUser", mock.Anything, mock.Anything).
+		Return(&providers.User{ID: testNewUserID, OUID: testOUID, Type: testUserType, Attributes: attrsJSON}, nil)
+	suite.ownSignIn = true
+	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything,
+		map[string]interface{}{authnprovidercm.CredentialTypeProvisionedEntityID: testNewUserID},
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(providers.AuthUser{}, providers.AuthenticatedClaims{}, &tidcommon.InternalServerError).Once()
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrEntityAuthFailed.Code, resp.Error.Code)
+	suite.mockAuthnProvider.AssertExpectations(suite.T())
+}
+
+// TestExecute_ResolvedEntityReference_SkipsIdentify verifies a local user resolved by account
+// linking is used as-is, even when a second connection reports a different username.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_ResolvedEntityReference_SkipsIdentify() {
+	suite.expectSchemaForProvisioning()
+
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAuthentication,
+		AuthUser:    newAuthenticatedAuthUser(),
+		RuntimeData: map[string]string{
+			common.RuntimeKeyUserEligibleForProvisioning: dataValueTrue,
+			categoryTypeKey: testUserType,
+			"username":      "github-login",
+			attributeEmail:  "existing@example.com",
+		},
+		NodeInputs: []providers.Input{},
+	}
+
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(newAuthenticatedAuthUser(), &providers.EntityReference{EntityID: testExistingUser123ID},
+			(*tidcommon.ServiceError)(nil))
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Nil(suite.T(), resp.Error)
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+}
+
+// TestExecute_PreResolvedUserIDInRuntimeData_SkipsIdentify verifies a user ID an earlier node put
+// in runtime data is used without an attribute lookup.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_PreResolvedUserIDInRuntimeData_SkipsIdentify() {
+	suite.expectSchemaForProvisioning()
+
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeRegistration,
+		UserInputs: map[string]string{
+			"username":     "newuser",
+			attributeEmail: "new@example.com",
+		},
+		RuntimeData: map[string]string{
+			ouIDKey:             testOUID,
+			categoryTypeKey:     testUserType,
+			userAttributeUserID: testExistingUser123ID,
+		},
+		NodeInputs: []providers.Input{},
+	}
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrEntityAlreadyExists.Code, resp.Error.Code)
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
 }
 
 func (suite *ProvisioningExecutorTestSuite) TestExecute_UserAlreadyExists() {
@@ -414,6 +547,62 @@ func (suite *ProvisioningExecutorTestSuite) TestGetAttributesForProvisioning_Con
 	assert.Equal(suite.T(), true, result["active"])
 	assert.Equal(suite.T(), false, result["verified"])
 	assert.Equal(suite.T(), float64(42), result["age"])
+}
+
+// A claim fills an identifying attribute the flow did not collect, but never a credential: a password
+// an external party chose is not one the End-User set.
+func (suite *ProvisioningExecutorTestSuite) TestGetAttributesForProvisioning_ExternalClaims() {
+	suite.mockEntityTypeService.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+		model.AttributeFilter{AllowCredential: true, AllowNonCredential: true}).
+		Return([]model.AttributeInfo{
+			{Attribute: "username", Type: model.TypeString, Required: true},
+			{Attribute: "password", Type: model.TypeString, Credential: true},
+		}, nil).Once()
+
+	ctx := &providers.NodeContext{
+		RuntimeData: map[string]string{
+			categoryTypeKey: testUserType,
+			common.RuntimeKeyExternalIdentity: externalIdentityEntry("idp-1", "sub-1",
+				map[string]interface{}{"username": "claimed", "password": "chosen-by-idp"}),
+		},
+		NodeInputs: []providers.Input{},
+	}
+
+	identifying, credentials, err := suite.executor.getAttributesForProvisioning(ctx, entitytype.TypeCategoryUser)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "claimed", identifying["username"])
+	assert.Empty(suite.T(), credentials)
+}
+
+// A claim never stands in for a credential, so a password the flow has not collected is still prompted
+// even when the external identity asserts one.
+func (suite *ProvisioningExecutorTestSuite) TestBuildMissingInputs_ExternalClaimDoesNotSatisfyCredential() {
+	ctx := &providers.NodeContext{
+		RuntimeData: map[string]string{
+			common.RuntimeKeyExternalIdentity: externalIdentityEntry("idp-1", "sub-1",
+				map[string]interface{}{"username": "claimed", "password": "chosen-by-idp"}),
+		},
+	}
+
+	credRequired, _, ncRequired, _ := suite.executor.buildMissingInputs(ctx, []model.AttributeInfo{
+		{Attribute: "username", Type: model.TypeString, Required: true},
+		{Attribute: "password", Type: model.TypeString, Required: true, Credential: true},
+	}, map[string]providers.Input{})
+
+	assert.Empty(suite.T(), ncRequired)
+	assert.Len(suite.T(), credRequired, 1)
+	assert.Equal(suite.T(), "password", credRequired[0].Identifier)
+}
+
+// A claim named after the entity type key does not choose the type the user is created as.
+func (suite *ProvisioningExecutorTestSuite) TestGetEntityType_IgnoresExternalClaim() {
+	ctx := &providers.NodeContext{RuntimeData: map[string]string{
+		common.RuntimeKeyExternalIdentity: externalIdentityEntry("idp-1", "sub-1",
+			map[string]interface{}{categoryTypeKey: "admin"}),
+	}}
+
+	assert.Equal(suite.T(), "", suite.executor.getEntityType(ctx))
 }
 
 // TestGetAttributesForProvisioning_UnparseableBooleanIsPassedThrough verifies that a value that
@@ -827,12 +1016,10 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_NewUser_NoGroupOrRolePro
 		Attributes: attrsJSON,
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(nil,
-		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
-	suite.mockUserMgtProvider.On("CreateUser", mock.Anything,
-		mock.MatchedBy(func(u *providers.User) bool {
-			return u.OUID == testOUID && u.Type == testUserType
-		})).Return(createdUser, nil)
+	suite.expectNoExistingUserFor(attrs)
+	suite.mockUserMgtProvider.On("CreateUser", mock.Anything, mock.MatchedBy(func(u *providers.User) bool {
+		return u.OUID == testOUID && u.Type == testUserType
+	})).Return(createdUser, nil)
 
 	// No group/role assignment mocks - assignments should be skipped
 
@@ -884,12 +1071,10 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_UserEligibleForProvision
 		Attributes: attrsJSON,
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(nil,
-		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
-	suite.mockUserMgtProvider.On("CreateUser", mock.Anything,
-		mock.MatchedBy(func(u *providers.User) bool {
-			return u.OUID == testOUID && u.Type == testUserType
-		})).Return(createdUser, nil)
+	suite.expectNoExistingUserFor(attrs)
+	suite.mockUserMgtProvider.On("CreateUser", mock.Anything, mock.MatchedBy(func(u *providers.User) bool {
+		return u.OUID == testOUID && u.Type == testUserType
+	})).Return(createdUser, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
@@ -933,8 +1118,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_UserAutoProvisionedFlag_
 		Attributes: attrsJSON,
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(nil,
-		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+	suite.expectNoExistingUserFor(attrs)
 	suite.mockUserMgtProvider.On("CreateUser", mock.Anything, mock.Anything).Return(createdUser, nil)
 
 	resp, err := suite.executor.Execute(ctx)
@@ -1090,8 +1274,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_CreateUserFailures() {
 			attrs := map[string]interface{}{
 				"username": "newuser",
 			}
-			suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(nil,
-				entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+			suite.expectNoExistingUserFor(attrs)
 			suite.mockUserMgtProvider.On("CreateUser", mock.Anything, mock.Anything).
 				Return(tt.createdUser, tt.createUserError)
 
@@ -1196,42 +1379,41 @@ func (suite *ProvisioningExecutorTestSuite) TestGetEntityType() {
 	}
 }
 
-// The mode property names the entity category to provision into, and a node that sets no mode
-// keeps provisioning the default category.
+// The category a type resolver put in the runtime data names the category, and a run that has none
+// keeps the default category.
 func (suite *ProvisioningExecutorTestSuite) TestResolveCategory() {
 	tests := []struct {
-		name           string
-		nodeProperties map[string]interface{}
-		expected       entitytype.TypeCategory
-		expectErr      bool
+		name        string
+		runtimeData map[string]string
+		expected    entitytype.TypeCategory
+		expectErr   bool
 	}{
-		{name: "NoModePropertyUsesDefault", nodeProperties: nil, expected: defaultProvisioningCategory},
+		{name: "NoRuntimeCategoryUsesDefault", expected: defaultProvisioningCategory},
 		{
-			name:           "NullModeUsesDefault",
-			nodeProperties: map[string]interface{}{propertyKeyProvisioningMode: nil},
-			expected:       defaultProvisioningCategory,
+			name:        "EmptyRuntimeCategoryUsesDefault",
+			runtimeData: map[string]string{categoryNameKey: ""},
+			expected:    defaultProvisioningCategory,
 		},
 		{
-			name:           "UserMode",
-			nodeProperties: map[string]interface{}{propertyKeyProvisioningMode: "user"},
-			expected:       entitytype.TypeCategoryUser,
+			name:        "UserCategory",
+			runtimeData: map[string]string{categoryNameKey: "user"},
+			expected:    entitytype.TypeCategoryUser,
 		},
 		{
-			name:           "AgentMode",
-			nodeProperties: map[string]interface{}{propertyKeyProvisioningMode: "agent"},
-			expected:       entitytype.TypeCategoryAgent,
+			name:        "AgentCategory",
+			runtimeData: map[string]string{categoryNameKey: "agent"},
+			expected:    entitytype.TypeCategoryAgent,
 		},
 		{
-			name:           "UnknownMode",
-			nodeProperties: map[string]interface{}{propertyKeyProvisioningMode: "machine"},
-			expectErr:      true,
+			name:        "UnknownCategory",
+			runtimeData: map[string]string{categoryNameKey: "machine"},
+			expectErr:   true,
 		},
 	}
 
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			category, err := categoryFromMode(
-				&providers.NodeContext{NodeProperties: tt.nodeProperties})
+			category, err := categoryFromContext(&providers.NodeContext{RuntimeData: tt.runtimeData})
 
 			if tt.expectErr {
 				assert.Error(suite.T(), err)
@@ -1244,12 +1426,11 @@ func (suite *ProvisioningExecutorTestSuite) TestResolveCategory() {
 }
 
 // The interface entry point carries no category, so it resolves one itself and fails the node when
-// the mode property does not name a category.
-func (suite *ProvisioningExecutorTestSuite) TestHasRequiredInputs_UnknownProvisioningMode_ReturnsFailure() {
+// the runtime data names an unknown category.
+func (suite *ProvisioningExecutorTestSuite) TestHasRequiredInputs_UnknownCategory_ReturnsFailure() {
 	ctx := &providers.NodeContext{
-		ExecutionID:    "flow-123",
-		NodeProperties: map[string]interface{}{propertyKeyProvisioningMode: "machine"},
-		RuntimeData:    map[string]string{ouIDKey: testOUID, categoryTypeKey: testUserType},
+		ExecutionID: "flow-123",
+		RuntimeData: map[string]string{ouIDKey: testOUID, categoryNameKey: "machine", categoryTypeKey: testUserType},
 	}
 	execResp := &providers.ExecutorResponse{}
 
@@ -1257,13 +1438,12 @@ func (suite *ProvisioningExecutorTestSuite) TestHasRequiredInputs_UnknownProvisi
 	assert.Equal(suite.T(), providers.ExecFailure, execResp.Status)
 }
 
-func (suite *ProvisioningExecutorTestSuite) TestExecute_UnknownProvisioningMode_ReturnsError() {
+func (suite *ProvisioningExecutorTestSuite) TestExecute_UnknownCategory_ReturnsError() {
 	ctx := &providers.NodeContext{
-		ExecutionID:    "flow-123",
-		FlowType:       providers.FlowTypeRegistration,
-		NodeProperties: map[string]interface{}{propertyKeyProvisioningMode: "machine"},
-		UserInputs:     map[string]string{"username": "newuser"},
-		RuntimeData:    map[string]string{ouIDKey: testOUID, categoryTypeKey: testUserType},
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeRegistration,
+		UserInputs:  map[string]string{"username": "newuser"},
+		RuntimeData: map[string]string{ouIDKey: testOUID, categoryNameKey: "machine", categoryTypeKey: testUserType},
 	}
 
 	_, err := suite.executor.Execute(ctx)
@@ -1279,11 +1459,12 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_UnknownProvisioningMode_
 // generated identifier and client credentials, which the create response is the only chance to read.
 func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_DelegatesToAgentMgtProvider() {
 	suite.expectSchemaForAgentProvisioning()
+	suite.expectProvisionedSignIn(testNewAgentID)
 	suite.mockEntityProvider.On("IdentifyEntity", mock.Anything).Return(nil,
 		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
 
 	var received *providers.Agent
-	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, mock.Anything).
+	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
 			received = args.Get(1).(*providers.Agent)
 		}).
@@ -1303,17 +1484,15 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Delega
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
-		},
 		UserInputs: map[string]string{
 			"model":        "claude",
-			nameKey:        "support-bot",
+			"name":         "support-bot",
 			descriptionKey: "Handles support tickets",
 			logoURLKey:     "https://example.com/logo.png",
 		},
 		RuntimeData: map[string]string{
 			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
 			categoryTypeKey: testAgentType,
 			ownerIDKey:      "user-owner-1",
 		},
@@ -1330,12 +1509,11 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Delega
 	require.NotNil(suite.T(), received)
 	assert.Equal(suite.T(), testOUID, received.OUID)
 	assert.Equal(suite.T(), testAgentType, received.Type)
-	assert.Equal(suite.T(), "support-bot", received.Name)
 	assert.Equal(suite.T(), "Handles support tickets", received.Description)
 	assert.Equal(suite.T(), "https://example.com/logo.png", received.LogoURL)
 	assert.Equal(suite.T(), "user-owner-1", received.Owner)
-	// Only schema attributes reach the attributes payload.
-	assert.JSONEq(suite.T(), `{"model":"claude"}`, string(received.Attributes))
+	// Only schema attributes reach the attributes payload, and the name is one of them.
+	assert.JSONEq(suite.T(), `{"model":"claude","name":"support-bot"}`, string(received.Attributes))
 
 	assert.Equal(suite.T(), testNewAgentID, resp.AdditionalData[common.DataAgentID])
 	assert.Equal(suite.T(), "client-abc", resp.AdditionalData[common.DataAgentClientID])
@@ -1343,14 +1521,15 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Delega
 	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
 }
 
-// Every attribute on the default agent type is optional, and an agent's name is a column on its
-// record rather than a schema attribute. An agent given only a name therefore reaches the create
-// call with an empty attributes payload, and must not be rejected as having supplied nothing.
-func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_NameOnlyIsNotEmptyProvisioning() {
+// An agent given only a name still provisions: the name is a schema attribute, so it reaches the
+// create call in the attributes payload and is checked for an existing agent first.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_NameOnlyProvisionsWithNameAttribute() {
 	suite.expectSchemaForAgentProvisioning()
+	suite.mockEntityProvider.On("IdentifyEntity", mock.Anything).Return(nil,
+		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
 
 	var received *providers.Agent
-	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, mock.Anything).
+	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
 			received = args.Get(1).(*providers.Agent)
 		}).
@@ -1359,12 +1538,10 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_NameOn
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
-		},
-		UserInputs: map[string]string{nameKey: "support-bot"},
+		UserInputs:  map[string]string{"name": "support-bot"},
 		RuntimeData: map[string]string{
 			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
 			categoryTypeKey: testAgentType,
 		},
 		NodeInputs: []providers.Input{},
@@ -1372,14 +1549,11 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_NameOn
 
 	resp, err := suite.executor.Execute(ctx)
 
-	suite.mockEntityProvider.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything)
-
 	assert.NoError(suite.T(), err)
 	require.NotNil(suite.T(), resp)
 	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 	require.NotNil(suite.T(), received)
-	assert.Equal(suite.T(), "support-bot", received.Name)
-	assert.JSONEq(suite.T(), `{}`, string(received.Attributes))
+	assert.JSONEq(suite.T(), `{"name":"support-bot"}`, string(received.Attributes))
 }
 
 // An attribute the schema restricts to a fixed set is offered as a choice. A prompt node that
@@ -1398,12 +1572,15 @@ func (suite *ProvisioningExecutorTestSuite) TestHasRequiredInputs_EnumAttributeI
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
 		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode:             string(entitytype.TypeCategoryAgent),
 			propertyKeyDynamicInputsIncludeOptional: true,
 		},
-		UserInputs:  map[string]string{},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
-		NodeInputs:  []providers.Input{},
+		UserInputs: map[string]string{},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
+		NodeInputs: []providers.Input{},
 	}
 	execResp := &providers.ExecutorResponse{RuntimeData: make(map[string]string)}
 
@@ -1419,11 +1596,129 @@ func (suite *ProvisioningExecutorTestSuite) TestHasRequiredInputs_EnumAttributeI
 	suite.Equal(providers.InputTypeSelect, enumInput.Type)
 	suite.Equal([]string{"openai", "anthropic", "gemini"}, enumInput.Options,
 		"options must keep the order the schema declared them in")
+	suite.Equal("modelProvider", enumInput.Ref,
+		"an undeclared select needs its ref set so clients can attach the options to the generated component")
 
 	plainInput, ok := byID["model"]
 	suite.Require().True(ok)
 	suite.NotEqual(providers.InputTypeSelect, plainInput.Type, "an unconstrained attribute stays free text")
 	suite.Empty(plainInput.Options)
+	suite.Empty(plainInput.Ref)
+
+	forwarded, ok := execResp.ForwardedData[common.ForwardedDataKeyInputs].([]providers.Input)
+	suite.Require().True(ok)
+	var forwardedEnum *providers.Input
+	for i := range forwarded {
+		if forwarded[i].Identifier == "modelProvider" {
+			forwardedEnum = &forwarded[i]
+		}
+	}
+	suite.Require().NotNil(forwardedEnum, "the enum attribute must reach the prompt through forwarded data")
+	suite.Equal(providers.InputTypeSelect, forwardedEnum.Type)
+	suite.Equal([]string{"openai", "anthropic", "gemini"}, forwardedEnum.Options)
+}
+
+// inputByIdentifier returns the requested input with the given identifier, failing the test when
+// the executor did not request it.
+func inputByIdentifier(
+	suite *ProvisioningExecutorTestSuite, inputs []providers.Input, identifier string,
+) providers.Input {
+	for _, input := range inputs {
+		if input.Identifier == identifier {
+			return input
+		}
+	}
+	suite.FailNow("input was not requested", identifier)
+	return providers.Input{}
+}
+
+// The enum handling is shared with the user category, so a missing user attribute that the schema
+// restricts is offered as a select with its ref set too.
+func (suite *ProvisioningExecutorTestSuite) TestHasRequiredInputs_EnumAttributeIsOfferedAsSelect_ForUsers() {
+	suite.mockEntityTypeService.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+		model.AttributeFilter{AllowCredential: true, AllowNonCredential: true}).
+		Return([]model.AttributeInfo{
+			{Attribute: "tier", Required: true, Type: "string", Enum: []string{"free", "pro"}},
+		}, nil).Once()
+
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeRegistration,
+		UserInputs:  map[string]string{},
+		RuntimeData: map[string]string{categoryTypeKey: testUserType},
+		NodeInputs:  []providers.Input{},
+	}
+	execResp := &providers.ExecutorResponse{RuntimeData: make(map[string]string)}
+
+	suite.False(suite.executor.HasRequiredInputs(ctx, execResp))
+
+	input := inputByIdentifier(suite, execResp.Inputs, "tier")
+	suite.Equal(providers.InputTypeSelect, input.Type)
+	suite.Equal([]string{"free", "pro"}, input.Options)
+	suite.True(input.Required)
+	suite.Equal("tier", input.Ref)
+}
+
+// A required enum attribute is a select as well, and is requested ahead of the optional ones.
+func (suite *ProvisioningExecutorTestSuite) TestHasRequiredInputs_RequiredEnumAttributeIsOfferedAsSelect() {
+	suite.mockEntityTypeService.On("GetAttributes", mock.Anything, entitytype.TypeCategoryAgent, testAgentType,
+		model.AttributeFilter{AllowCredential: true, AllowNonCredential: true}).
+		Return([]model.AttributeInfo{
+			{Attribute: "function", Required: true, Type: "string", Enum: []string{"support", "research"}},
+		}, nil).Once()
+
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAdministration,
+		UserInputs:  map[string]string{},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
+		NodeInputs: []providers.Input{},
+	}
+	execResp := &providers.ExecutorResponse{RuntimeData: make(map[string]string)}
+
+	suite.False(suite.executor.HasRequiredInputs(ctx, execResp))
+
+	input := inputByIdentifier(suite, execResp.Inputs, "function")
+	suite.Equal(providers.InputTypeSelect, input.Type)
+	suite.Equal([]string{"support", "research"}, input.Options)
+	suite.True(input.Required)
+	suite.Equal("function", input.Ref)
+}
+
+// A field the node declares keeps the ref the flow gave it, and still takes its options from the
+// schema, so the flow need not repeat the permitted values.
+func (suite *ProvisioningExecutorTestSuite) TestHasRequiredInputs_DeclaredEnumAttributeKeepsItsRef() {
+	suite.mockEntityTypeService.On("GetAttributes", mock.Anything, entitytype.TypeCategoryAgent, testAgentType,
+		model.AttributeFilter{AllowCredential: true, AllowNonCredential: true}).
+		Return([]model.AttributeInfo{
+			{Attribute: "function", Required: false, Type: "string", Enum: []string{"support", "research"}},
+		}, nil).Once()
+
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAdministration,
+		UserInputs:  map[string]string{},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
+		NodeInputs: []providers.Input{
+			{Identifier: "function", Ref: "input_function", Type: providers.InputTypeText},
+		},
+	}
+	execResp := &providers.ExecutorResponse{RuntimeData: make(map[string]string)}
+
+	suite.False(suite.executor.HasRequiredInputs(ctx, execResp))
+
+	input := inputByIdentifier(suite, execResp.Inputs, "function")
+	suite.Equal(providers.InputTypeSelect, input.Type)
+	suite.Equal([]string{"support", "research"}, input.Options)
+	suite.Equal("input_function", input.Ref)
 }
 
 // A user carries no record fields of its own, so empty attribute maps really do mean nothing was
@@ -1434,7 +1729,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_UserProvisioning_NoAttri
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeRegistration,
-		UserInputs:  map[string]string{nameKey: "not-a-user-field"},
+		UserInputs:  map[string]string{"name": "not-a-user-field"},
 		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testUserType},
 		NodeInputs:  []providers.Input{},
 	}
@@ -1453,7 +1748,9 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_UserProvisioning_NoAttri
 // mapping wired to the wrong call would still hand the services a user principal.
 func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_AssignsAsAnAgentPrincipal() {
 	suite.expectSchemaForAgentProvisioning()
-	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, mock.Anything).
+	suite.mockEntityProvider.On("IdentifyEntity", mock.Anything).Return(nil,
+		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything).
 		Return(&providers.Agent{ID: testNewAgentID}, nil).Once()
 
 	suite.mockGroupService.On("AddMembersToGroups", mock.Anything,
@@ -1467,18 +1764,19 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Assign
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
 		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
-			propertyKeyAssignGroup:      "agent-group-id",
-			propertyKeyAssignRole:       "agent-role-id",
+			propertyKeyAssignGroup: "agent-group-id",
+			propertyKeyAssignRole:  "agent-role-id",
 		},
-		UserInputs:  map[string]string{nameKey: "support-bot"},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
-		NodeInputs:  []providers.Input{},
+		UserInputs: map[string]string{"name": "support-bot"},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
+		NodeInputs: []providers.Input{},
 	}
 
 	resp, err := suite.executor.Execute(ctx)
-
-	suite.mockEntityProvider.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything)
 
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
@@ -1486,21 +1784,23 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Assign
 	suite.mockRoleAssignmentService.AssertExpectations(suite.T())
 }
 
-// Redirect URIs are the one part of an agent's OAuth configuration a flow supplies. They are
-// attached only when collected, so an absent value leaves the inbound auth config unset and the
-// provider free to apply its own default rather than receiving an empty list to interpret.
+// isNotDelegated matches an agent that acts on its own behalf.
+func isNotDelegated(agent *providers.Agent) bool {
+	return !agent.Delegated
+}
+
+// Redirect URIs arrive as one comma-separated value and belong to a delegated agent, whose other
+// on-behalf-of inputs are supplied here so the table stays about how the value is split.
 func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_RedirectURIsInput() {
 	tests := []struct {
 		name     string
 		input    string
 		expected []string
 	}{
-		{name: "AbsentLeavesTheConfigUnset", input: "", expected: nil},
 		{name: "SingleURIIsForwarded", input: "https://a.example.com/cb",
 			expected: []string{"https://a.example.com/cb"}},
 		{name: "SeveralURIsAreSplitAndTrimmed", input: " https://a.example.com/cb , https://b.example.com/cb ",
 			expected: []string{"https://a.example.com/cb", "https://b.example.com/cb"}},
-		{name: "SeparatorsOnlyLeaveTheConfigUnset", input: " , ", expected: nil},
 	}
 
 	for _, tt := range tests {
@@ -1511,36 +1811,31 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Redire
 				entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
 
 			var received *providers.Agent
-			suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, mock.Anything).
+			suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything).
 				Run(func(args mock.Arguments) {
 					received = args.Get(1).(*providers.Agent)
 				}).
 				Return(&providers.Agent{ID: testNewAgentID}, nil).Once()
 
-			userInputs := map[string]string{"model": "claude", nameKey: "support-bot"}
-			if tt.input != "" {
-				userInputs[redirectURIsKey] = tt.input
-			}
 			ctx := &providers.NodeContext{
 				ExecutionID: "flow-123",
 				FlowType:    providers.FlowTypeAdministration,
-				NodeProperties: map[string]interface{}{
-					propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
+				UserInputs: map[string]string{
+					"model": "claude", "name": "support-bot", delegatedKey: dataValueTrue,
+					redirectURIsKey: tt.input, authFlowIDKey: "login-flow-1", allowedUserTypesKey: "employee",
 				},
-				UserInputs:  userInputs,
-				RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
-				NodeInputs:  []providers.Input{},
+				RuntimeData: map[string]string{
+					ouIDKey:         testOUID,
+					categoryNameKey: string(entitytype.TypeCategoryAgent),
+					categoryTypeKey: testAgentType,
+				},
+				NodeInputs: []providers.Input{},
 			}
 
 			_, err := suite.executor.Execute(ctx)
 
 			assert.NoError(suite.T(), err)
 			require.NotNil(suite.T(), received)
-			if tt.expected == nil {
-				assert.Empty(suite.T(), received.InboundAuthConfig,
-					"the provider decides the configuration when the flow supplied no URIs")
-				return
-			}
 			require.Len(suite.T(), received.InboundAuthConfig, 1)
 			require.NotNil(suite.T(), received.InboundAuthConfig[0].OAuthConfig)
 			assert.Equal(suite.T(), tt.expected, received.InboundAuthConfig[0].OAuthConfig.RedirectURIs)
@@ -1548,6 +1843,37 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Redire
 			assert.Empty(suite.T(), received.InboundAuthConfig[0].OAuthConfig.GrantTypes)
 		})
 	}
+}
+
+// A list of separators carries no redirect URI, so with delegation on it is requested again rather
+// than reaching the service as an agent with no callback.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_SeparatorsOnlyIsNotARedirectURI() {
+	suite.expectSchemaForAgentProvisioning()
+
+	execResp, err := suite.executor.Execute(&providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAdministration,
+		UserInputs: map[string]string{
+			"model": "claude", "name": "support-bot", delegatedKey: dataValueTrue,
+			redirectURIsKey: " , ", authFlowIDKey: "login-flow-1", allowedUserTypesKey: "employee",
+		},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
+	})
+
+	assert.NoError(suite.T(), err)
+	require.NotNil(suite.T(), execResp)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, execResp.Status)
+	identifiers := make([]string, 0, len(execResp.Inputs))
+	for _, input := range execResp.Inputs {
+		identifiers = append(identifiers, input.Identifier)
+	}
+	assert.Equal(suite.T(), []string{redirectURIsKey}, identifiers)
+	suite.mockAgentMgtProvider.AssertNotCalled(suite.T(), "CreateAgent",
+		mock.Anything, mock.Anything, mock.Anything)
 }
 
 // A value that is not a boolean is refused rather than read as false. Silently provisioning an
@@ -1560,13 +1886,14 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Reject
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
-		},
 		UserInputs: map[string]string{
-			"model": "claude", nameKey: "support-bot", delegatedKey: "yes",
+			"model": "claude", "name": "support-bot", delegatedKey: "yes",
 		},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
 	}
 
 	execResp, err := suite.executor.Execute(ctx)
@@ -1582,20 +1909,22 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Reject
 		mock.Anything, mock.Anything, mock.Anything)
 }
 
-// A delegated agent needs somewhere to send the user back to, so the redirect URI stops being
-// optional the moment the flow reports delegation. It is asked for rather than defaulted, and the
-// agent is not created until it arrives.
-func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_DelegatedRequiresRedirectURI() {
+// A delegated agent needs somewhere to send the user back to, a login flow to sign them in through,
+// and a user type that may do so, so all three stop being optional the moment the flow reports
+// delegation. They are asked for rather than defaulted, each as the input type that lets the client
+// offer a real choice, and the agent is not created until they arrive.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_DelegatedRequestsTheOnBehalfOfInputs() {
 	suite.expectSchemaForAgentProvisioning()
 
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
+		UserInputs:  map[string]string{"model": "claude", "name": "support-bot", delegatedKey: dataValueTrue},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
 		},
-		UserInputs:  map[string]string{"model": "claude", nameKey: "support-bot", delegatedKey: dataValueTrue},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
 	}
 
 	execResp, err := suite.executor.Execute(ctx)
@@ -1604,11 +1933,21 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Delega
 	require.NotNil(suite.T(), execResp)
 	assert.Equal(suite.T(), providers.ExecUserInputRequired, execResp.Status)
 
-	identifiers := make([]string, 0, len(execResp.Inputs))
-	for _, input := range execResp.Inputs {
-		identifiers = append(identifiers, input.Identifier)
+	expected := map[string]string{
+		redirectURIsKey:     providers.InputTypeText,
+		authFlowIDKey:       providers.InputTypeAuthFlowSelect,
+		allowedUserTypesKey: providers.InputTypeUserTypeSelect,
 	}
-	assert.Contains(suite.T(), identifiers, redirectURIsKey)
+	requested := make(map[string]providers.Input, len(execResp.Inputs))
+	for _, input := range execResp.Inputs {
+		requested[input.Identifier] = input
+	}
+	for key, inputType := range expected {
+		input, ok := requested[key]
+		require.True(suite.T(), ok, "%s is asked for", key)
+		assert.Equal(suite.T(), inputType, input.Type)
+		assert.True(suite.T(), input.Required)
+	}
 
 	// Forwarded so the prompt node renders it alongside whatever else is outstanding.
 	forwarded, ok := execResp.ForwardedData[common.ForwardedDataKeyInputs].([]providers.Input)
@@ -1617,7 +1956,39 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Delega
 	for _, input := range forwarded {
 		forwardedIdentifiers = append(forwardedIdentifiers, input.Identifier)
 	}
-	assert.Contains(suite.T(), forwardedIdentifiers, redirectURIsKey)
+	for key := range expected {
+		assert.Contains(suite.T(), forwardedIdentifiers, key)
+	}
+}
+
+// What the flow already holds is not asked for again.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_DelegatedAsksOnlyForWhatIsMissing() {
+	suite.expectSchemaForAgentProvisioning()
+
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAdministration,
+		UserInputs: map[string]string{
+			"model": "claude", "name": "support-bot", delegatedKey: dataValueTrue,
+			redirectURIsKey: "https://example.com/cb", authFlowIDKey: "login-flow-1",
+		},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
+	}
+
+	execResp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	require.NotNil(suite.T(), execResp)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, execResp.Status)
+	identifiers := make([]string, 0, len(execResp.Inputs))
+	for _, input := range execResp.Inputs {
+		identifiers = append(identifiers, input.Identifier)
+	}
+	assert.Equal(suite.T(), []string{allowedUserTypesKey}, identifiers)
 }
 
 // Without delegation the redirect URI stays optional, so its absence must not hold up the create.
@@ -1625,17 +1996,18 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Redire
 	suite.expectSchemaForAgentProvisioning()
 	suite.mockEntityProvider.On("IdentifyEntity", mock.Anything).Return(nil,
 		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
-	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, false).
+	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.MatchedBy(isNotDelegated)).
 		Return(&providers.Agent{ID: testNewAgentID}, nil).Once()
 
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
+		UserInputs:  map[string]string{"model": "claude", "name": "support-bot", delegatedKey: dataValueFalse},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
 		},
-		UserInputs:  map[string]string{"model": "claude", nameKey: "support-bot", delegatedKey: dataValueFalse},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
 	}
 
 	_, err := suite.executor.Execute(ctx)
@@ -1644,10 +2016,178 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Redire
 	suite.mockAgentMgtProvider.AssertExpectations(suite.T())
 }
 
+// An agent that acts on its own behalf neither asks for the on-behalf-of inputs nor carries any that
+// the flow collected before the choice changed.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_NotDelegatedIgnoresOnBehalfOfInputs() {
+	suite.expectSchemaForAgentProvisioning()
+	suite.mockEntityProvider.On("IdentifyEntity", mock.Anything).Return(nil,
+		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+
+	var received *providers.Agent
+	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.MatchedBy(isNotDelegated)).
+		Run(func(args mock.Arguments) { received = args.Get(1).(*providers.Agent) }).
+		Return(&providers.Agent{ID: testNewAgentID}, nil).Once()
+
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAdministration,
+		UserInputs: map[string]string{
+			"model": "claude", "name": "support-bot", delegatedKey: dataValueFalse,
+			redirectURIsKey: "https://a.example.com/cb", authFlowIDKey: "login-flow-1", allowedUserTypesKey: "employee",
+		},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
+	}
+
+	_, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	require.NotNil(suite.T(), received)
+	assert.Empty(suite.T(), received.AuthFlowID)
+	assert.Empty(suite.T(), received.AllowedUserTypes)
+	require.Len(suite.T(), received.InboundAuthConfig, 1, "an OAuth client is always requested")
+	require.NotNil(suite.T(), received.InboundAuthConfig[0].OAuthConfig)
+	assert.Empty(suite.T(), received.InboundAuthConfig[0].OAuthConfig.RedirectURIs,
+		"the callback belongs to a delegated agent only")
+	assert.Empty(suite.T(), received.InboundAuthConfig[0].OAuthConfig.GrantTypes,
+		"the grant types are the agent service's to choose")
+}
+
+// The mode comes from the first value that is not empty: what an executor resolved, what the
+// caller submitted, the node's delegated property, then false. An explicit false therefore beats
+// a property that says true.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_DelegationPrecedence() {
+	tests := []struct {
+		name     string
+		runtime  string
+		input    string
+		property interface{}
+		expected bool
+	}{
+		{name: "NothingSetIsNotDelegated", expected: false},
+		{name: "PropertyTrueDelegates", property: true, expected: true},
+		{name: "PropertyFalseDoesNot", property: false, expected: false},
+		{name: "InputFalseBeatsPropertyTrue", input: dataValueFalse, property: true, expected: false},
+		{name: "InputTrueBeatsPropertyFalse", input: dataValueTrue, property: false, expected: true},
+		{name: "EmptyInputFallsThroughToProperty", input: "", property: true, expected: true},
+		{name: "RuntimeBeatsInput", runtime: dataValueFalse, input: dataValueTrue, expected: false},
+		{name: "RuntimeBeatsProperty", runtime: dataValueTrue, property: false, expected: true},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			suite.SetupTest()
+			suite.expectSchemaForAgentProvisioning()
+			suite.mockEntityProvider.On("IdentifyEntity", mock.Anything).Return(nil,
+				entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+
+			var receivedDelegated bool
+			suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything).
+				Run(func(args mock.Arguments) { receivedDelegated = args.Get(1).(*providers.Agent).Delegated }).
+				Return(&providers.Agent{ID: testNewAgentID}, nil).Once()
+
+			properties := map[string]interface{}{}
+			if tt.property != nil {
+				properties[propertyKeyDelegated] = tt.property
+			}
+			// The on-behalf-of inputs are always supplied so the table stays about the mode.
+			userInputs := map[string]string{
+				"model": "claude", "name": "support-bot", redirectURIsKey: "https://example.com/cb",
+				authFlowIDKey: "login-flow-1", allowedUserTypesKey: "employee",
+			}
+			if tt.input != "" {
+				userInputs[delegatedKey] = tt.input
+			}
+			runtime := map[string]string{
+				ouIDKey:         testOUID,
+				categoryNameKey: string(entitytype.TypeCategoryAgent),
+				categoryTypeKey: testAgentType,
+			}
+			if tt.runtime != "" {
+				runtime[delegatedKey] = tt.runtime
+			}
+
+			_, err := suite.executor.Execute(&providers.NodeContext{
+				ExecutionID:    "flow-123",
+				FlowType:       providers.FlowTypeAdministration,
+				NodeProperties: properties,
+				UserInputs:     userInputs,
+				RuntimeData:    runtime,
+			})
+
+			assert.NoError(suite.T(), err)
+			suite.mockAgentMgtProvider.AssertNumberOfCalls(suite.T(), "CreateAgent", 1)
+			assert.Equal(suite.T(), tt.expected, receivedDelegated)
+		})
+	}
+}
+
+// Delegation from the node property alone asks for the on-behalf-of inputs just as a submitted
+// value does, since the flow never gets the chance to ask for the choice.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_PropertyDelegationRequestsTheInputs() {
+	suite.expectSchemaForAgentProvisioning()
+
+	execResp, err := suite.executor.Execute(&providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAdministration,
+		NodeProperties: map[string]interface{}{
+			propertyKeyDelegated: true,
+		},
+		UserInputs: map[string]string{"model": "claude", "name": "support-bot"},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
+	})
+
+	assert.NoError(suite.T(), err)
+	require.NotNil(suite.T(), execResp)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, execResp.Status)
+	identifiers := make([]string, 0, len(execResp.Inputs))
+	for _, input := range execResp.Inputs {
+		identifiers = append(identifiers, input.Identifier)
+	}
+	assert.ElementsMatch(suite.T(), []string{redirectURIsKey, authFlowIDKey, allowedUserTypesKey}, identifiers)
+}
+
+// A property that is not a boolean is refused rather than read as a mode.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_RejectsANonBooleanDelegatedProperty() {
+	suite.expectSchemaForAgentProvisioning()
+	suite.mockEntityProvider.On("IdentifyEntity", mock.Anything).Return(nil,
+		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+
+	execResp, err := suite.executor.Execute(&providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAdministration,
+		NodeProperties: map[string]interface{}{
+			propertyKeyDelegated: "yes",
+		},
+		UserInputs: map[string]string{"model": "claude", "name": "support-bot"},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
+	})
+
+	assert.NoError(suite.T(), err)
+	require.NotNil(suite.T(), execResp)
+	assert.Equal(suite.T(), providers.ExecFailure, execResp.Status)
+	require.NotNil(suite.T(), execResp.Error)
+	assert.Equal(suite.T(), ErrInvalidFlagValue.Code, execResp.Error.Code)
+	assert.Equal(suite.T(), propertyKeyDelegated, execResp.Error.Error.Params["attribute"])
+	suite.mockAgentMgtProvider.AssertNotCalled(suite.T(), "CreateAgent",
+		mock.Anything, mock.Anything, mock.Anything)
+}
+
 // Record fields are what provisioning reads off the entity rather than out of its schema, so a
 // flow that collected only one of them still has something to provision.
 func (suite *ProvisioningExecutorTestSuite) TestHasRecordValues() {
-	for _, key := range []string{nameKey, ownerIDKey, delegatedKey, redirectURIsKey} {
+	for _, key := range []string{ownerIDKey, delegatedKey, redirectURIsKey, authFlowIDKey, allowedUserTypesKey} {
 		suite.Run(key, func() {
 			ctx := &providers.NodeContext{UserInputs: map[string]string{key: "value"}}
 
@@ -1690,17 +2230,18 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Delega
 
 			var received *providers.Agent
 			var receivedDelegated bool
-			suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, mock.Anything).
+			suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything).
 				Run(func(args mock.Arguments) {
 					received = args.Get(1).(*providers.Agent)
-					receivedDelegated = args.Get(2).(bool)
+					receivedDelegated = args.Get(1).(*providers.Agent).Delegated
 				}).
 				Return(&providers.Agent{ID: testNewAgentID}, nil).Once()
 
-			// Delegation requires a redirect URI, so it is always supplied here and the table
-			// stays about how the flag itself is parsed.
+			// Delegation requires a redirect URI, a login flow and a user type, so they are always
+			// supplied here and the table stays about how the flag itself is parsed.
 			userInputs := map[string]string{
-				"model": "claude", nameKey: "support-bot", redirectURIsKey: "https://example.com/cb",
+				"model": "claude", "name": "support-bot", redirectURIsKey: "https://example.com/cb",
+				authFlowIDKey: "login-flow-1", allowedUserTypesKey: "employee",
 			}
 			if tt.delegated != "" {
 				userInputs[delegatedKey] = tt.delegated
@@ -1708,12 +2249,13 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Delega
 			ctx := &providers.NodeContext{
 				ExecutionID: "flow-123",
 				FlowType:    providers.FlowTypeAdministration,
-				NodeProperties: map[string]interface{}{
-					propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
-				},
 				UserInputs:  userInputs,
-				RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
-				NodeInputs:  []providers.Input{{Identifier: "model", Type: "string", Required: true}},
+				RuntimeData: map[string]string{
+					ouIDKey:         testOUID,
+					categoryNameKey: string(entitytype.TypeCategoryAgent),
+					categoryTypeKey: testAgentType,
+				},
+				NodeInputs: []providers.Input{{Identifier: "model", Type: "string", Required: true}},
 			}
 
 			_, err := suite.executor.Execute(ctx)
@@ -1722,7 +2264,14 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Delega
 			require.NotNil(suite.T(), received)
 			assert.Equal(suite.T(), tt.expected, receivedDelegated)
 			// The flag steers the agent's auth shape; it is not one of its attributes.
-			assert.JSONEq(suite.T(), `{"model":"claude"}`, string(received.Attributes))
+			assert.JSONEq(suite.T(), `{"model":"claude","name":"support-bot"}`, string(received.Attributes))
+			if tt.expected {
+				assert.Equal(suite.T(), "login-flow-1", received.AuthFlowID)
+				assert.Equal(suite.T(), []string{"employee"}, received.AllowedUserTypes)
+			} else {
+				assert.Empty(suite.T(), received.AuthFlowID)
+				assert.Empty(suite.T(), received.AllowedUserTypes)
+			}
 		})
 	}
 }
@@ -1740,18 +2289,19 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Surfac
 			Key: "agent.name_required", DefaultValue: "Agent name is required",
 		},
 	}
-	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, mock.Anything).
+	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything).
 		Return(nil, svcErr).Once()
 
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
+		UserInputs:  map[string]string{"model": "claude", "name": "support-bot"},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
 		},
-		UserInputs:  map[string]string{"model": "claude", nameKey: "support-bot"},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
-		NodeInputs:  []providers.Input{{Identifier: "model", Type: "string", Required: true}},
+		NodeInputs: []providers.Input{{Identifier: "model", Type: "string", Required: true}},
 	}
 
 	resp, err := suite.executor.Execute(ctx)
@@ -1789,12 +2339,13 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentAlreadyExists_Error
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
+		UserInputs:  map[string]string{"username": "newagent", "name": "support-bot"},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
 		},
-		UserInputs:  map[string]string{"username": "newagent", nameKey: "support-bot"},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
-		NodeInputs:  []providers.Input{{Identifier: "username", Type: "string", Required: true}},
+		NodeInputs: []providers.Input{{Identifier: "username", Type: "string", Required: true}},
 	}
 
 	resp, err := suite.executor.Execute(ctx)
@@ -1827,7 +2378,7 @@ func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_UserCategory
 			name:    "SingleSelfRegistrableTypeResolves",
 			allowed: []string{testUserType},
 			entityTypes: map[string]*entitytype.EntityType{
-				testUserType: {Name: testUserType, OUID: testOUID, AllowSelfRegistration: true},
+				testUserType: {Handle: testUserType, OUID: testOUID, AllowSelfRegistration: true},
 			},
 			expected: &entityRef{entityType: testUserType, ouID: testOUID},
 		},
@@ -1835,7 +2386,7 @@ func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_UserCategory
 			name:    "NoSelfRegistrableType",
 			allowed: []string{testUserType},
 			entityTypes: map[string]*entitytype.EntityType{
-				testUserType: {Name: testUserType, OUID: testOUID, AllowSelfRegistration: false},
+				testUserType: {Handle: testUserType, OUID: testOUID, AllowSelfRegistration: false},
 			},
 			expected: nil,
 		},
@@ -1843,8 +2394,8 @@ func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_UserCategory
 			name:    "AmbiguousSelfRegistrableTypes",
 			allowed: []string{testUserType, "EXTERNAL"},
 			entityTypes: map[string]*entitytype.EntityType{
-				testUserType: {Name: testUserType, OUID: testOUID, AllowSelfRegistration: true},
-				"EXTERNAL":   {Name: "EXTERNAL", OUID: testOUID, AllowSelfRegistration: true},
+				testUserType: {Handle: testUserType, OUID: testOUID, AllowSelfRegistration: true},
+				"EXTERNAL":   {Handle: "EXTERNAL", OUID: testOUID, AllowSelfRegistration: true},
 			},
 			expected: nil,
 		},
@@ -1854,7 +2405,7 @@ func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_UserCategory
 		suite.Run(tt.name, func() {
 			suite.SetupTest()
 			for name, et := range tt.entityTypes {
-				suite.mockEntityTypeService.On("GetEntityTypeByName", mock.Anything,
+				suite.mockEntityTypeService.On("GetEntityTypeByHandle", mock.Anything,
 					entitytype.TypeCategoryUser, name).
 					Return(et, (*tidcommon.ServiceError)(nil)).Maybe()
 			}
@@ -1874,7 +2425,7 @@ func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_UserCategory
 }
 
 func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_EntityTypeLookupFails() {
-	suite.mockEntityTypeService.On("GetEntityTypeByName", mock.Anything,
+	suite.mockEntityTypeService.On("GetEntityTypeByHandle", mock.Anything,
 		entitytype.TypeCategoryUser, testUserType).
 		Return(nil, &tidcommon.ServiceError{Code: "internal_error",
 			Error: tidcommon.I18nMessage{DefaultValue: "boom"}}).Once()
@@ -1890,84 +2441,6 @@ func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_EntityTypeLo
 	assert.Nil(suite.T(), ref)
 	assert.Error(suite.T(), err)
 	assert.Contains(suite.T(), err.Error(), "failed to retrieve entity type")
-}
-
-// The agent types an application accepts name the target, which is what lets a flow provision an
-// agent with no type or organization unit resolver node ahead of the provisioning one.
-func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_AgentCategory_ResolvesTheAllowedAgentType() {
-	ctx := &providers.NodeContext{
-		ExecutionID: "flow-123",
-		Application: providers.Application{
-			InboundAuthProfile: providers.InboundAuthProfile{AllowedAgentTypes: []string{testAgentType}},
-		},
-	}
-	suite.mockEntityTypeService.On("GetEntityTypeByName", mock.Anything, entitytype.TypeCategoryAgent,
-		testAgentType).
-		Return(&entitytype.EntityType{Name: testAgentType, OUID: testOUID, AllowSelfRegistration: true},
-			(*tidcommon.ServiceError)(nil)).Once()
-
-	ref, err := suite.executor.getDefaultEntityRef(ctx, entitytype.TypeCategoryAgent)
-
-	assert.NoError(suite.T(), err)
-	require.NotNil(suite.T(), ref)
-	assert.Equal(suite.T(), testAgentType, ref.entityType)
-	assert.Equal(suite.T(), testOUID, ref.ouID, "the organization unit comes from the agent type itself")
-}
-
-// An application that names no agent type still provisions, so a deployment that never configured
-// one keeps working.
-func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_AgentCategory_NoneAllowedResolvesNothing() {
-	ctx := &providers.NodeContext{ExecutionID: "flow-123"}
-
-	ref, err := suite.executor.getDefaultEntityRef(ctx, entitytype.TypeCategoryAgent)
-
-	assert.NoError(suite.T(), err)
-	assert.Nil(suite.T(), ref, "an application admitting no agent type provisions none")
-	suite.mockEntityTypeService.AssertNotCalled(suite.T(), "GetEntityTypeByName",
-		mock.Anything, mock.Anything, mock.Anything)
-}
-
-// Several allowed types leave the choice to a resolver node rather than picking one arbitrarily.
-func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_AgentCategory_SeveralAllowedIsUnresolved() {
-	ctx := &providers.NodeContext{
-		ExecutionID: "flow-123",
-		Application: providers.Application{
-			InboundAuthProfile: providers.InboundAuthProfile{
-				AllowedAgentTypes: []string{testAgentType, "another"},
-			},
-		},
-	}
-
-	for _, name := range []string{testAgentType, "another"} {
-		suite.mockEntityTypeService.On("GetEntityTypeByName", mock.Anything, entitytype.TypeCategoryAgent, name).
-			Return(&entitytype.EntityType{Name: name, OUID: testOUID, AllowSelfRegistration: true},
-				(*tidcommon.ServiceError)(nil)).Once()
-	}
-
-	ref, err := suite.executor.getDefaultEntityRef(ctx, entitytype.TypeCategoryAgent)
-
-	assert.NoError(suite.T(), err, "an unresolved target is not an error")
-	assert.Nil(suite.T(), ref, "two self-registrable types leave the target ambiguous")
-}
-
-// An agent is provisioned on an administrator's behalf, so the type need not permit the entity to
-// register itself the way the user candidates must.
-func (suite *ProvisioningExecutorTestSuite) TestGetDefaultEntityRef_AgentCategory_RequiresSelfRegistration() {
-	ctx := &providers.NodeContext{
-		ExecutionID: "flow-123",
-		Application: providers.Application{
-			InboundAuthProfile: providers.InboundAuthProfile{AllowedAgentTypes: []string{testAgentType}},
-		},
-	}
-	suite.mockEntityTypeService.On("GetEntityTypeByName", mock.Anything, entitytype.TypeCategoryAgent,
-		testAgentType).
-		Return(&entitytype.EntityType{Name: testAgentType, OUID: testOUID, AllowSelfRegistration: false},
-			(*tidcommon.ServiceError)(nil)).Once()
-
-	ref, err := suite.executor.getDefaultEntityRef(ctx, entitytype.TypeCategoryAgent)
-
-	assert.NoError(suite.T(), err)
-	assert.Nil(suite.T(), ref, "an agent type that does not permit self-registration is not a target")
 }
 
 // A resolver populates the type, and no category has a fixed fallback here.
@@ -1993,16 +2466,15 @@ func (suite *ProvisioningExecutorTestSuite) TestCategoryPrincipalTypes() {
 	assert.Equal(suite.T(), role.AssigneeTypeAgent, agentTraits.roleAssigneeType)
 	assert.Equal(suite.T(), user.ErrorAttributeConflict.Code, userTraits.attributeConflictCode)
 	assert.Equal(suite.T(), agentAttributeConflictCode, agentTraits.attributeConflictCode)
-	// Federated authentication creates users on the fly; an agent is never provisioned that way.
-	assert.True(suite.T(), userTraits.autoProvisionedAtAuthentication)
-	assert.False(suite.T(), agentTraits.autoProvisionedAtAuthentication)
+	assert.Equal(suite.T(), propertyKeyAllowedUserTypes, userTraits.allowedTypesProperty)
+	assert.Equal(suite.T(), propertyKeyAllowedAgentTypes, agentTraits.allowedTypesProperty)
 	// An unrecognized category behaves as the user category did before any other was supported.
 	// Compared field by field: the traits carry funcs, and funcs are never equal to one another.
 	unknown := traitsFor(entitytype.TypeCategory("unknown"))
 	assert.Equal(suite.T(), userTraits.groupMemberType, unknown.groupMemberType)
 	assert.Equal(suite.T(), userTraits.roleAssigneeType, unknown.roleAssigneeType)
 	assert.Equal(suite.T(), userTraits.attributeConflictCode, unknown.attributeConflictCode)
-	assert.Equal(suite.T(), userTraits.autoProvisionedAtAuthentication, unknown.autoProvisionedAtAuthentication)
+	assert.Equal(suite.T(), userTraits.allowedTypesProperty, unknown.allowedTypesProperty)
 }
 
 func (suite *ProvisioningExecutorTestSuite) TestHasRequiredInputs_AllAttributesInRuntimeData() {
@@ -2060,8 +2532,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_Failure_GroupAssignmentF
 		},
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(nil,
-		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+	suite.expectNoExistingUserFor(attrs)
 
 	createdUser := &providers.User{
 		ID:         testNewUserID,
@@ -2114,8 +2585,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_Failure_RoleAssignmentFa
 		},
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(nil,
-		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+	suite.expectNoExistingUserFor(attrs)
 
 	createdUser := &providers.User{
 		ID:         testNewUserID,
@@ -2172,8 +2642,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_GroupWithExistingMembers
 		},
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(nil,
-		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+	suite.expectNoExistingUserFor(attrs)
 
 	createdUser := &providers.User{
 		ID:         testNewUserID,
@@ -2341,8 +2810,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AuthFlow_AutoProvisionin
 		},
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(nil,
-		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+	suite.expectNoExistingUserFor(attrs)
 
 	createdUser := &providers.User{
 		ID:         "user-provisioned",
@@ -2398,10 +2866,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_Success_WithGroupAndRole
 		},
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", map[string]interface{}{
-		"username":     "newuser",
-		attributeEmail: "new@example.com",
-	}).Return(nil, entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+	suite.expectNoExistingUserFor(attrs)
 
 	createdUser := &providers.User{
 		ID:         testNewUserID,
@@ -2456,8 +2921,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_Success_WithMultipleGrou
 		},
 	}
 
-	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(nil,
-		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
+	suite.expectNoExistingUserFor(attrs)
 
 	createdUser := &providers.User{
 		ID:         testNewUserID,
@@ -2521,7 +2985,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_CrossOU_Success() {
 	}
 
 	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(&existingUserID, nil)
-	suite.mockEntityProvider.On("GetEntity", existingUserID).Return(existingUser, nil)
+	suite.mockEntityProvider.On("GetEntityProfile", existingUserID).Return(existingUser, nil)
 	suite.mockUserMgtProvider.On("CreateUser", mock.Anything,
 		mock.MatchedBy(func(u *providers.User) bool {
 			return u.OUID == testOUID
@@ -2588,7 +3052,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_CrossOU_SameOU_Fails() {
 	}
 
 	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(&existingUserID, nil)
-	suite.mockEntityProvider.On("GetEntity", existingUserID).Return(existingUser, nil)
+	suite.mockEntityProvider.On("GetEntityProfile", existingUserID).Return(existingUser, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
@@ -2784,7 +3248,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_CrossOU_SameOU_AuthnFlow
 	}
 
 	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(&existingUserID, nil)
-	suite.mockEntityProvider.On("GetEntity", existingUserID).Return(existingUser, nil)
+	suite.mockEntityProvider.On("GetEntityProfile", existingUserID).Return(existingUser, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
@@ -2834,7 +3298,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_CrossOU_SameOU_Registrat
 	provMock.On(methodGetRequiredInputs, mock.Anything).Return(nodeInputs).Maybe()
 
 	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(&existingUserID, nil)
-	suite.mockEntityProvider.On("GetEntity", existingUserID).Return(existingUser, nil)
+	suite.mockEntityProvider.On("GetEntityProfile", existingUserID).Return(existingUser, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
@@ -2866,7 +3330,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_CrossOU_GetUserError() {
 	}
 
 	suite.mockEntityProvider.On("IdentifyEntity", attrs).Return(&existingUserID, nil)
-	suite.mockEntityProvider.On("GetEntity", existingUserID).Return(nil,
+	suite.mockEntityProvider.On("GetEntityProfile", existingUserID).Return(nil,
 		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeSystemError, "db error", ""))
 
 	resp, err := suite.executor.Execute(ctx)
@@ -4361,7 +4825,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_CrossOU_AmbiguousUser_Ma
 			{ID: testExistingUserID, OUID: testOUID},
 			{ID: "other-user-id", OUID: "ou-honda"},
 		}, nil)
-	suite.mockEntityProvider.On("GetEntity", testExistingUserID).
+	suite.mockEntityProvider.On("GetEntityProfile", testExistingUserID).
 		Return(&providers.Entity{ID: testExistingUserID, OUID: testOUID}, nil)
 
 	resp, err := suite.executor.Execute(ctx)
@@ -4457,19 +4921,20 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_CrossOU_SystemError_NoSe
 	suite.mockEntityProvider.AssertNotCalled(suite.T(), "SearchEntities", mock.Anything)
 }
 
-// The agent service refuses a create without a name, so provisioning asks for one rather than
-// letting the create fail.
+// The name is a required schema attribute, so provisioning asks for it rather than letting the
+// create fail.
 func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_NameIsRequired() {
 	suite.expectSchemaForAgentProvisioning()
 
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
-		},
 		UserInputs:  map[string]string{"model": "claude"},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
 	}
 
 	execResp, err := suite.executor.Execute(ctx)
@@ -4482,7 +4947,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_NameIs
 	for _, input := range execResp.Inputs {
 		identifiers = append(identifiers, input.Identifier)
 	}
-	assert.Contains(suite.T(), identifiers, nameKey)
+	assert.Contains(suite.T(), identifiers, "name")
 	// Not delegated, so the redirect URI is not asked for alongside it.
 	assert.NotContains(suite.T(), identifiers, redirectURIsKey)
 }
@@ -4492,17 +4957,18 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Descri
 	suite.expectSchemaForAgentProvisioning()
 	suite.mockEntityProvider.On("IdentifyEntity", mock.Anything).Return(nil,
 		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
-	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, false).
+	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.MatchedBy(isNotDelegated)).
 		Return(&providers.Agent{ID: testNewAgentID}, nil).Once()
 
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
+		UserInputs:  map[string]string{"model": "claude", "name": "support-bot"},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
 		},
-		UserInputs:  map[string]string{"model": "claude", nameKey: "support-bot"},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
 	}
 
 	_, err := suite.executor.Execute(ctx)
@@ -4519,23 +4985,24 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Ignore
 		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
 
 	var received *providers.Agent
-	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, mock.Anything).
+	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { received = args.Get(1).(*providers.Agent) }).
 		Return(&providers.Agent{ID: testNewAgentID}, nil).Once()
 
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
-		},
 		// Both the input identifier and the runtime slot are submitted, which the engine merges
 		// verbatim. Neither may stand in for a resolved owner.
 		UserInputs: map[string]string{
-			"model": "claude", nameKey: "support-bot",
+			"model": "claude", "name": "support-bot",
 			ownerKey: "injected-owner", ownerIDKey: "injected-owner-id",
 		},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
+		},
 	}
 
 	_, err := suite.executor.Execute(ctx)
@@ -4552,21 +5019,19 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_UsesRe
 		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "", ""))
 
 	var received *providers.Agent
-	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything, mock.Anything).
+	suite.mockAgentMgtProvider.On("CreateAgent", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { received = args.Get(1).(*providers.Agent) }).
 		Return(&providers.Agent{ID: testNewAgentID}, nil).Once()
 
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAdministration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
-		},
 		UserInputs: map[string]string{
-			"model": "claude", nameKey: "support-bot", ownerKey: "injected-owner",
+			"model": "claude", "name": "support-bot", ownerKey: "injected-owner",
 		},
 		RuntimeData: map[string]string{
-			ouIDKey: testOUID, categoryTypeKey: testAgentType, ownerIDKey: "resolved-owner",
+			ouIDKey: testOUID, categoryNameKey: string(entitytype.TypeCategoryAgent), categoryTypeKey: testAgentType,
+			ownerIDKey: "resolved-owner",
 		},
 	}
 
@@ -4583,11 +5048,12 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Refuse
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeRegistration,
-		NodeProperties: map[string]interface{}{
-			propertyKeyProvisioningMode: string(entitytype.TypeCategoryAgent),
+		UserInputs:  map[string]string{"name": "support-bot"},
+		RuntimeData: map[string]string{
+			ouIDKey:         testOUID,
+			categoryNameKey: string(entitytype.TypeCategoryAgent),
+			categoryTypeKey: testAgentType,
 		},
-		UserInputs:  map[string]string{nameKey: "support-bot"},
-		RuntimeData: map[string]string{ouIDKey: testOUID, categoryTypeKey: testAgentType},
 	}
 
 	execResp, err := suite.executor.Execute(ctx)
@@ -4599,6 +5065,33 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_Refuse
 	assert.Equal(suite.T(), ErrSelfRegNotSupportedForAgents.Code, execResp.Error.Code)
 	suite.mockAgentMgtProvider.AssertNotCalled(suite.T(), "CreateAgent",
 		mock.Anything, mock.Anything, mock.Anything)
+}
+
+// Only an administration flow provisions an agent, so an agent category in any other flow fails.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_AgentProvisioning_RefusedOutsideAdministrationFlows() {
+	for _, flowType := range []providers.FlowType{
+		providers.FlowTypeAuthentication,
+		providers.FlowTypeUserOnboarding,
+	} {
+		suite.Run(string(flowType), func() {
+			ctx := &providers.NodeContext{
+				ExecutionID: "flow-123",
+				FlowType:    flowType,
+				UserInputs:  map[string]string{"name": "support-bot"},
+				RuntimeData: map[string]string{
+					ouIDKey:         testOUID,
+					categoryNameKey: string(entitytype.TypeCategoryAgent),
+					categoryTypeKey: testAgentType,
+				},
+			}
+
+			_, err := suite.executor.Execute(ctx)
+
+			assert.Error(suite.T(), err)
+			suite.mockAgentMgtProvider.AssertNotCalled(suite.T(), "CreateAgent",
+				mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
 }
 
 // The self-registration rule is one rule: an application that admits the type, and a type that
@@ -4617,18 +5110,473 @@ func (suite *ProvisioningExecutorTestSuite) TestSelfRegistrableEntityTypes_Reads
 		entitytype.TypeCategoryUser:  testUserType,
 		entitytype.TypeCategoryAgent: testAgentType,
 	} {
-		suite.mockEntityTypeService.On("GetEntityTypeByName", mock.Anything, category, name).
-			Return(&entitytype.EntityType{Name: name, OUID: testOUID, AllowSelfRegistration: true},
+		suite.mockEntityTypeService.On("GetEntityTypeByHandle", mock.Anything, category, name).
+			Return(&entitytype.EntityType{Handle: name, OUID: testOUID, AllowSelfRegistration: true},
 				(*tidcommon.ServiceError)(nil)).Once()
 	}
 
 	userTypes, err := suite.executor.selfRegistrableEntityTypes(ctx, entitytype.TypeCategoryUser)
 	assert.NoError(suite.T(), err)
 	require.Len(suite.T(), userTypes, 1)
-	assert.Equal(suite.T(), testUserType, userTypes[0].Name)
+	assert.Equal(suite.T(), testUserType, userTypes[0].Handle)
 
 	agentTypes, err := suite.executor.selfRegistrableEntityTypes(ctx, entitytype.TypeCategoryAgent)
 	assert.NoError(suite.T(), err)
 	require.Len(suite.T(), agentTypes, 1)
-	assert.Equal(suite.T(), testAgentType, agentTypes[0].Name)
+	assert.Equal(suite.T(), testAgentType, agentTypes[0].Handle)
+}
+
+// --- federated linking ---
+
+const (
+	testFederatedIdpID = "idp-a"
+	testFederatedSub   = "sub-1"
+)
+
+// federatedTestClaims are the claims the federated connection in these cases asserts.
+func federatedTestClaims() map[string]interface{} {
+	return map[string]interface{}{
+		userAttributeSub: testFederatedSub,
+		"username":       "github-login",
+		attributeEmail:   "user@example.com",
+	}
+}
+
+// federatedCtx builds an authentication context carrying a federated identity. resolved decides
+// whether a preceding step already found a local user.
+func (suite *ProvisioningExecutorTestSuite) federatedCtx(resolved bool) *providers.NodeContext {
+	runtime := map[string]string{
+		common.RuntimeKeyUserEligibleForProvisioning: dataValueTrue,
+		categoryTypeKey: testUserType,
+		ouIDKey:         testOUID,
+		common.RuntimeKeyExternalIdentity: externalIdentityEntry(testFederatedIdpID, testFederatedSub,
+			federatedTestClaims()),
+	}
+	if resolved {
+		runtime[userAttributeUserID] = testExistingUser123ID
+	} else {
+		// The AuthUser is authenticated but names no local entity yet, which is what the federated
+		// branch keys on.
+		suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+			Return(newAuthenticatedAuthUser(), (*providers.EntityReference)(nil),
+				(*tidcommon.ServiceError)(nil)).Maybe()
+	}
+	return &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAuthentication,
+		AuthUser:    newAuthenticatedAuthUser(),
+		RuntimeData: runtime,
+		NodeInputs:  []providers.Input{},
+	}
+}
+
+// A preceding step resolved the user, so this node neither provisions nor links. A federated
+// identity only resolves a user through a link that is already recorded, and every path that
+// settles on an account that already exists records its own link at AccountLinkingExecutor.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_ResolvedUserIsNotLinked() {
+	suite.expectSchemaForProvisioning()
+
+	resp, err := suite.executor.Execute(suite.federatedCtx(true))
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "LinkAccount",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// The short-circuit runs ahead of the required-input check, so a resolved user is never asked for
+// schema attributes they already have.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_ResolvedUserIsNotPrompted() {
+	ctx := suite.federatedCtx(true)
+	ctx.NodeInputs = []providers.Input{{Identifier: "username", Type: "string", Required: true}}
+	ctx.UserInputs = map[string]string{}
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Empty(suite.T(), resp.Inputs)
+}
+
+// A federated identity with no local user is provisioned with its link, which the user service
+// records in the same write that creates the user. The attribute lookup is skipped, since on
+// this path it would complete the node as whichever user shares an attribute and record nothing.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_ProvisionsAndLinksNewUser() {
+	suite.expectSchemaForProvisioning()
+	suite.mockUserMgtProvider.On("CreateUser", mock.Anything,
+		mock.MatchedBy(func(u *providers.User) bool {
+			return u.OUID == testOUID && u.Type == testUserType &&
+				*u.LinkedAccount == providers.LinkedAccount{IdpID: testFederatedIdpID, Sub: testFederatedSub}
+		})).Return(&providers.User{ID: testNewUserID, OUID: testOUID, Type: testUserType},
+		(*tidcommon.ServiceError)(nil))
+
+	resp, err := suite.executor.Execute(suite.federatedCtx(false))
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), dataValueTrue, resp.RuntimeData[common.RuntimeKeyUserAutoProvisioned])
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything)
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "LinkAccount",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// Several users hold the link and no Resolve User node picked one. Provisioning would add another
+// holder on every sign-in, so the node fails instead.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_AmbiguousAuthenticationDoesNotProvision() {
+	ctx := suite.federatedCtx(false)
+	ctx.RuntimeData[common.RuntimeKeyEntityState] = entityStateAmbiguous
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrAmbiguousEntityIdentity.Code, resp.Error.Code)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser", mock.Anything, mock.Anything)
+}
+
+// linkedRegistrationCtx builds a registration context for a returning federated identity whose link
+// is already recorded from the first registration, with a required attribute the claims lack. The
+// link is held by the given users, or by one user in the target OU when none are given.
+func (suite *ProvisioningExecutorTestSuite) linkedRegistrationCtx(holders ...*providers.Entity) *providers.NodeContext {
+	ctx := suite.federatedCtx(false)
+	ctx.FlowType = providers.FlowTypeRegistration
+	ctx.NodeInputs = []providers.Input{{Identifier: "nickname", Type: "string", Required: true}}
+	ctx.UserInputs = map[string]string{}
+	suite.mockAuthnProvider.ExpectedCalls = nil
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(newAuthenticatedAuthUser(),
+			&providers.EntityReference{EntityID: testExistingUser123ID, OUID: testOUID},
+			(*tidcommon.ServiceError)(nil)).Maybe()
+	if len(holders) == 0 {
+		holders = []*providers.Entity{{ID: testExistingUser123ID, OUID: testOUID}}
+	}
+	suite.mockEntityProvider.On("GetLinkedEntities", testFederatedIdpID, testFederatedSub).
+		Return(holders, (*entityprovider.EntityProviderError)(nil)).Maybe()
+	return ctx
+}
+
+// Provisioning a returning federated identity would be a second account for somebody who already
+// has one, and no input changes which user its link names. This flow does not allow registration
+// with an existing user, so the node fails before prompting for the missing attribute.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_RegistrationDoesNotDuplicateLinkedUser() {
+	resp, err := suite.executor.Execute(suite.linkedRegistrationCtx())
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrEntityAlreadyExists.Code, resp.Error.Code)
+	assert.Empty(suite.T(), resp.Inputs)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "LinkAccount",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// With registration allowed for an existing user, the returning identity completes as its linked
+// user without being prompted for the missing attribute.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_RegistrationCompletesAsLinkedUser() {
+	ctx := suite.linkedRegistrationCtx()
+	ctx.RuntimeData[common.RuntimeKeyAllowRegistrationWithExistingUser] = dataValueTrue
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Empty(suite.T(), resp.Inputs)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+}
+
+// Without cross-OU provisioning, a user holding the link in another OU still counts as the existing
+// user, as an attribute match in another OU does.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_RegistrationCountsHolderInOtherOU() {
+	ctx := suite.linkedRegistrationCtx(&providers.Entity{ID: testExistingUser123ID, OUID: "ou-source"})
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrEntityAlreadyExists.Code, resp.Error.Code)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+}
+
+// With cross-OU provisioning, a user holding the link in another OU does not count, so a new user is
+// created in the target OU with the link. The user the AuthUser resolves to is in another OU, so the
+// existing-user rules let the registration go ahead.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_CrossOURegistrationCreatesSecondHolder() {
+	ctx := suite.linkedRegistrationCtx(&providers.Entity{ID: testExistingUser123ID, OUID: "ou-source"})
+	ctx.NodeProperties = map[string]interface{}{common.NodePropertyAllowCrossOUProvisioning: true}
+	ctx.NodeInputs = []providers.Input{}
+	suite.expectSchemaForProvisioning()
+	suite.mockEntityProvider.On("GetEntityProfile", testExistingUser123ID).
+		Return(&providers.Entity{ID: testExistingUser123ID, OUID: "ou-source"}, nil).Once()
+	suite.mockUserMgtProvider.On("CreateUser", mock.Anything,
+		mock.MatchedBy(func(u *providers.User) bool {
+			return u.OUID == testOUID &&
+				*u.LinkedAccount == providers.LinkedAccount{IdpID: testFederatedIdpID, Sub: testFederatedSub}
+		})).Return(&providers.User{ID: testNewUserID, OUID: testOUID, Type: testUserType},
+		(*tidcommon.ServiceError)(nil)).Once()
+	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(newAuthenticatedAuthUser(), providers.AuthenticatedClaims{}, (*tidcommon.ServiceError)(nil)).Once()
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	suite.mockUserMgtProvider.AssertExpectations(suite.T())
+}
+
+// A user an earlier node resolved, for example by a verified OTP, is the existing user even when
+// nobody holds the federated identity's link yet, so registration does not create a second one.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_RegistrationHonorsResolvedUser() {
+	ctx := suite.linkedRegistrationCtx()
+	suite.mockEntityProvider.ExpectedCalls = nil
+	suite.mockEntityProvider.On("GetLinkedEntities", testFederatedIdpID, testFederatedSub).
+		Return([]*providers.Entity{}, (*entityprovider.EntityProviderError)(nil)).Once()
+	ctx.NodeInputs = []providers.Input{}
+	ctx.RuntimeData[userAttributeUserID] = testExistingUser123ID
+	suite.expectSchemaForProvisioning()
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotEqual(suite.T(), providers.ExecComplete, resp.Status)
+	require.NotNil(suite.T(), resp.Error)
+	assert.Equal(suite.T(), ErrEntityAlreadyExists.Code, resp.Error.Code)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser", mock.Anything, mock.Anything)
+}
+
+// With cross-OU provisioning on, a linked user already in the target OU still follows the
+// existing-user rules.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_CrossOURegistrationInTargetOU() {
+	cases := []struct {
+		name       string
+		allowExist bool
+		wantStatus providers.ExecutorStatus
+	}{
+		{"completes when registration with an existing user is allowed", true, providers.ExecComplete},
+		{"fails when registration with an existing user is not allowed", false, providers.ExecFailure},
+	}
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			suite.SetupTest()
+			ctx := suite.linkedRegistrationCtx(
+				&providers.Entity{ID: testExistingUser123ID, OUID: testOUID},
+				&providers.Entity{ID: "holder-elsewhere", OUID: "ou-source"})
+			ctx.NodeProperties = map[string]interface{}{common.NodePropertyAllowCrossOUProvisioning: true}
+			if tc.allowExist {
+				ctx.RuntimeData[common.RuntimeKeyAllowRegistrationWithExistingUser] = dataValueTrue
+			}
+
+			resp, err := suite.executor.Execute(ctx)
+
+			assert.NoError(suite.T(), err)
+			assert.Equal(suite.T(), tc.wantStatus, resp.Status)
+			if !tc.allowExist {
+				assert.Equal(suite.T(), ErrEntityAlreadyExists.Code, resp.Error.Code)
+			}
+			assert.Empty(suite.T(), resp.Inputs)
+			suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+		})
+	}
+}
+
+// Several users holding the link where the registration lands leaves no single user to complete as.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_RegistrationWithSeveralHoldersFails() {
+	ctx := suite.linkedRegistrationCtx(
+		&providers.Entity{ID: testExistingUser123ID, OUID: testOUID},
+		&providers.Entity{ID: "second-holder", OUID: testOUID})
+	ctx.RuntimeData[common.RuntimeKeyAllowRegistrationWithExistingUser] = dataValueTrue
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrEntityAlreadyExists.Code, resp.Error.Code)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+}
+
+// When several users hold the link, the AuthUser names none of them, so completing as the one in the
+// target OU authenticates it.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_AmbiguousRegistrationBindsTargetOUHolder() {
+	ctx := suite.linkedRegistrationCtx(
+		&providers.Entity{ID: testExistingUser123ID, OUID: testOUID},
+		&providers.Entity{ID: "holder-elsewhere", OUID: "ou-source"})
+	ctx.NodeProperties = map[string]interface{}{common.NodePropertyAllowCrossOUProvisioning: true}
+	ctx.RuntimeData[common.RuntimeKeyAllowRegistrationWithExistingUser] = dataValueTrue
+	ctx.RuntimeData[common.RuntimeKeyEntityState] = entityStateAmbiguous
+	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything,
+		map[string]interface{}{authnprovidercm.CredentialTypeProvisionedEntityID: testExistingUser123ID},
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(newAuthenticatedAuthUser(), providers.AuthenticatedClaims{}, (*tidcommon.ServiceError)(nil)).Once()
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	suite.mockAuthnProvider.AssertExpectations(suite.T())
+}
+
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_HeldTargetOUHolderStatesTheHold() {
+	for code, want := range map[string]string{
+		authnprovidermgr.ErrorAccountLocked.Code:        ErrAccountLocked.Code,
+		authnprovidermgr.ErrorAccountSuspended.Code:     ErrAccountSuspended.Code,
+		authnprovidermgr.ErrorAuthenticationFailed.Code: ErrEntityAuthFailed.Code,
+	} {
+		suite.Run(code, func() {
+			suite.SetupTest()
+			ctx := suite.linkedRegistrationCtx(
+				&providers.Entity{ID: testExistingUser123ID, OUID: testOUID},
+				&providers.Entity{ID: "holder-elsewhere", OUID: "ou-source"})
+			ctx.NodeProperties = map[string]interface{}{common.NodePropertyAllowCrossOUProvisioning: true}
+			ctx.RuntimeData[common.RuntimeKeyAllowRegistrationWithExistingUser] = dataValueTrue
+			ctx.RuntimeData[common.RuntimeKeyEntityState] = entityStateAmbiguous
+			suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything,
+				map[string]interface{}{authnprovidercm.CredentialTypeProvisionedEntityID: testExistingUser123ID},
+				mock.Anything, mock.Anything, mock.Anything).
+				Return(providers.AuthUser{}, providers.AuthenticatedClaims{},
+					&tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: code}).Once()
+
+			resp, err := suite.executor.Execute(ctx)
+
+			assert.NoError(suite.T(), err)
+			assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+			assert.Equal(suite.T(), want, resp.Error.Code)
+			suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+		})
+	}
+}
+
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_TargetOUHolderServerFaultIsReturned() {
+	ctx := suite.linkedRegistrationCtx(
+		&providers.Entity{ID: testExistingUser123ID, OUID: testOUID},
+		&providers.Entity{ID: "holder-elsewhere", OUID: "ou-source"})
+	ctx.NodeProperties = map[string]interface{}{common.NodePropertyAllowCrossOUProvisioning: true}
+	ctx.RuntimeData[common.RuntimeKeyAllowRegistrationWithExistingUser] = dataValueTrue
+	ctx.RuntimeData[common.RuntimeKeyEntityState] = entityStateAmbiguous
+	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything,
+		map[string]interface{}{authnprovidercm.CredentialTypeProvisionedEntityID: testExistingUser123ID},
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(providers.AuthUser{}, providers.AuthenticatedClaims{}, &tidcommon.InternalServerError).Once()
+
+	_, err := suite.executor.Execute(ctx)
+
+	assert.Error(suite.T(), err)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+}
+
+// Accepting an invitation settles the link's holders as registration does, so an invitee who already
+// holds the link in the target OU completes as that user instead of getting a second one there.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_OnboardingBindsTargetOUHolder() {
+	ctx := suite.linkedRegistrationCtx(
+		&providers.Entity{ID: testExistingUser123ID, OUID: testOUID},
+		&providers.Entity{ID: "holder-elsewhere", OUID: "ou-source"})
+	ctx.FlowType = providers.FlowTypeUserOnboarding
+	ctx.NodeProperties = map[string]interface{}{common.NodePropertyAllowCrossOUProvisioning: true}
+	ctx.RuntimeData[common.RuntimeKeyAllowRegistrationWithExistingUser] = dataValueTrue
+	ctx.RuntimeData[common.RuntimeKeyEntityState] = entityStateAmbiguous
+	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything,
+		map[string]interface{}{authnprovidercm.CredentialTypeProvisionedEntityID: testExistingUser123ID},
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(newAuthenticatedAuthUser(), providers.AuthenticatedClaims{}, (*tidcommon.ServiceError)(nil)).Once()
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+	suite.mockAuthnProvider.AssertExpectations(suite.T())
+}
+
+// An entity provider that cannot list the link's holders leaves the authentication provider's
+// resolution as the only answer.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_RegistrationFallsBackWithoutHolderListing() {
+	ctx := suite.linkedRegistrationCtx()
+	suite.mockEntityProvider.ExpectedCalls = nil
+	suite.mockEntityProvider.On("GetLinkedEntities", testFederatedIdpID, testFederatedSub).
+		Return(nil, entityprovider.NewEntityProviderError(entityprovider.ErrorCodeNotImplemented, "", ""))
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrEntityAlreadyExists.Code, resp.Error.Code)
+}
+
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_RegistrationHolderListingFails() {
+	ctx := suite.linkedRegistrationCtx()
+	suite.mockEntityProvider.ExpectedCalls = nil
+	suite.mockEntityProvider.On("GetLinkedEntities", testFederatedIdpID, testFederatedSub).
+		Return(nil, entityprovider.NewEntityProviderError(entityprovider.ErrorCodeSystemError, "", ""))
+
+	_, err := suite.executor.Execute(ctx)
+
+	assert.Error(suite.T(), err)
+}
+
+// A verification that failed after a candidate signed in leaves that account signed in and the
+// candidates unsettled. Registration fails on the candidates instead of completing as the account.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Federated_RegistrationWithSignedInCandidateFails() {
+	ctx := suite.linkedRegistrationCtx()
+	ctx.RuntimeData[common.RuntimeKeyAllowRegistrationWithExistingUser] = dataValueTrue
+	ctx.RuntimeData[common.RuntimeKeyLinkingCandidateUserIDs] = `["` + testExistingUser123ID + `"]`
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrUnverifiedLinkingCandidate.Code, resp.Error.Code)
+	suite.mockUserMgtProvider.AssertNotCalled(suite.T(), "CreateUser")
+}
+
+// OpenID4VP marks users eligible for provisioning but sets no connection id, so it must keep
+// using the attribute path rather than falling into the federated branch.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_NoFederatedIdentifiers_UsesAttributePath() {
+	suite.expectSchemaForProvisioning()
+
+	ctx := suite.federatedCtx(false)
+	ctx.RuntimeData[common.RuntimeKeyExternalIdentity] = externalIdentityEntry("", "", federatedTestClaims())
+
+	suite.expectNoExistingUserFor(map[string]interface{}{
+		"username":       "github-login",
+		attributeEmail:   "user@example.com",
+		userAttributeSub: testFederatedSub,
+	})
+	suite.mockUserMgtProvider.On("CreateUser", mock.Anything,
+		mock.MatchedBy(func(u *providers.User) bool { return u.LinkedAccount == nil })).
+		Return(&providers.User{ID: testNewUserID, OUID: testOUID, Type: testUserType},
+			(*tidcommon.ServiceError)(nil))
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "LinkAccount",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	suite.mockEntityProvider.AssertExpectations(suite.T())
+}
+
+// A candidate was resolved for linking and nobody proved it. Provisioning here would create a
+// duplicate of the very account the flow was about to link, so it fails instead, in every flow type.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_UnverifiedCandidateFailsClosed() {
+	for _, flowType := range []providers.FlowType{
+		providers.FlowTypeAuthentication, providers.FlowTypeRegistration,
+	} {
+		suite.Run(string(flowType), func() {
+			ctx := &providers.NodeContext{
+				ExecutionID: "flow-1",
+				FlowType:    flowType,
+				RuntimeData: map[string]string{
+					common.RuntimeKeyLinkingCandidateUserIDs: `["user-1"]`,
+					common.RuntimeKeyExternalIdentity: externalIdentityEntry("idp-github", "sub-github",
+						map[string]interface{}{"sub": "sub-github"}),
+				},
+			}
+
+			resp, err := suite.executor.Execute(ctx)
+
+			assert.NoError(suite.T(), err)
+			assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+			assert.Equal(suite.T(), ErrUnverifiedLinkingCandidate.Code, resp.Error.Code)
+		})
+	}
 }

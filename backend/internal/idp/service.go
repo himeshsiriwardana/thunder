@@ -1,4 +1,4 @@
-// Copyright 2025 The ThunderID Authors
+// Copyright 2025-2026 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
 // Package idp provides the implementation for identity provider management operations.
@@ -9,11 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
+	"github.com/thunder-id/thunderid/internal/connection/connectionou"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/group"
 	"github.com/thunder-id/thunderid/internal/role"
@@ -22,6 +22,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/internal/system/utils"
+	"github.com/thunder-id/thunderid/internal/system/valuecompare"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
@@ -42,6 +43,7 @@ type IDPServiceInterface interface {
 	GetIDPUsages(ctx context.Context, idpID string) (*resourcedependency.DependenciesResponse, *tidcommon.ServiceError)
 	SetDependencyRegistry(r resourcedependency.Registry)
 	ApplySchemaAwareDefaults(ctx context.Context, idp *providers.IDPDTO)
+	ResolveIdentityProviderOU(ctx context.Context, idp *providers.IDPDTO) *tidcommon.ServiceError
 	GetDirectAuthorizationTargets(
 		ctx context.Context, idp *providers.IDPDTO, claims map[string]interface{},
 	) ([]providers.AuthorizationTarget, *tidcommon.ServiceError)
@@ -55,6 +57,7 @@ type idpService struct {
 	groupService       group.GroupServiceInterface
 	resourceService    providers.ResourceServerProvider
 	transactioner      providers.Transactioner
+	ouResolver         connectionou.ResolverInterface
 	dependencyRegistry resourcedependency.Registry
 	logger             *log.Logger
 	uuidGenerator      func() (string, error)
@@ -62,7 +65,7 @@ type idpService struct {
 
 // userTypeAttributes holds a user type's non-credential schema attributes.
 type userTypeAttributes struct {
-	name       string
+	handle     string
 	attributes []entitytype.AttributeInfo
 }
 
@@ -83,7 +86,8 @@ func (u userTypeAttributes) isRequired(attr string) bool {
 // newIDPService creates a new instance of IdPService.
 func newIDPService(idpStore idpStoreInterface, entityTypeService entitytype.EntityTypeServiceInterface,
 	roleService role.RoleServiceInterface, groupService group.GroupServiceInterface,
-	resourceService providers.ResourceServerProvider, transactioner providers.Transactioner) IDPServiceInterface {
+	resourceService providers.ResourceServerProvider, transactioner providers.Transactioner,
+	ouResolver connectionou.ResolverInterface) IDPServiceInterface {
 	return &idpService{
 		idpStore:          idpStore,
 		entityTypeService: entityTypeService,
@@ -91,6 +95,7 @@ func newIDPService(idpStore idpStoreInterface, entityTypeService entitytype.Enti
 		groupService:      groupService,
 		resourceService:   resourceService,
 		transactioner:     transactioner,
+		ouResolver:        ouResolver,
 		logger:            log.GetLogger().With(log.String(log.LoggerKeyComponentName, "IdPService")),
 		uuidGenerator:     utils.GenerateUUIDv7,
 	}
@@ -111,6 +116,9 @@ func (is *idpService) CreateIdentityProvider(
 	// silently restore a section the administrator removed.
 	is.ApplySchemaAwareDefaults(ctx, idp)
 	if svcErr := is.validateAttributeConfiguration(ctx, idp); svcErr != nil {
+		return nil, svcErr
+	}
+	if svcErr := is.ResolveIdentityProviderOU(ctx, idp); svcErr != nil {
 		return nil, svcErr
 	}
 
@@ -156,6 +164,21 @@ func (is *idpService) CreateIdentityProvider(
 	}
 
 	return idp, nil
+}
+
+// ResolveIdentityProviderOU sets the organization unit an identity provider is owned by. The owner is named by id or by
+// handle, and a handle is resolved to the id of the unit it names; when both are given the id wins. An identity
+// provider has to name an organization unit, and it has to exist. The owner is only recorded: nothing restricts what an
+// organization unit can do with an identity provider it does not own.
+func (is *idpService) ResolveIdentityProviderOU(
+	ctx context.Context, idp *providers.IDPDTO,
+) *tidcommon.ServiceError {
+	ouID, svcErr := is.ouResolver.Resolve(ctx, idp.OUID, idp.OUHandle)
+	if svcErr != nil {
+		return svcErr
+	}
+	idp.OUID = ouID
+	return nil
 }
 
 // GetIdentityProviderList retrieves the list of all Identity Providers.
@@ -277,6 +300,14 @@ func (is *idpService) UpdateIdentityProvider(
 			}
 			return err
 		}
+
+		// Prevent changing the organization unit. Leaving it out keeps the one the identity provider has.
+		ouID, ouErr := is.ouResolver.ResolveForUpdate(txCtx, idp.OUID, idp.OUHandle, existingIDP.OUID)
+		if ouErr != nil {
+			svcErr = ouErr
+			return errors.New("organization unit of an identity provider cannot be resolved")
+		}
+		idp.OUID = ouID
 
 		// If the name is being updated, check whether another IdP with the same name exists
 		if existingIDP.Name != idp.Name {
@@ -416,14 +447,14 @@ func (is *idpService) loadCandidateUserTypes(ctx context.Context) []userTypeAttr
 	candidates := make([]userTypeAttributes, 0, len(response.Types))
 	for _, userType := range response.Types {
 		attributes, attrErr := is.entityTypeService.GetAttributes(
-			ctx, entitytype.TypeCategoryUser, userType.Name,
+			ctx, entitytype.TypeCategoryUser, userType.Handle,
 			entitytype.AttributeFilter{AllowNonCredential: true})
 		if attrErr != nil {
 			is.logger.Warn(ctx, "Could not read user type attributes, skipping connection default seeding",
-				log.String("userType", userType.Name))
+				log.String("userType", userType.Handle))
 			return nil
 		}
-		candidates = append(candidates, userTypeAttributes{name: userType.Name, attributes: attributes})
+		candidates = append(candidates, userTypeAttributes{handle: userType.Handle, attributes: attributes})
 	}
 	return candidates
 }
@@ -443,7 +474,7 @@ func (is *idpService) seedEmailAccountLinking(
 	for _, userType := range candidateUserTypes {
 		if !userType.isUnique(defaultAccountLinkingAttribute) {
 			is.logger.Debug(ctx, "Email is not unique on a candidate user type, skipping linking default",
-				log.String("userType", userType.name))
+				log.String("userType", userType.handle))
 			return
 		}
 	}
@@ -480,7 +511,7 @@ func (is *idpService) seedUserTypeDefaults(
 	usernameRequiredUserTypes := make([]string, 0, len(candidateUserTypes))
 	for _, userType := range candidateUserTypes {
 		if userType.isRequired(localUsernameAttribute) {
-			usernameRequiredUserTypes = append(usernameRequiredUserTypes, userType.name)
+			usernameRequiredUserTypes = append(usernameRequiredUserTypes, userType.handle)
 		}
 	}
 
@@ -515,7 +546,7 @@ func (is *idpService) seedUserTypeDefaults(
 func firstUserTypeMatchableByEmail(candidateUserTypes []userTypeAttributes) string {
 	for _, userType := range candidateUserTypes {
 		if userType.isUnique(defaultAccountLinkingAttribute) {
-			return userType.name
+			return userType.handle
 		}
 	}
 	return ""
@@ -616,11 +647,9 @@ func (is *idpService) ensureNoBlockingDependencies(ctx context.Context, idpID st
 	})
 }
 
-// validateAttributeConfiguration validates the IDP's attribute configuration: a default user type is
-// required only when user-type attribute mappings are configured (it selects which mapping profile
-// applies), and for each user type's attributes a valid claim-mapping shape with every local (target)
-// claim a non-credential attribute defined in that user type's schema. No-op when no profile is
-// configured.
+// validateAttributeConfiguration validates the IDP's attribute configuration: a default user type
+// when user-type mappings are configured, mappings whose local claims are non-credential schema
+// attributes, and account linking per validateAccountLinking. No-op when no profile is configured.
 func (is *idpService) validateAttributeConfiguration(
 	ctx context.Context,
 	idp *providers.IDPDTO,
@@ -707,7 +736,7 @@ func (is *idpService) validateAttributeConfiguration(
 			}
 		}
 	}
-	return nil
+	return validateAccountLinking(profile)
 }
 
 // validateUserTypeResolution validates claim-driven user-type resolution. A value mapping requires an
@@ -1007,7 +1036,7 @@ func validateAuthorizationRule(
 		})
 	}
 	if valueType == providers.AuthorizationValueTypeNumber {
-		if _, err := strconv.ParseFloat(strings.TrimSpace(rule.Value), 64); err != nil {
+		if err := valuecompare.Validate(strings.TrimSpace(rule.Value), valuecompare.TypeNumber); err != nil {
 			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
 				Key: "error.idpservice.authorization_rule_mapping_value_not_number_description",
 				DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' has value " +
@@ -1017,7 +1046,7 @@ func validateAuthorizationRule(
 		}
 	}
 	if valueType == providers.AuthorizationValueTypeBoolean {
-		if _, err := strconv.ParseBool(strings.TrimSpace(rule.Value)); err != nil {
+		if err := valuecompare.Validate(strings.TrimSpace(rule.Value), valuecompare.TypeBoolean); err != nil {
 			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
 				Key: "error.idpservice.authorization_rule_mapping_value_not_boolean_description",
 				DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' has value " +

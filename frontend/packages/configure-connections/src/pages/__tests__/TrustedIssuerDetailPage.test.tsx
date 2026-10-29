@@ -17,6 +17,7 @@ const {mockMutate, mockRefetch, mockDeleteMutate} = vi.hoisted(() => ({
 const TRUSTED_ISSUER: TrustedIssuer = {
   id: 'ti-1',
   name: 'Acme Okta',
+  ouId: 'ou-1',
   issuer: 'https://acme.okta.com',
   jwksEndpoint: 'https://acme.okta.com/keys',
   idJagEnabled: true,
@@ -41,6 +42,10 @@ vi.mock('../../api/useUpdateTrustedIssuer', () => ({
 
 vi.mock('../../api/useDeleteConnection', () => ({
   default: () => ({mutate: mockDeleteMutate, isPending: false}),
+}));
+
+vi.mock('../../components/OrganizationUnitSection', () => ({
+  default: ({ouId}: {ouId: string}) => <section aria-label="Organization unit" data-ou-id={ouId} />,
 }));
 
 vi.mock('../../components/ConnectionDeleteDialog', () => ({
@@ -93,10 +98,17 @@ describe('TrustedIssuerDetailPage', () => {
     ).toBeInTheDocument();
   });
 
+  it('should show the organization unit the trusted issuer belongs to', () => {
+    render(<TrustedIssuerDetailPage />);
+
+    expect(screen.getByRole('region', {name: 'Organization unit'})).toHaveAttribute('data-ou-id', 'ou-1');
+  });
+
   it('should not render capability chips next to the page title', () => {
     render(<TrustedIssuerDetailPage />);
 
-    expect(screen.queryByText('Token exchange')).not.toBeInTheDocument();
+    // The only "Token exchange" text is the settings card heading, not a chip beside the title.
+    expect(screen.getAllByText('Token exchange')).toEqual([screen.getByRole('heading', {name: 'Token exchange'})]);
     expect(screen.queryByText('Inactive')).not.toBeInTheDocument();
     expect(screen.queryByText('ID-JAG')).not.toBeInTheDocument();
   });
@@ -131,6 +143,7 @@ describe('TrustedIssuerDetailPage', () => {
     await user.click(screen.getByText('Save changes'));
 
     expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({name: 'Updated Acme Okta'}), expect.any(Object));
+    expect(mockMutate.mock.calls[0]?.[0]).not.toHaveProperty('ouId');
   });
 
   it('should navigate back to connections when Back is clicked', async () => {

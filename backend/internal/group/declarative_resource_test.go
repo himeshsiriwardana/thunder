@@ -15,13 +15,14 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/declarative_resource/entity"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/security"
-	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/thunder-id/thunderid/tests/mocks/oumock"
 )
 
@@ -75,8 +76,10 @@ func (suite *GroupExporterTestSuite) TestGetAllResourceIDs_SinglePage() {
 		TotalResults: 2,
 	}
 
-	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 0, false).Return(groupList, nil)
-	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 2, false).Return(emptyPage, nil)
+	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 0, map[string]interface{}(nil), false).
+		Return(groupList, nil)
+	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 2, map[string]interface{}(nil), false).
+		Return(emptyPage, nil)
 
 	ids, err := suite.exporter.GetAllResourceIDs(suite.ctx)
 
@@ -102,9 +105,12 @@ func (suite *GroupExporterTestSuite) TestGetAllResourceIDs_MultiplePages() {
 		TotalResults: 2,
 	}
 
-	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 0, false).Return(page1, nil)
-	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 1, false).Return(page2, nil)
-	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 2, false).Return(emptyPage, nil)
+	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 0, map[string]interface{}(nil), false).
+		Return(page1, nil)
+	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 1, map[string]interface{}(nil), false).
+		Return(page2, nil)
+	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 2, map[string]interface{}(nil), false).
+		Return(emptyPage, nil)
 
 	ids, err := suite.exporter.GetAllResourceIDs(suite.ctx)
 
@@ -118,7 +124,8 @@ func (suite *GroupExporterTestSuite) TestGetAllResourceIDs_MultiplePages() {
 // Test GetAllResourceIDs - empty store
 func (suite *GroupExporterTestSuite) TestGetAllResourceIDs_Empty() {
 	emptyPage := &GroupListResponse{Groups: []GroupBasic{}, TotalResults: 0}
-	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 0, false).Return(emptyPage, nil)
+	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 0, map[string]interface{}(nil), false).
+		Return(emptyPage, nil)
 
 	ids, err := suite.exporter.GetAllResourceIDs(suite.ctx)
 
@@ -130,7 +137,8 @@ func (suite *GroupExporterTestSuite) TestGetAllResourceIDs_Empty() {
 // Test GetAllResourceIDs - service error
 func (suite *GroupExporterTestSuite) TestGetAllResourceIDs_ServiceError() {
 	serviceErr := &tidcommon.ServiceError{Code: "500"}
-	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 0, false).Return(nil, serviceErr)
+	suite.mockService.On("GetGroupList", suite.ctx, serverconst.MaxPageSize, 0, map[string]interface{}(nil), false).
+		Return(nil, serviceErr)
 
 	ids, err := suite.exporter.GetAllResourceIDs(suite.ctx)
 
@@ -530,7 +538,7 @@ func (suite *GroupExporterTestSuite) TestValidateGroupWrapper_OUHandleUsesRuntim
 	ouSvc := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 	ouSvc.EXPECT().
 		GetOrganizationUnitByPath(mock.MatchedBy(security.IsRuntimeContext), "root/eng").
-		Return(providers.OrganizationUnit{ID: "ou-123"}, nil).Once()
+		Return(ou.OrganizationUnit{ID: "ou-123"}, nil).Once()
 
 	grp := &groupDeclarativeResource{
 		ID:       "group1",

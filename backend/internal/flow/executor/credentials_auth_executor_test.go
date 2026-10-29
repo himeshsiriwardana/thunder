@@ -15,6 +15,7 @@ import (
 
 	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
 	"github.com/thunder-id/thunderid/internal/entityprovider"
+	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
 	"github.com/thunder-id/thunderid/tests/mocks/entityprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
@@ -218,6 +219,33 @@ func (suite *CredentialsAuthExecutorTestSuite) TestExecute_Success_RegistrationF
 	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 	assert.False(suite.T(), resp.AuthUser.IsAuthenticated())
 	suite.mockEntityProvider.AssertExpectations(suite.T())
+}
+
+func (suite *CredentialsAuthExecutorTestSuite) TestExecute_RegistrationFlow_LinkingVerificationAuthenticates() {
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeRegistration,
+		UserInputs: map[string]string{
+			userAttributeUsername: "testuser",
+			userAttributePassword: "password123",
+		},
+		RuntimeData: map[string]string{common.RuntimeKeyLinkingVerificationRequested: dataValueTrue},
+	}
+
+	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, map[string]interface{}{
+		userAttributeUsername: "testuser",
+	}, map[string]interface{}{
+		userAttributePassword: "password123",
+	}, mock.Anything, mock.Anything, mock.Anything).
+		Return(newCredentialsAuthAuthenticatedUser(), providers.AuthenticatedClaims{}, nil)
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.True(suite.T(), resp.AuthUser.IsAuthenticated())
+	suite.mockAuthnProvider.AssertExpectations(suite.T())
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything)
 }
 
 func (suite *CredentialsAuthExecutorTestSuite) TestExecute_Success_WithMultipleAttributes() {
@@ -687,4 +715,44 @@ func (suite *CredentialsAuthExecutorTestSuite) TestExecute_PreResolvedUser_WithP
 	assert.NotNil(suite.T(), resp)
 	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 	assert.True(suite.T(), resp.AuthUser.IsAuthenticated())
+}
+
+// A stated hold re-prompts, so the form still offers recovery.
+func (suite *CredentialsAuthExecutorTestSuite) TestExecute_StatedHoldsDifferFromEachOther() {
+	cases := []struct {
+		name     string
+		svcErr   *tidcommon.ServiceError
+		wantCode string
+	}{
+		{name: "a stated lock", svcErr: &authnprovidermgr.ErrorAccountLocked, wantCode: ErrAccountLocked.Code},
+		{name: "a stated suspension", svcErr: &authnprovidermgr.ErrorAccountSuspended,
+			wantCode: ErrAccountSuspended.Code},
+	}
+
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			suite.SetupTest()
+			suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything,
+				map[string]interface{}{userAttributeUsername: "testuser"},
+				map[string]interface{}{userAttributePassword: "correcthorse"},
+				mock.Anything, mock.Anything, mock.Anything).
+				Return(providers.AuthUser{}, (providers.AuthenticatedClaims)(nil), tc.svcErr).Once()
+
+			resp, err := suite.executor.Execute(&providers.NodeContext{
+				ExecutionID: "flow-hold",
+				FlowType:    providers.FlowTypeAuthentication,
+				UserInputs: map[string]string{
+					userAttributeUsername: "testuser",
+					userAttributePassword: "correcthorse",
+				},
+				RuntimeData: make(map[string]string),
+			})
+
+			suite.Require().NoError(err)
+			suite.Equal(providers.ExecUserInputRequired, resp.Status)
+			suite.Require().NotNil(resp.Error)
+			suite.Equal(tc.wantCode, resp.Error.Code)
+			suite.NotEmpty(resp.Inputs)
+		})
+	}
 }

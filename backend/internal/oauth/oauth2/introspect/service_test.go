@@ -6,6 +6,7 @@ package introspect
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -45,12 +46,26 @@ func tokenWithTyp(typ, id string) string {
 	return header + "." + payload + ".signature"
 }
 
+// accessTokenWithClaims returns an access token whose payload carries the given claims.
+func accessTokenWithClaims(t *testing.T, claims map[string]interface{}) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"` + jwt.TokenTypeAccessToken + `"}`))
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("encoding claims: %v", err)
+	}
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+}
+
 // accessTokenFor returns a token routed to the access-token validator (RFC 9068 at+jwt).
 func accessTokenFor(id string) string { return tokenWithTyp(jwt.TokenTypeAccessToken, id) }
 
 // genericTokenFor returns a token carrying the generic JWT typ, which refresh tokens share with ID
 // tokens and flow assertions; the refresh validator's claim checks separate them.
 func genericTokenFor(id string) string { return tokenWithTyp(jwt.TokenTypeJWT, id) }
+
+// refreshTokenFor returns a token carrying the rt+jwt typ refresh tokens are minted with.
+func refreshTokenFor(id string) string { return tokenWithTyp(jwt.TokenTypeRefreshToken, id) }
 
 // stubAccessToken makes the token resolve as a valid access token carrying the given raw claims.
 func (s *TokenIntrospectionServiceTestSuite) stubAccessToken(token string, claims map[string]interface{}) {
@@ -195,6 +210,42 @@ func (s *TokenIntrospectionServiceTestSuite) TestIntrospectToken_OmitsAbsentSubT
 	assert.Empty(s.T(), response.SubType)
 }
 
+// The details are returned as the token's claim text, so a number is kept exactly.
+func (s *TokenIntrospectionServiceTestSuite) TestIntrospectToken_SurfacesAuthorizationDetails() {
+	const details = `[{"type":"payment_initiation","amount":12345678901234567890.25}]`
+	claims := map[string]interface{}{"sub": "user123", constants.ClaimAuthorizationDetails: json.RawMessage(details)}
+	token := accessTokenWithClaims(s.T(), claims)
+	s.stubAccessToken(token, claims)
+
+	response, err := s.introspectService.IntrospectToken(context.Background(), token, "")
+
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), response.Active)
+	encoded, err := json.Marshal(response.AuthorizationDetails)
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), details, string(encoded))
+}
+
+func (s *TokenIntrospectionServiceTestSuite) TestIntrospectToken_OmitsEmptyOrMalformedAuthorizationDetails() {
+	cases := map[string]interface{}{
+		"empty":     []interface{}{},
+		"not-array": "payment_initiation",
+	}
+	for name, value := range cases {
+		s.Run(name, func() {
+			claims := map[string]interface{}{"sub": "user123", constants.ClaimAuthorizationDetails: value}
+			token := accessTokenWithClaims(s.T(), claims)
+			s.stubAccessToken(token, claims)
+
+			response, err := s.introspectService.IntrospectToken(context.Background(), token, "")
+
+			assert.NoError(s.T(), err)
+			assert.True(s.T(), response.Active)
+			assert.Nil(s.T(), response.AuthorizationDetails)
+		})
+	}
+}
+
 // RFC 7662 Section 2.1 covers refresh tokens as well as access tokens, so a refresh token is
 // reported active with its claims surfaced.
 func (s *TokenIntrospectionServiceTestSuite) TestIntrospectToken_RefreshToken_Active() {
@@ -280,4 +331,24 @@ func (s *TokenIntrospectionServiceTestSuite) TestIntrospectToken_DPoPBoundToken_
 	assert.Equal(s.T(), constants.TokenTypeDPoP, response.TokenType)
 	assert.NotNil(s.T(), response.Cnf)
 	assert.Equal(s.T(), "thumbprint-abc", response.Cnf.Jkt)
+}
+
+// A refresh token minted with the rt+jwt typ is introspectable. The generic-typ case above covers
+// the ones minted before rt+jwt existed, which must keep working for the migration window.
+func (s *TokenIntrospectionServiceTestSuite) TestIntrospectToken_RefreshToken_RTJWTTyp_Active() {
+	claims := map[string]interface{}{
+		"sub":              "client123",
+		"access_token_sub": "user123",
+		"scope":            "openid profile",
+		"jti":              "refresh-jti",
+	}
+	s.tokenValidatorMock.On("ValidateRefreshToken", mock.Anything, refreshTokenFor("rt")).
+		Return(&tokenservice.RefreshTokenClaims{Claims: claims}, nil)
+
+	response, err := s.introspectService.IntrospectToken(context.Background(), refreshTokenFor("rt"), "")
+
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), response.Active)
+	assert.Equal(s.T(), "refresh-jti", response.Jti)
+	assert.Equal(s.T(), "openid profile", response.Scope)
 }

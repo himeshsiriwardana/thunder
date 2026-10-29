@@ -7,7 +7,7 @@ import {Box, Chip, Typography} from '@wso2/oxygen-ui';
 import {Search} from '@wso2/oxygen-ui-icons-react';
 import {ChangeEvent, JSX, useState} from 'react';
 import {CodeCard, Pill} from './primitives';
-import {DEFAULT_ACCENT, toneColour, useInk} from './theme';
+import {DEFAULT_ACCENT, useCyan, useInk, useToneColour} from './theme';
 import useEntryVersion from '../useEntryVersion';
 import type {EcosystemApiSection, EcosystemEntry} from '@site/src/types/ecosystem';
 
@@ -30,6 +30,8 @@ function anchorOf(name: string): string {
  */
 export default function ApiReferencePage({entry}: {entry: EcosystemEntry}): JSX.Element | null {
   const ink = useInk();
+  const cyan = useCyan();
+  const toneColour = useToneColour();
   const version = useEntryVersion(entry);
   const [query, setQuery] = useState('');
 
@@ -190,13 +192,13 @@ export default function ApiReferencePage({entry}: {entry: EcosystemEntry}): JSX.
               aria-label="Breadcrumb"
               sx={{display: 'flex', alignItems: 'center', gap: 1, mb: 2.25, fontSize: '12.5px', color: ink(0.4, 0.35)}}
             >
-              <Box component={Link} to="/sdks" sx={{color: 'inherit', textDecoration: 'none'}}>
+              <Box component={Link} to="/sdks-and-tools" sx={{color: 'inherit', textDecoration: 'none'}}>
                 SDKs &amp; Tools
               </Box>
               <Box component="span" sx={{opacity: 0.5}}>
                 /
               </Box>
-              <Box component={Link} to={`/sdks/${entry.id}`} sx={{color: 'inherit', textDecoration: 'none'}}>
+              <Box component={Link} to={`/sdks-and-tools/${entry.id}`} sx={{color: 'inherit', textDecoration: 'none'}}>
                 {entry.name}
               </Box>
               <Box component="span" sx={{opacity: 0.5}}>
@@ -217,7 +219,7 @@ export default function ApiReferencePage({entry}: {entry: EcosystemEntry}): JSX.
                 </Typography>
                 <Typography sx={{fontSize: '15px', lineHeight: 1.62, color: ink(0.6, 0.55), maxWidth: 620}}>
                   The public surface of{' '}
-                  <Box component="code" sx={{fontFamily: 'monospace', fontSize: '13.5px', color: '#8bf9fa'}}>
+                  <Box component="code" sx={{fontFamily: 'monospace', fontSize: '13.5px', color: cyan}}>
                     {entry.package.name}
                   </Box>
                   , as documented in its reference pages.
@@ -308,7 +310,7 @@ export default function ApiReferencePage({entry}: {entry: EcosystemEntry}): JSX.
                           </Box>
                           <Typography
                             component="code"
-                            sx={{fontFamily: 'monospace', fontSize: '11.5px', color: '#8bf9fa', overflowWrap: 'break-word'}}
+                            sx={{fontFamily: 'monospace', fontSize: '11.5px', color: cyan, overflowWrap: 'break-word'}}
                           >
                             {row.type}
                           </Typography>

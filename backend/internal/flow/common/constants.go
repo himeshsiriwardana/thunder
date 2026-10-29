@@ -100,6 +100,9 @@ const (
 	DataOTPNumericOnly = "otpNumericOnly"
 	// DataClientSecret carries a regenerated client secret back to the caller.
 	DataClientSecret = "clientSecret" // #nosec G101 -- response field name, not a secret
+	// DataLinkingPromptDetails holds the matched account-linking attribute values for the linking
+	// prompt, as a JSON array of {"label","value"} objects.
+	DataLinkingPromptDetails = "linkingPromptDetails"
 )
 
 // Error assertion claims.
@@ -139,6 +142,17 @@ const (
 	// checkpoint it guards. The checkpoint id is that join node's id, so the skip and join of one
 	// checkpoint pair by it. Absent/empty means the node is not part of a checkpoint pair.
 	NodePropertyCheckpointRef = "checkpointRef"
+	// NodePropertyConnectionID names the HTTP endpoint connection an extension step calls.
+	NodePropertyConnectionID = "connectionId"
+	// NodePropertyInputKeys names the user inputs an extension step sends.
+	NodePropertyInputKeys = "inputKeys"
+	// NodePropertyRuntimeDataKeys restricts the runtime data an extension step sends.
+	NodePropertyRuntimeDataKeys = "runtimeDataKeys"
+	// NodePropertyResponseKeys restricts the response fields an extension step stores.
+	NodePropertyResponseKeys = "responseKeys"
+	// NodePropertyMaxAttempts bounds the attempts a step accepts in one flow execution, such as OTP
+	// sends or an extension step's FAILED and INCOMPLETE answers.
+	NodePropertyMaxAttempts = "maxAttempts"
 )
 
 // RuntimeData keys.
@@ -153,6 +167,9 @@ const (
 	// pre-processing node produces for the executors that follow. It travels on the engine context's
 	// cross-frame store, so it survives a CALL into another flow.
 	RuntimeKeyRevocationPlan = "revocationPlan"
+	// RuntimeKeyProvenSubject holds the identity whose control was proven in this execution. The
+	// credential setter writes it after a credential write; a node acting on proof reads it here.
+	RuntimeKeyProvenSubject = "provenSubject"
 	// RuntimeKeyClientID holds the OAuth client ID for the current flow execution, if applicable.
 	RuntimeKeyClientID = "clientId"
 	// RuntimeKeyRequestedPermissions holds the space-separated permission scopes requested by the OAuth client.
@@ -241,8 +258,24 @@ const (
 	// on both the consumption device and the authentication device to correlate the CIBA request.
 	RuntimeKeyBindingMessage = "bindingMessage"
 	// RuntimeKeyEntityState holds the entity existence state, set by the IdentifyingExecutor in
-	// check_state mode or by the federated auth executors from their account-linking result.
+	// check_state and resolve modes, or by the federated auth executors and the linking executor
+	// once the identity resolves to an entity. The federated auth executors set it to ambiguous when
+	// several entities hold the identity's link.
 	RuntimeKeyEntityState = "entityState"
+	// RuntimeKeyExternalIdentity holds what an external party asserted, as the JSON encoding of
+	// core.ExternalIdentity: the connection and subject of a federated authentication, and the claims.
+	// Set by the federated auth executors and the OpenID4VP verifier. Claims live only here, never
+	// under their own names, so no claim can stand in for the state executors keep in RuntimeData.
+	RuntimeKeyExternalIdentity = "externalIdentity"
+	// RuntimeKeyLinkingCandidateUserIDs holds the entity ids the linking executor sent to verification,
+	// as a JSON array. Set when verification is requested and cleared once linking settles.
+	RuntimeKeyLinkingCandidateUserIDs = "linkingCandidateUserIds"
+	// RuntimeKeyLinkingVerificationRequested marks that the linking executor asked for verification.
+	// Set when it asks, kept while the prompt is offered again, and cleared when linking settles.
+	RuntimeKeyLinkingVerificationRequested = "linkingVerificationRequested"
+	// RuntimeKeyLinkingCheckpoint holds, as JSON, the RuntimeData and AuthUser from when the linking
+	// executor asked for verification. It lives as long as RuntimeKeyLinkingVerificationRequested.
+	RuntimeKeyLinkingCheckpoint = "linkingCheckpoint"
 	// RuntimeKeyAuthorizationRequestID holds the auth request identifier bound to the current flow
 	// execution (the OAuth authorize authId or the CIBA auth_req_id), if applicable.
 	RuntimeKeyAuthorizationRequestID = "authorizationRequestId"
@@ -298,7 +331,28 @@ const (
 	// RuntimeKeyMappedPermissions holds the JSON-encoded []providers.AuthorizationTarget permission
 	// targets a federated login's authorization mapping (rule-based or direct) resolved.
 	RuntimeKeyMappedPermissions = "mapped_permissions"
+	// RuntimeKeyExtensionAttemptCount holds the number of FAILED and INCOMPLETE answers an extension
+	// step has had in the current flow execution, scoped to the step by ExtensionAttemptCountKey.
+	RuntimeKeyExtensionAttemptCount = "extensionAttemptCount"
 )
+
+// ExtensionDataKeyPrefix starts every runtime-data key an extension step stores from its service's
+// answer, as extension.<nodeId>.<field>, so a returned field never names an engine key, a profile
+// attribute or a credential.
+const ExtensionDataKeyPrefix = "extension."
+
+// Bounds and default of an extension step's maxAttempts property.
+const (
+	extensionMinAttempts     = 1
+	extensionMaxAttempts     = 20
+	extensionDefaultAttempts = 5
+)
+
+// ExtensionAttemptCountKey scopes RuntimeKeyExtensionAttemptCount to an extension step's node ID, so
+// two extension steps in one flow count separately.
+func ExtensionAttemptCountKey(nodeID string) string {
+	return RuntimeKeyExtensionAttemptCount + ":" + nodeID
+}
 
 // SSOCheckpointKey scopes a per-checkpoint SSO control key (RuntimeKeySSOSessionPresent,
 // RuntimeKeySSOSessionSaved) to a checkpoint id, so multiple skip/join checkpoints in one flow keep

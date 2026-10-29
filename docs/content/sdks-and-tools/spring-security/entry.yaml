@@ -41,37 +41,6 @@ hero:
       href: https://docs.spring.io/spring-security/reference/
       variant: secondary
       external: true
-  aside:
-    type: install
-    footnote: Spring's own starters · Boot 3.2+ · Java 17+
-    tabs:
-      - label: gradle
-        code:
-          file: build.gradle.kts
-          lang: kotlin
-          content: |-
-            implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
-            implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
-      - label: groovy
-        code:
-          file: build.gradle
-          lang: groovy
-          content: |-
-            implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
-            implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
-      - label: maven
-        code:
-          file: pom.xml
-          lang: xml
-          content: |-
-            <dependency>
-              <groupId>org.springframework.boot</groupId>
-              <artifactId>spring-boot-starter-oauth2-client</artifactId>
-            </dependency>
-            <dependency>
-              <groupId>org.springframework.boot</groupId>
-              <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
-            </dependency>
 
 sections:
   - type: steps
@@ -79,7 +48,8 @@ sections:
     title: Handling authentication
     meta: "~8 min"
     intro: >-
-      Four files, all standard Spring Security: login flow, token validation, and scope-based access control.
+      Five steps, all standard Spring Security: login flow, token validation, scope-based access control, and
+      back-channel logout.
       Spring Security is maintained by the Spring team; {{ProductName}} maintains this guide and the
       configuration below.
     steps:
@@ -170,6 +140,41 @@ sections:
               }
             }
         note: Enable @PreAuthorize with @EnableMethodSecurity on any configuration class.
+      - title: Receive back-channel logout
+        description: >-
+          Spring Security implements OpenID Connect Back-Channel Logout. These additions to the configuration above
+          stand up the receiving endpoint and end the matching Spring session when {{ProductName}} posts a logout
+          token. Register the endpoint URL as the application's back-channel logout URI in {{ProductName}}. They need
+          Spring Security 6.4 or later, which Spring Boot 3.4 ships.
+        code:
+          file: SecurityConfig.java
+          lang: java
+          content: |-
+            @Bean
+            OidcSessionRegistry oidcSessionRegistry() {
+              return new InMemoryOidcSessionRegistry();
+            }
+
+            @Bean
+            OidcBackChannelLogoutHandler oidcLogoutHandler(OidcSessionRegistry oidcSessionRegistry) {
+              return new OidcBackChannelLogoutHandler(oidcSessionRegistry);
+            }
+
+            // Removes a registry entry when its servlet session ends
+            @Bean
+            HttpSessionEventPublisher sessionEventPublisher() {
+              return new HttpSessionEventPublisher();
+            }
+
+            // In the SecurityFilterChain, next to oauth2Login(...):
+            .oidcLogout(logout -> logout.backChannel(Customizer.withDefaults()))
+        note: >-
+          The endpoint is /logout/connect/back-channel/thunderid, where thunderid is the registration id. Spring
+          correlates each login's sid to the servlet session in the OidcSessionRegistry, which this example keeps in
+          memory. Several instances need a shared OidcSessionRegistry and a shared servlet session store, such as
+          Spring Session, since the notification can reach an instance that does not hold the session. The handler
+          sends the JSESSIONID cookie by default; with Spring Session's SESSION cookie, call
+          setSessionCookieName("SESSION") on the handler.
 
   - type: table
     id: mapping
@@ -206,23 +211,6 @@ sections:
         badge: {label: supported, tone: success}
       - cells: [Spring Boot 2.7 / Security 5, legacy]
         badge: {label: unsupported, tone: danger}
-
-  - type: linkGrid
-    id: beyond
-    title: Beyond this guide
-    intro: >-
-      Everything past this configuration is ordinary Spring Security, documented by the Spring team. These are
-      the pages worth bookmarking.
-    items:
-      - label: OAuth2 Login
-        href: https://docs.spring.io/spring-security/reference/servlet/oauth2/login/index.html
-        external: true
-      - label: OAuth2 Resource Server
-        href: https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/index.html
-        external: true
-      - label: Method security
-        href: https://docs.spring.io/spring-security/reference/servlet/authorization/method-security.html
-        external: true
 
   - type: support
     id: support

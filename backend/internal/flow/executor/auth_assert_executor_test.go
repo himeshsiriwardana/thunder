@@ -19,6 +19,7 @@ import (
 	authnassert "github.com/thunder-id/thunderid/internal/authn/assert"
 	authncm "github.com/thunder-id/thunderid/internal/authn/common"
 	"github.com/thunder-id/thunderid/internal/entityprovider"
+	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
@@ -27,9 +28,11 @@ import (
 	"github.com/thunder-id/thunderid/tests/mocks/authn/assertmock"
 	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
 	"github.com/thunder-id/thunderid/tests/mocks/entityprovidermock"
+	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
+	"github.com/thunder-id/thunderid/tests/mocks/identitygovernanceprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/jose/jwtmock"
-	"github.com/thunder-id/thunderid/tests/mocks/oumock"
+	"github.com/thunder-id/thunderid/tests/mocks/ouprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/rolemock"
 )
 
@@ -43,13 +46,14 @@ const (
 type AuthAssertExecutorTestSuite struct {
 	suite.Suite
 	mockJWTService        *jwtmock.JWTServiceInterfaceMock
-	mockOUService         *oumock.OrganizationUnitServiceInterfaceMock
+	mockOUService         *ouprovidermock.OrganizationUnitProviderMock
 	mockAssertGenerator   *assertmock.AuthAssertGeneratorInterfaceMock
 	mockAuthnProvider     *managermock.AuthnProviderManagerMock
 	mockEntityProvider    *entityprovidermock.EntityProviderInterfaceMock
 	mockFlowFactory       *coremock.FlowFactoryInterfaceMock
 	mockAttributeCacheSvc *attributecachemock.AttributeCacheServiceInterfaceMock
 	mockRoleService       *rolemock.RoleServiceInterfaceMock
+	mockEntityTypeService *entitytypemock.EntityTypeServiceInterfaceMock
 	executor              *authAssertExecutor
 }
 
@@ -62,13 +66,14 @@ func (suite *AuthAssertExecutorTestSuite) SetupTest() {
 	_ = initializeTestRuntime()
 
 	suite.mockJWTService = jwtmock.NewJWTServiceInterfaceMock(suite.T())
-	suite.mockOUService = oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
+	suite.mockOUService = ouprovidermock.NewOrganizationUnitProviderMock(suite.T())
 	suite.mockAssertGenerator = assertmock.NewAuthAssertGeneratorInterfaceMock(suite.T())
 	suite.mockAuthnProvider = managermock.NewAuthnProviderManagerMock(suite.T())
 	suite.mockEntityProvider = entityprovidermock.NewEntityProviderInterfaceMock(suite.T())
 	suite.mockFlowFactory = coremock.NewFlowFactoryInterfaceMock(suite.T())
 	suite.mockAttributeCacheSvc = attributecachemock.NewAttributeCacheServiceInterfaceMock(suite.T())
 	suite.mockRoleService = rolemock.NewRoleServiceInterfaceMock(suite.T())
+	suite.mockEntityTypeService = entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
 
 	mockExec := createMockExecutorSimple(suite.T(), ExecutorNameAuthAssert, providers.ExecutorTypeUtility)
 	suite.mockFlowFactory.On("CreateExecutor", ExecutorNameAuthAssert, providers.ExecutorTypeUtility,
@@ -76,7 +81,8 @@ func (suite *AuthAssertExecutorTestSuite) SetupTest() {
 
 	suite.executor = newAuthAssertExecutor(suite.mockFlowFactory, suite.mockJWTService,
 		suite.mockOUService, suite.mockAssertGenerator, suite.mockAuthnProvider, suite.mockEntityProvider,
-		suite.mockAttributeCacheSvc, suite.mockRoleService)
+		suite.mockAttributeCacheSvc, suite.mockRoleService,
+		suite.mockEntityTypeService, newAccessGuard(admitAllAccess(suite.T())))
 }
 
 func createMockExecutorSimple(t *testing.T, name string,
@@ -204,6 +210,75 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_UserNotAuthenticated() {
 	assert.NotNil(suite.T(), resp)
 	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
 	assert.Equal(suite.T(), ErrUserNotAuthenticated.Error.DefaultValue, resp.Error.Error.DefaultValue)
+}
+
+// A provider rejecting the entity-reference fetch as a client error is the identity naming no local
+// user, which is the caller's input. It has to reach the flow as its own client error: wrapping it
+// in a plain error loses the classification and the whole execution answers 500.
+func (suite *AuthAssertExecutorTestSuite) TestExecute_EntityReferenceClientErrorFailsAsClientError() {
+	ctx := &providers.NodeContext{
+		ExecutionID:      "flow-123",
+		FlowType:         providers.FlowTypeAuthentication,
+		AuthUser:         newTestAuthenticatedAuthUser(),
+		ExecutionHistory: map[string]*providers.NodeExecutionRecord{},
+		Application:      providers.Application{},
+	}
+
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(providers.AuthUser{}, (*providers.EntityReference)(nil),
+			&tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "AUTHN-MGR-1009"})
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err, "a client error must not escape as an executor fault")
+	assert.NotNil(suite.T(), resp)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrFailedToIdentifyEntity.Code, resp.Error.Code)
+	assert.Equal(suite.T(), tidcommon.ClientErrorType, resp.Error.Type)
+}
+
+// A server error on the same fetch stays a server error: the execution collapsing to 500 is correct
+// there, and the classification is what tells the two apart.
+func (suite *AuthAssertExecutorTestSuite) TestExecute_EntityReferenceServerErrorStaysAFault() {
+	ctx := &providers.NodeContext{
+		ExecutionID:      "flow-123",
+		FlowType:         providers.FlowTypeAuthentication,
+		AuthUser:         newTestAuthenticatedAuthUser(),
+		ExecutionHistory: map[string]*providers.NodeExecutionRecord{},
+		Application:      providers.Application{},
+	}
+
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(providers.AuthUser{}, (*providers.EntityReference)(nil),
+			&tidcommon.ServiceError{Type: tidcommon.ServerErrorType, Code: "AUTHN-MGR-5000"})
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), resp)
+}
+
+// The attribute fetch on the same path had the same collapse, so it carries its own client error too.
+func (suite *AuthAssertExecutorTestSuite) TestExecute_UserAttributesClientErrorFailsAsClientError() {
+	ctx := &providers.NodeContext{
+		ExecutionID:      "flow-123",
+		FlowType:         providers.FlowTypeAuthentication,
+		AuthUser:         newTestAuthenticatedAuthUser(),
+		ExecutionHistory: map[string]*providers.NodeExecutionRecord{},
+		Application:      providers.Application{},
+	}
+
+	suite.setupGetEntityReference("", "")
+	suite.mockAuthnProvider.On("GetUserAttributes", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(providers.AuthUser{}, (*providers.AttributesResponse)(nil),
+			&tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "AUTHN-MGR-1009"})
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), resp)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrAttributeRetrievalFailed.Code, resp.Error.Code)
 }
 
 func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAuthorizedPermissions() {
@@ -425,6 +500,8 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_AssertionGenerationFails_S
 		Application: providers.Application{},
 	}
 
+	// The subject is resolved before the assertion is generated.
+	suite.setupGetEntityReference("", "")
 	suite.mockAssertGenerator.On("GenerateAssertion", mock.Anything, mock.Anything).
 		Return(nil, &tidcommon.ServiceError{
 			Type:  tidcommon.ServerErrorType,
@@ -701,7 +778,7 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_AppendOUDetailsToClaimsFai
 	_, err := suite.executor.Execute(ctx)
 
 	assert.Error(suite.T(), err)
-	assert.Contains(suite.T(), err.Error(), "something went wrong while fetching organization unit")
+	assert.Contains(suite.T(), err.Error(), "failed to fetch organization unit details")
 	suite.mockOUService.AssertExpectations(suite.T())
 }
 
@@ -772,7 +849,7 @@ func (suite *AuthAssertExecutorTestSuite) TestAppendOUDetailsToClaims_GetOrganiz
 	_, err := suite.executor.Execute(ctx)
 
 	assert.Error(suite.T(), err)
-	assert.Contains(suite.T(), err.Error(), "something went wrong while fetching organization unit")
+	assert.Contains(suite.T(), err.Error(), "failed to fetch organization unit details")
 	assert.Contains(suite.T(), err.Error(), "organization unit does not exist")
 	suite.mockOUService.AssertExpectations(suite.T())
 }
@@ -1380,7 +1457,7 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithGroups()
 		Return(userGroups, nil)
 
 	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{oauth2const.UserAttributeGroups},
-		nil, "user-123", "", "")
+		nil, "user-123", "", "", "")
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), attrs)
@@ -1401,7 +1478,7 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithGroups_F
 		Return(nil, &entityprovider.EntityProviderError{Message: "groups_fetch_failed", Description: "database error"})
 
 	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{oauth2const.UserAttributeGroups},
-		nil, "user-123", "", "")
+		nil, "user-123", "", "", "")
 
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), attrs)
@@ -1417,13 +1494,52 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithGroups_E
 	}
 
 	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{oauth2const.UserAttributeGroups},
-		nil, "", "", "")
+		nil, "", "", "", "")
 
 	assert.NoError(suite.T(), err)
 	// Groups attribute should not be present when UserID is empty
 	_, hasGroups := attrs[oauth2const.UserAttributeGroups]
 	assert.False(suite.T(), hasGroups)
 	suite.mockEntityProvider.AssertNotCalled(suite.T(), "GetTransitiveEntityGroups")
+}
+
+// A linked sign-in resolves to a local user, so the stored profile wins over a conflicting claim from
+// the identity provider. The claim still fills an attribute the profile does not hold.
+func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_StoredProfileWinsOverExternalClaim() {
+	execResp := &providers.ExecutorResponse{}
+	suite.Require().NoError(setExternalIdentity(execResp, "idp-a", "sub-1", map[string]interface{}{
+		"email":   "alice.personal@gmail.com",
+		"picture": "https://example.com/alice.png",
+	}))
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		Context:     context.Background(),
+		RuntimeData: execResp.RuntimeData,
+	}
+
+	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{"email", "picture"},
+		map[string]interface{}{"email": "alice@corp.com"}, "user-123", "", "", "")
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "alice@corp.com", attrs["email"])
+	assert.Equal(suite.T(), "https://example.com/alice.png", attrs["picture"])
+}
+
+func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_ExtensionAnswerDoesNotReplaceProfile() {
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		Context:     context.Background(),
+		RuntimeData: map[string]string{
+			"extension.pin_check.email": "mallory@example.com",
+			"extension.pin_check.pin":   "1234",
+		},
+	}
+
+	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{"email", "pin"},
+		map[string]interface{}{"email": "alice@corp.com"}, "user-123", "", "", "")
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), map[string]interface{}{"email": "alice@corp.com"}, attrs)
 }
 
 func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithUserType() {
@@ -1434,11 +1550,97 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithUserType
 	}
 
 	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{oauth2const.ClaimUserType},
-		nil, "user-123", "INTERNAL", "")
+		nil, "user-123", "", "INTERNAL", "")
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), attrs)
 	assert.Equal(suite.T(), "INTERNAL", attrs[oauth2const.ClaimUserType])
+}
+
+func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_UserType_EmitsDisplayName() {
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		Context:     context.Background(),
+		RuntimeData: map[string]string{},
+	}
+
+	suite.mockEntityTypeService.On("GetEntityTypeByHandle",
+		mock.Anything, entitytype.TypeCategoryUser, "retail-customer").
+		Return(&entitytype.EntityType{Handle: "retail-customer", DisplayName: "Retail Customer"}, nil)
+
+	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{oauth2const.ClaimUserType},
+		nil, "user-123", string(providers.EntityCategoryUser), "retail-customer", "")
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), attrs)
+	assert.Equal(suite.T(), "Retail Customer", attrs[oauth2const.ClaimUserType])
+	suite.mockEntityTypeService.AssertExpectations(suite.T())
+}
+
+func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_UserTypeHandleAndName_Separately() {
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		Context:     context.Background(),
+		RuntimeData: map[string]string{},
+	}
+
+	suite.mockEntityTypeService.On("GetEntityTypeByHandle",
+		mock.Anything, entitytype.TypeCategoryUser, "retail-customer").
+		Return(&entitytype.EntityType{Handle: "retail-customer", DisplayName: "Retail Customer"}, nil)
+
+	attrs, err := suite.executor.resolveUserAttributes(ctx,
+		[]string{oauth2const.ClaimUserTypeHandle, oauth2const.ClaimUserTypeName},
+		nil, "user-123", string(providers.EntityCategoryUser), "retail-customer", "")
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), attrs)
+	assert.Equal(suite.T(), "retail-customer", attrs[oauth2const.ClaimUserTypeHandle])
+	assert.Equal(suite.T(), "Retail Customer", attrs[oauth2const.ClaimUserTypeName])
+	_, hasLegacy := attrs[oauth2const.ClaimUserType]
+	assert.False(suite.T(), hasLegacy, "legacy userType claim is not emitted when not configured")
+	suite.mockEntityTypeService.AssertExpectations(suite.T())
+}
+
+func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_UserType_LookupFailure_ReturnsError() {
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		Context:     context.Background(),
+		RuntimeData: map[string]string{},
+	}
+
+	suite.mockEntityTypeService.On("GetEntityTypeByHandle", mock.Anything, entitytype.TypeCategoryUser, "person").
+		Return((*entitytype.EntityType)(nil), &tidcommon.ServiceError{
+			Error: tidcommon.I18nMessage{DefaultValue: "not found"},
+		})
+
+	configured := []string{
+		oauth2const.ClaimUserType,
+		oauth2const.ClaimUserTypeHandle,
+		oauth2const.ClaimUserTypeName,
+	}
+	attrs, err := suite.executor.resolveUserAttributes(ctx, configured,
+		nil, "user-123", string(providers.EntityCategoryUser), "person", "")
+
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "failed to fetch entity type details for handle person")
+	assert.Nil(suite.T(), attrs)
+	suite.mockEntityTypeService.AssertExpectations(suite.T())
+}
+
+func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_UserTypeHandleOnly_SkipsLookup() {
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		Context:     context.Background(),
+		RuntimeData: map[string]string{},
+	}
+
+	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{oauth2const.ClaimUserTypeHandle},
+		nil, "user-123", string(providers.EntityCategoryUser), "person", "")
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "person", attrs[oauth2const.ClaimUserTypeHandle])
+	suite.mockEntityTypeService.AssertNotCalled(suite.T(), "GetEntityTypeByHandle",
+		mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithEmptyUserType_NotAdded() {
@@ -1449,7 +1651,7 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithEmptyUse
 	}
 
 	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{oauth2const.ClaimUserType},
-		nil, "user-123", "", "")
+		nil, "user-123", "", "", "")
 
 	assert.NoError(suite.T(), err)
 	_, hasUserType := attrs[oauth2const.ClaimUserType]
@@ -1468,7 +1670,7 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithOUDetail
 
 	attrs, err := suite.executor.resolveUserAttributes(ctx,
 		[]string{oauth2const.ClaimOUID, oauth2const.ClaimOUName, oauth2const.ClaimOUHandle},
-		nil, "user-123", "", testAuthOUID)
+		nil, "user-123", "", "", testAuthOUID)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), attrs)
@@ -1494,11 +1696,11 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithOUDetail
 		})
 
 	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{oauth2const.ClaimOUID},
-		nil, "user-123", "", "ou-invalid")
+		nil, "user-123", "", "", "ou-invalid")
 
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), attrs)
-	assert.Contains(suite.T(), err.Error(), "something went wrong while fetching organization unit")
+	assert.Contains(suite.T(), err.Error(), "failed to fetch organization unit details")
 	suite.mockOUService.AssertExpectations(suite.T())
 }
 
@@ -1510,7 +1712,7 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithOUDetail
 	}
 
 	attrs, err := suite.executor.resolveUserAttributes(ctx, []string{oauth2const.ClaimOUID},
-		nil, "user-123", "", "")
+		nil, "user-123", "", "", "")
 
 	assert.NoError(suite.T(), err)
 	_, hasOUID := attrs[oauth2const.ClaimOUID]
@@ -1532,7 +1734,7 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_RawJWT_Bypas
 		providers.RawJWTAttributeKey: "header.payload.signature",
 	}
 
-	attrs, err := suite.executor.resolveUserAttributes(ctx, nil, fetchedAttributes, "user-123", "", "")
+	attrs, err := suite.executor.resolveUserAttributes(ctx, nil, fetchedAttributes, "user-123", "", "", "")
 
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), map[string]interface{}{
@@ -1948,4 +2150,131 @@ func (suite *AuthAssertExecutorTestSuite) TestExecute_AttributeCannotOverwriteSi
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+// newGovernedExecutor rebuilds the suite's executor over the governance provider.
+func (suite *AuthAssertExecutorTestSuite) newGovernedExecutor(governance providers.IdentityGovernanceProvider) {
+	suite.executor = newAuthAssertExecutor(suite.mockFlowFactory, suite.mockJWTService,
+		suite.mockOUService, suite.mockAssertGenerator, suite.mockAuthnProvider,
+		suite.mockEntityProvider, suite.mockAttributeCacheSvc, suite.mockRoleService,
+		suite.mockEntityTypeService, newAccessGuard(governance))
+}
+
+// governedAssertionContext is an authenticated assertion node context.
+func governedAssertionContext() *providers.NodeContext {
+	return &providers.NodeContext{
+		ExecutionID: "flow-123",
+		EntityID:    "app-123",
+		Context:     context.Background(),
+		AuthUser:    newTestAuthenticatedAuthUser(),
+		RuntimeData: map[string]string{},
+	}
+}
+
+// expectAssertedUser stubs the entity reference, attributes and JWT for a successful assertion of the
+// test user.
+func (suite *AuthAssertExecutorTestSuite) expectAssertedUser() {
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(providers.AuthUser{}, &providers.EntityReference{
+			EntityID: testUserID, EntityCategory: "user", EntityType: "Person",
+		}, (*tidcommon.ServiceError)(nil)).Once()
+	suite.setupGetUserAttributesWith(map[string]*providers.AttributeResponse{})
+	suite.mockJWTService.On("GenerateJWT", mock.Anything, testUserID, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything).Return("jwt-token", int64(3600), nil)
+}
+
+// expectHeldUser stubs the entity reference of the test user for an assertion that is refused.
+func (suite *AuthAssertExecutorTestSuite) expectHeldUser() {
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(providers.AuthUser{}, &providers.EntityReference{
+			EntityID: testUserID, EntityCategory: "user", EntityType: "Person",
+		}, (*tidcommon.ServiceError)(nil))
+}
+
+func (suite *AuthAssertExecutorTestSuite) TestExecute_RecordsAccessGrantedForTheAdmittedSubject() {
+	governance := expectSignIn(suite.T(), testUserID, providers.AccessDecision{Admitted: true}, nil)
+	governance.EXPECT().RecordLogin(mock.Anything, testUserID).Return(nil).Once()
+	suite.newGovernedExecutor(governance)
+	suite.expectAssertedUser()
+
+	resp, err := suite.executor.Execute(governedAssertionContext())
+
+	suite.Require().NoError(err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	governance.AssertExpectations(suite.T())
+}
+
+func (suite *AuthAssertExecutorTestSuite) TestExecute_WithoutGovernanceAsserts() {
+	suite.newGovernedExecutor(nil)
+	suite.expectAssertedUser()
+
+	resp, err := suite.executor.Execute(governedAssertionContext())
+
+	suite.Require().NoError(err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), "jwt-token", resp.Assertion)
+}
+
+func (suite *AuthAssertExecutorTestSuite) TestExecute_UnreadableAuthorityIsAServerFault() {
+	governance := expectSignIn(suite.T(), testUserID, providers.AccessDecision{}, &tidcommon.InternalServerError)
+	suite.newGovernedExecutor(governance)
+	suite.expectHeldUser()
+
+	_, err := suite.executor.Execute(governedAssertionContext())
+
+	suite.Require().Error(err)
+	governance.AssertNotCalled(suite.T(), "RecordLogin", mock.Anything, mock.Anything)
+}
+
+func (suite *AuthAssertExecutorTestSuite) TestExecute_RefusesAHeldSubjectAndRecordsNothing() {
+	for name, test := range map[string]struct {
+		decision providers.AccessDecision
+		want     string
+	}{
+		"no hold named": {providers.AccessDecision{}, ErrInvalidCredentials.Code},
+		"lock":          {providers.AccessDecision{Reason: providers.AccessRefusalReasonLocked}, ErrAccountLocked.Code},
+		"suspension": {providers.AccessDecision{Reason: providers.AccessRefusalReasonSuspended},
+			ErrAccountSuspended.Code},
+	} {
+		suite.Run(name, func() {
+			suite.SetupTest()
+			governance := expectSignIn(suite.T(), testUserID, test.decision, nil)
+			suite.newGovernedExecutor(governance)
+			suite.expectHeldUser()
+
+			resp, err := suite.executor.Execute(governedAssertionContext())
+
+			suite.Require().NoError(err)
+			assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+			assert.Equal(suite.T(), test.want, resp.Error.Code)
+			governance.AssertNotCalled(suite.T(), "RecordLogin", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// The assertion is never signed for an entity the governance provider was not asked about.
+func (suite *AuthAssertExecutorTestSuite) TestExecute_UnresolvedEntityReferenceIsAFault() {
+	for name, test := range map[string]struct {
+		entityRef *providers.EntityReference
+		svcErr    *tidcommon.ServiceError
+	}{
+		"server error":  {nil, &tidcommon.InternalServerError},
+		"nil reference": {nil, nil},
+	} {
+		suite.Run(name, func() {
+			suite.SetupTest()
+			governance := identitygovernanceprovidermock.NewIdentityGovernanceProviderMock(suite.T())
+			suite.newGovernedExecutor(governance)
+			suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+				Return(providers.AuthUser{}, test.entityRef, test.svcErr).Once()
+
+			resp, err := suite.executor.Execute(governedAssertionContext())
+
+			suite.Require().Error(err)
+			assert.Nil(suite.T(), resp)
+			governance.AssertNotCalled(suite.T(), "AdmitSignIn", mock.Anything, mock.Anything)
+			suite.mockJWTService.AssertNotCalled(suite.T(), "GenerateJWT", mock.Anything, mock.Anything,
+				mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
 }

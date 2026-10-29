@@ -8,10 +8,11 @@ import (
 	"time"
 )
 
-// UserType represents a user type definition
+// UserType represents a user type definition.
 type UserType struct {
 	ID                    string                    `json:"id,omitempty"`
-	Name                  string                    `json:"name"`
+	Handle                string                    `json:"handle"`
+	DisplayName           string                    `json:"displayName"`
 	OUID                  string                    `json:"ouId"`
 	AllowSelfRegistration bool                      `json:"allowSelfRegistration,omitempty"`
 	SystemAttributes      *UserTypeSystemAttributes `json:"systemAttributes,omitempty"`
@@ -21,7 +22,8 @@ type UserType struct {
 // UserTypeSystemAttributes carries the system-level settings of a user type, such as the
 // attribute used to render a human-readable display name.
 type UserTypeSystemAttributes struct {
-	Display string `json:"display,omitempty"`
+	Display      string `json:"display,omitempty"`
+	PrimaryEmail string `json:"primaryEmail,omitempty"`
 }
 
 // User represents a user in the system
@@ -32,6 +34,7 @@ type User struct {
 	Type       string          `json:"type"`
 	Display    string          `json:"display,omitempty"`
 	Attributes json.RawMessage `json:"attributes"`
+	IsOwnedByOU    *bool           `json:"isOwnedByOU,omitempty"`
 }
 
 // Application represents an application in the system
@@ -46,6 +49,7 @@ type Application struct {
 	AuthFlowID                string                   `json:"authFlowId,omitempty"`
 	RegistrationFlowID        string                   `json:"registrationFlowId,omitempty"`
 	RecoveryFlowID            string                   `json:"recoveryFlowId,omitempty"`
+	SignOutFlowID             string                   `json:"signOutFlowId,omitempty"`
 	ClientID                  string                   `json:"clientId,omitempty"`
 	ClientSecret              string                   `json:"clientSecret,omitempty"`
 	RedirectURIs              []string                 `json:"redirectUris,omitempty"`
@@ -203,6 +207,7 @@ type IDP struct {
 	Name                   string                  `json:"name"`
 	Description            string                  `json:"description"`
 	Type                   string                  `json:"type"`
+	OUID                   string                  `json:"ouId,omitempty"`
 	Properties             []IDPProperty           `json:"properties"`
 	AttributeConfiguration *AttributeConfiguration `json:"attributeConfiguration,omitempty"`
 }
@@ -321,6 +326,33 @@ type TokenHTTPResult struct {
 	Token      *TokenResponse
 }
 
+// IntrospectionResult is the part of an introspection answer the tests read.
+type IntrospectionResult struct {
+	Active bool   `json:"active"`
+	Sub    string `json:"sub"`
+}
+
+// AccessStatus is the effective access status a management read of a user, an agent or an
+// application reports.
+type AccessStatus struct {
+	Value   string               `json:"value"`
+	Details *AccessStatusDetails `json:"details"`
+}
+
+// AccessStatusDetails says what produced a hold. An application read carries none.
+type AccessStatusDetails struct {
+	Reason        string         `json:"reason"`
+	Since         string         `json:"since"`
+	OperatorNote  string         `json:"operatorNote"`
+	LockedMethods []LockedMethod `json:"lockedMethods"`
+}
+
+// LockedMethod is one live lock, with its expiry, empty for a lock that does not lapse.
+type LockedMethod struct {
+	Method    string `json:"method"`
+	ExpiresAt string `json:"expiresAt"`
+}
+
 // AuthorizationResponse represents the response from authorization completion
 type AuthorizationResponse struct {
 	RedirectURI string `json:"redirect_uri"`
@@ -410,10 +442,11 @@ type FlowErrorResponse struct {
 
 // Flow represents a flow definition
 type Flow struct {
-	Name     string      `json:"name"`
-	FlowType string      `json:"flowType"`
-	Handle   string      `json:"handle"`
-	Nodes    interface{} `json:"nodes"`
+	Name         string      `json:"name"`
+	FlowType     string      `json:"flowType"`
+	Handle       string      `json:"handle"`
+	Interceptors interface{} `json:"interceptors,omitempty"`
+	Nodes        interface{} `json:"nodes"`
 }
 
 // NotificationSender represents a notification sender in the system
@@ -422,6 +455,7 @@ type NotificationSender struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description"`
 	Provider    string           `json:"provider"`
+	OUID        string           `json:"ouId,omitempty"`
 	Properties  []SenderProperty `json:"properties"`
 }
 
@@ -432,13 +466,35 @@ type SenderProperty struct {
 	IsSecret bool   `json:"isSecret"`
 }
 
+// HTTPConnection is the create and update body of an HTTP endpoint connection (/connections/http).
+type HTTPConnection struct {
+	Name           string                  `json:"name"`
+	OUID           string                  `json:"ouId,omitempty"`
+	Description    string                  `json:"description,omitempty"`
+	URL            string                  `json:"url"`
+	TimeoutMS      int                     `json:"timeoutMs,omitempty"`
+	Headers        []HTTPConnectionHeader  `json:"headers,omitempty"`
+	Authentication *OutboundAuthentication `json:"authentication,omitempty"`
+}
+
+// HTTPConnectionHeader is a plain header an HTTP endpoint connection sends on every call.
+type HTTPConnectionHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// OutboundAuthentication is the shared outbound authentication object of a connection.
+type OutboundAuthentication struct {
+	Type       string            `json:"type"`
+	Properties map[string]string `json:"properties,omitempty"`
+}
+
 // Agent represents an agent resource in the system.
 type Agent struct {
 	ID          string      `json:"id,omitempty"`
 	OUID        string      `json:"ouId,omitempty"`
 	OUHandle    string      `json:"ouHandle,omitempty"`
 	Type        string      `json:"type,omitempty"`
-	Name        string      `json:"name,omitempty"`
 	Description string      `json:"description,omitempty"`
 	LogoURL     string      `json:"logoUrl,omitempty"`
 	Owner       string      `json:"owner,omitempty"`
@@ -545,4 +601,51 @@ type VPStatusResponse struct {
 type VCHTTPResult struct {
 	StatusCode int
 	Body       []byte
+}
+
+// ImportRequest is the body of POST /import.
+type ImportRequest struct {
+	Content   string                 `json:"content"`
+	DryRun    bool                   `json:"dryRun,omitempty"`
+	Options   ImportOptions          `json:"options"`
+	Vars      map[string]interface{} `json:"variables,omitempty"`
+	Deletions []ResourceDeletion     `json:"deletions,omitempty"`
+}
+
+// ResourceDeletion names a resource an import should remove.
+type ResourceDeletion struct {
+	ResourceType string `json:"resourceType"`
+	ID           string `json:"id"`
+}
+
+// ImportOptions are the options of an import request.
+type ImportOptions struct {
+	Upsert          bool   `json:"upsert"`
+	ContinueOnError bool   `json:"continueOnError"`
+	Target          string `json:"target"`
+}
+
+// ImportResponse is the body POST /import returns.
+type ImportResponse struct {
+	Summary ImportSummary `json:"summary"`
+	Results []ImportItem  `json:"results"`
+}
+
+// ImportSummary counts the outcomes of an import.
+type ImportSummary struct {
+	TotalDocuments int `json:"totalDocuments"`
+	Imported       int `json:"imported"`
+	Deleted        int `json:"deleted,omitempty"`
+	Failed         int `json:"failed"`
+}
+
+// ImportItem is the outcome of one imported document or deletion.
+type ImportItem struct {
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId,omitempty"`
+	ResourceName string `json:"resourceName,omitempty"`
+	Operation    string `json:"operation,omitempty"`
+	Status       string `json:"status"`
+	Code         string `json:"code,omitempty"`
+	Message      string `json:"message,omitempty"`
 }

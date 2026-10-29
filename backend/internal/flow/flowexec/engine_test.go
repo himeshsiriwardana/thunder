@@ -562,6 +562,36 @@ func (s *EngineTestSuite) TestUpdateContextWithNodeResponse_ReplacesAuthUserWhen
 	s.JSONEq(string(expectedJSON), string(updatedJSON))
 }
 
+// An unlinked federated identity is what the linking executor matches on and what provisioning
+// records the link for. Dropping it at the node boundary loses both, so it has to carry.
+func (s *EngineTestSuite) TestUpdateContextWithNodeResponse_SetsPendingFederatedAuthUser() {
+	t := s.T()
+	mockObservability := observabilitymock.NewObservabilityServiceInterfaceMock(t)
+	mockObservability.On("IsEnabled").Return(false).Maybe()
+
+	fe := &flowEngine{
+		observabilitySvc: mockObservability,
+	}
+
+	var pendingAuthUser providers.AuthUser
+	err := pendingAuthUser.UnmarshalJSON([]byte(
+		`{"default":{"entityReferenceToken":{"federatedIdpId":"idp-1","sub":"sub-1"},` +
+			`"attributeToken":{"federatedIdpId":"idp-1","sub":"sub-1"}}}`))
+	s.NoError(err)
+
+	ctx := &EngineContext{}
+	nodeResp := &common.NodeResponse{
+		Status:   common.NodeStatusComplete,
+		AuthUser: pendingAuthUser,
+	}
+
+	fe.updateContextWithNodeResponse(ctx, nodeResp)
+
+	state, ok := ctx.AuthUser.StateFor("default")
+	s.True(ok)
+	s.Equal(map[string]interface{}{"federatedIdpId": "idp-1", "sub": "sub-1"}, state.EntityReferenceToken)
+}
+
 func (s *EngineTestSuite) TestResolveStepForRedirection_WithInputs() {
 	fe := &flowEngine{}
 
@@ -2705,6 +2735,18 @@ func (s *EngineTestSuite) TestExecuteNodePackage_OmitsSubjectTypeConstraintsOnOt
 
 	_, ok := authnprovidercm.SubjectTypeConstraintsFrom(nodeCtx)
 	s.False(ok)
+}
+
+func (s *EngineTestSuite) TestExecuteNodePackage_MarksRecoveryFlow() {
+	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeRecovery, providers.Application{})
+
+	s.True(authnprovidercm.IsRecoveryFlow(nodeCtx))
+}
+
+func (s *EngineTestSuite) TestExecuteNodePackage_DoesNotMarkOtherFlowsAsRecovery() {
+	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeAuthentication, providers.Application{})
+
+	s.False(authnprovidercm.IsRecoveryFlow(nodeCtx))
 }
 
 func (s *EngineTestSuite) TestExecuteNodePackage_CompletesAndReturnsNilNextNode() {

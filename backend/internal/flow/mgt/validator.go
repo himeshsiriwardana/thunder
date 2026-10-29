@@ -6,8 +6,10 @@ package flowmgt
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strconv"
 
+	"github.com/thunder-id/thunderid/internal/connection/httpconnection"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/flow/executormeta"
@@ -23,15 +25,24 @@ import (
 type FlowValidatorInterface interface {
 	// ValidateFlowDefinition validates the provided flow definition and returns a ServiceError if validation fails.
 	ValidateFlowDefinition(ctx context.Context, flowDef *FlowDefinition) *tidcommon.ServiceError
+	// ValidateSystemFlowDefinition validates a system flow definition, which must be of the SYSTEM type
+	// and must not wait for input.
+	ValidateSystemFlowDefinition(ctx context.Context, flowDef *FlowDefinition) *tidcommon.ServiceError
+}
+
+// httpConnectionProvider checks that an extension step's HTTP connection exists.
+type httpConnectionProvider interface {
+	GetHTTPConnection(ctx context.Context, id string) (*httpconnection.HTTPConnection, *tidcommon.ServiceError)
 }
 
 // flowValidator is responsible for validating flow definitions,
 // including metadata, structure, node configurations, and registry-dependent checks.
 type flowValidator struct {
-	executorRegistry    core.ExecutorMetadataProvider
-	interceptorRegistry interceptor.InterceptorRegistryInterface
-	graphBuilder        graphbuilder.GraphBuilderInterface
-	logger              *log.Logger
+	executorRegistry       core.ExecutorMetadataProvider
+	interceptorRegistry    interceptor.InterceptorRegistryInterface
+	graphBuilder           graphbuilder.GraphBuilderInterface
+	httpConnectionProvider httpConnectionProvider
+	logger                 *log.Logger
 }
 
 // newFlowValidator creates a new instance of flowValidator with the provided dependencies.
@@ -39,12 +50,14 @@ func newFlowValidator(
 	executorRegistry core.ExecutorMetadataProvider,
 	interceptorRegistry interceptor.InterceptorRegistryInterface,
 	graphBuilder graphbuilder.GraphBuilderInterface,
+	connectionProvider httpConnectionProvider,
 ) *flowValidator {
 	return &flowValidator{
-		executorRegistry:    executorRegistry,
-		interceptorRegistry: interceptorRegistry,
-		graphBuilder:        graphBuilder,
-		logger:              log.GetLogger().With(log.String(log.LoggerKeyComponentName, "FlowValidator")),
+		executorRegistry:       executorRegistry,
+		interceptorRegistry:    interceptorRegistry,
+		graphBuilder:           graphBuilder,
+		httpConnectionProvider: connectionProvider,
+		logger:                 log.GetLogger().With(log.String(log.LoggerKeyComponentName, "FlowValidator")),
 	}
 }
 
@@ -52,10 +65,42 @@ func newFlowValidator(
 func (v *flowValidator) ValidateFlowDefinition(
 	ctx context.Context, flowDef *FlowDefinition,
 ) *tidcommon.ServiceError {
-	if err := v.validateMetadata(flowDef); err != nil {
+	if err := v.validateMetadata(flowDef, isValidFlowType); err != nil {
 		return err
 	}
+	return v.validateFlow(ctx, flowDef)
+}
 
+// ValidateSystemFlowDefinition runs all validation scopes on a system flow definition.
+func (v *flowValidator) ValidateSystemFlowDefinition(
+	ctx context.Context, flowDef *FlowDefinition,
+) *tidcommon.ServiceError {
+	isSystem := func(flowType providers.FlowType) bool { return flowType == providers.FlowTypeSystem }
+	if err := v.validateMetadata(flowDef, isSystem); err != nil {
+		return err
+	}
+	if err := v.validateSystemNodes(flowDef.Nodes); err != nil {
+		return err
+	}
+	return v.validateFlow(ctx, flowDef)
+}
+
+// validateSystemNodes refuses a node that waits for input, which no one could give a system flow.
+func (v *flowValidator) validateSystemNodes(nodes []providers.NodeDefinition) *tidcommon.ServiceError {
+	for _, node := range nodes {
+		if node.Type == string(common.NodeTypePrompt) {
+			return tidcommon.CustomServiceError(ErrorInvalidFlowData, tidcommon.I18nMessage{
+				Key:          "error.flowmgtservice.system_flow_prompt_node_description",
+				DefaultValue: "System flow node '{{param(nodeID)}}' waits for input, which a system flow cannot",
+				Params:       map[string]string{"nodeID": node.ID},
+			})
+		}
+	}
+	return nil
+}
+
+// validateFlow runs the validation scopes after the metadata.
+func (v *flowValidator) validateFlow(ctx context.Context, flowDef *FlowDefinition) *tidcommon.ServiceError {
 	nodeIndex, err := v.validateStructure(flowDef.Nodes)
 	if err != nil {
 		return err
@@ -70,6 +115,10 @@ func (v *flowValidator) ValidateFlowDefinition(
 	}
 
 	if err := v.validateInterceptors(flowDef.Interceptors, nodeIndex); err != nil {
+		return err
+	}
+
+	if err := v.validateExtensionSteps(ctx, flowDef.Nodes); err != nil {
 		return err
 	}
 
@@ -99,7 +148,10 @@ func (v *flowValidator) validateGraph(
 // ---------------------------------------------------------------------------
 
 // validateMetadata validates flow-level fields: handle, name, type, ID format, and minimum node count.
-func (v *flowValidator) validateMetadata(flowDef *FlowDefinition) *tidcommon.ServiceError {
+// validType says which flow types the definition may take.
+func (v *flowValidator) validateMetadata(
+	flowDef *FlowDefinition, validType func(providers.FlowType) bool,
+) *tidcommon.ServiceError {
 	if flowDef == nil {
 		return &ErrorInvalidRequestFormat
 	}
@@ -112,7 +164,7 @@ func (v *flowValidator) validateMetadata(flowDef *FlowDefinition) *tidcommon.Ser
 	if flowDef.Name == "" {
 		return &ErrorMissingFlowName
 	}
-	if !isValidFlowType(flowDef.FlowType) {
+	if !validType(flowDef.FlowType) {
 		return &ErrorInvalidFlowType
 	}
 	if flowDef.ID != "" && !utils.IsValidUUID(flowDef.ID) {
@@ -149,6 +201,12 @@ var requiredExecutorsByFlowType = map[providers.FlowType][]string{
 	},
 }
 
+// companionExecutor is an executor that must appear alongside another, running in the given mode.
+type companionExecutor struct {
+	name string
+	mode string
+}
+
 // companionExecutors maps an executor to executors that must appear alongside it in the same flow,
 // independent of flow type.
 //
@@ -156,9 +214,21 @@ var requiredExecutorsByFlowType = map[providers.FlowType][]string{
 // tokens those sessions hold are covered by the subject criterion that CriteriaRevocationExecutor
 // persists, which is why session termination does not enumerate token families per application. A
 // flow that terminates without it would therefore delete sessions while their tokens stay live, so
-// the pairing is required rather than conventional.
-var companionExecutors = map[string][]string{
-	executormeta.ExecutorNameSessionRevocation: {executormeta.ExecutorNameCriteriaRevocation},
+// the pairing is required rather than conventional. Only the revoke mode counts: the advance_cutoff
+// mode writes nothing for a revoke-all plan, so it alone would leave those tokens live.
+var companionExecutors = map[string][]companionExecutor{
+	executormeta.ExecutorNameSessionRevocation: {
+		{name: executormeta.ExecutorNameCriteriaRevocation, mode: executormeta.ExecutorModeRevoke},
+	},
+}
+
+// modeFlowTypes limits an executor mode to fewer flow types than the executor supports. Identity
+// governance suspends and unsuspends only in an administration flow; a recovery flow runs only unlock.
+var modeFlowTypes = map[string]map[string][]providers.FlowType{
+	executormeta.ExecutorNameIdentityGovernance: {
+		executormeta.ExecutorModeSuspend:   {providers.FlowTypeAdministration},
+		executormeta.ExecutorModeUnsuspend: {providers.FlowTypeAdministration},
+	},
 }
 
 // validateFlowTypeBasedConstraints checks forbidden and required executor rules for the flow type.
@@ -169,7 +239,38 @@ func (v *flowValidator) validateFlowTypeBasedConstraints(
 	if svcErr := v.validateRequiredExecutors(flowType, nodes); svcErr != nil {
 		return svcErr
 	}
+	if svcErr := v.validateModeFlowTypes(flowType, nodes); svcErr != nil {
+		return svcErr
+	}
 	return v.validateCompanionExecutors(nodes)
+}
+
+// validateModeFlowTypes returns an error when a node runs an executor in a mode the flow type cannot
+// run.
+func (v *flowValidator) validateModeFlowTypes(
+	flowType providers.FlowType, nodes []providers.NodeDefinition,
+) *tidcommon.ServiceError {
+	for _, node := range nodes {
+		if node.Type != string(common.NodeTypeTaskExecution) || node.Executor == nil {
+			continue
+		}
+		flowTypes, ok := modeFlowTypes[node.Executor.Name][node.Executor.Mode]
+		if !ok || slices.Contains(flowTypes, flowType) {
+			continue
+		}
+		return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+			Key: "error.flowmgtservice.unsupported_executor_mode_flow_type_description",
+			DefaultValue: "Node '{{param(nodeID)}}': executor '{{param(executorName)}}' mode " +
+				"'{{param(mode)}}' is not compatible with flow type '{{param(flowType)}}'",
+			Params: map[string]string{
+				"nodeID":       node.ID,
+				"executorName": node.Executor.Name,
+				"mode":         node.Executor.Mode,
+				"flowType":     string(flowType),
+			},
+		})
+	}
+	return nil
 }
 
 // validateCompanionExecutors returns an error when an executor is present without an executor it
@@ -183,7 +284,7 @@ func (v *flowValidator) validateCompanionExecutors(
 			continue
 		}
 		for _, companion := range companions {
-			if presentExecutors[companion] {
+			if hasExecutorInMode(nodes, companion.name, companion.mode) {
 				continue
 			}
 			return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
@@ -192,7 +293,7 @@ func (v *flowValidator) validateCompanionExecutors(
 					"'{{param(companionExecutorName)}}' in the same flow",
 				Params: map[string]string{
 					"executorName":          name,
-					"companionExecutorName": companion,
+					"companionExecutorName": companion.name,
 				},
 			})
 		}
@@ -231,6 +332,26 @@ func collectPresentExecutors(nodes []providers.NodeDefinition) map[string]bool {
 		}
 	}
 	return present
+}
+
+// hasExecutorInMode reports whether a TASK_EXECUTION node runs the named executor in the given mode,
+// taking the executor's default mode for a node that omits one.
+func hasExecutorInMode(nodes []providers.NodeDefinition, name, mode string) bool {
+	meta, _ := executormeta.MetaFor(name)
+	for _, node := range nodes {
+		if node.Type != string(common.NodeTypeTaskExecution) || node.Executor == nil ||
+			node.Executor.Name != name {
+			continue
+		}
+		effectiveMode := node.Executor.Mode
+		if effectiveMode == "" {
+			effectiveMode = meta.DefaultMode
+		}
+		if effectiveMode == mode {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -887,6 +1008,8 @@ func (v *flowValidator) validateExecutorSpecificConstraints(
 		return v.validateSSOCheckExecutor(node, nodeIndex)
 	case executormeta.ExecutorNameSession:
 		return v.validateSessionExecutor(node, nodes)
+	case executormeta.ExecutorNameAccountLinking:
+		return v.validateAccountLinkingExecutor(node, nodeIndex)
 	}
 	return nil
 }
@@ -1077,6 +1200,264 @@ func (v *flowValidator) validateSessionExecutor(
 			"by any SSOCheckExecutor via checkpointRef",
 		Params: map[string]string{"nodeID": node.ID},
 	})
+}
+
+// validateExtensionSteps refuses a flow whose extension step has an unusable property value or names
+// an HTTP connection that does not exist.
+func (v *flowValidator) validateExtensionSteps(
+	ctx context.Context, nodes []providers.NodeDefinition,
+) *tidcommon.ServiceError {
+	for i := range nodes {
+		if nodes[i].Executor == nil || nodes[i].Executor.Name != executormeta.ExecutorNameExtension {
+			continue
+		}
+		if err := v.validateExtensionExecutor(ctx, &nodes[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateExtensionExecutor applies the executor's own property rule to an extension step and checks
+// that its HTTP connection exists.
+func (v *flowValidator) validateExtensionExecutor(
+	ctx context.Context, node *providers.NodeDefinition,
+) *tidcommon.ServiceError {
+	props, invalidProperty := common.ParseExtensionProperties(node.Properties)
+	if invalidProperty != "" {
+		return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+			Key: "error.flowmgtservice.invalid_executor_property_value_description",
+			DefaultValue: "Node '{{param(nodeID)}}': executor '{{param(executorName)}}' " +
+				"has an invalid value for property '{{param(propertyKey)}}'",
+			Params: map[string]string{
+				"nodeID":       node.ID,
+				"executorName": node.Executor.Name,
+				"propertyKey":  invalidProperty,
+			},
+		})
+	}
+	_, svcErr := v.httpConnectionProvider.GetHTTPConnection(ctx, props.ConnectionID)
+	if svcErr == nil {
+		return nil
+	}
+	if svcErr.Code == httpconnection.ErrorNotFound.Code {
+		return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+			Key: "error.flowmgtservice.extension_connection_not_found_description",
+			DefaultValue: "Node '{{param(nodeID)}}': HTTP connection '{{param(connectionID)}}' " +
+				"does not exist",
+			Params: map[string]string{
+				"nodeID":       node.ID,
+				"connectionID": props.ConnectionID,
+				"propertyKey":  common.NodePropertyConnectionID,
+			},
+		})
+	}
+	return &tidcommon.InternalServerError
+}
+
+// validateAccountLinkingExecutor checks that a linking node has an onIncomplete prompt whose
+// refusal reaches this node.
+func (v *flowValidator) validateAccountLinkingExecutor(
+	node *providers.NodeDefinition, nodeIndex map[string]*providers.NodeDefinition,
+) *tidcommon.ServiceError {
+	if node.OnIncomplete == "" {
+		return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+			Key: "error.flowmgtservice.linking_requires_on_incomplete_description",
+			DefaultValue: "Node '{{param(nodeID)}}': AccountLinkingExecutor requires " +
+				"onIncomplete, which must point to the step that verifies the account",
+			Params: map[string]string{"nodeID": node.ID},
+		})
+	}
+	prompt := nodeIndex[node.OnIncomplete]
+	if err := validateLinkingRejectActions(node, prompt); err != nil {
+		return err
+	}
+	if err := validateLinkingConfirmActions(node, prompt, nodeIndex); err != nil {
+		return err
+	}
+	return validateLinkingFailurePath(node, nodeIndex)
+}
+
+// validateLinkingRejectActions checks that every REJECT action on the linking prompt points back at
+// the linking node, since a forwarded action type reaches only the node it points at.
+func validateLinkingRejectActions(
+	node *providers.NodeDefinition, prompt *providers.NodeDefinition,
+) *tidcommon.ServiceError {
+	if prompt == nil {
+		return nil
+	}
+	for _, p := range prompt.Prompts {
+		if p.Action == nil || common.ActionType(p.Action.Type) != common.ActionTypeReject {
+			continue
+		}
+		if p.Action.NextNode == node.ID {
+			continue
+		}
+		return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+			Key: "error.flowmgtservice.linking_decision_action_misrouted_description",
+			DefaultValue: "Node '{{param(nodeID)}}': the '{{param(actionType)}}' action " +
+				"'{{param(actionRef)}}' on '{{param(promptNodeID)}}' must point back to this node, " +
+				"since a forwarded action type reaches only the node it points at",
+			Params: map[string]string{
+				"nodeID":       node.ID,
+				"actionType":   string(common.ActionTypeReject),
+				"actionRef":    p.Action.Ref,
+				"promptNodeID": prompt.ID,
+			},
+		})
+	}
+	return nil
+}
+
+// validateLinkingConfirmActions checks that every CONFIRM action on the linking prompt starts a
+// verification, through a CALL node or steps in this flow, that returns to the linking node.
+func validateLinkingConfirmActions(node, prompt *providers.NodeDefinition,
+	nodeIndex map[string]*providers.NodeDefinition) *tidcommon.ServiceError {
+	if prompt == nil {
+		return nil
+	}
+	for _, p := range prompt.Prompts {
+		if p.Action == nil || common.ActionType(p.Action.Type) != common.ActionTypeConfirm {
+			continue
+		}
+		target := nodeIndex[p.Action.NextNode]
+		if target == nil {
+			continue
+		}
+		params := map[string]string{
+			"nodeID":       node.ID,
+			"actionType":   string(common.ActionTypeConfirm),
+			"actionRef":    p.Action.Ref,
+			"promptNodeID": prompt.ID,
+		}
+		if target.Type == string(common.NodeTypeCall) {
+			if target.OnSuccess != node.ID {
+				params["callNodeID"] = target.ID
+				return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+					Key: "error.flowmgtservice.linking_verification_call_not_returning_description",
+					DefaultValue: "Node '{{param(nodeID)}}': the CALL node '{{param(callNodeID)}}' that " +
+						"the '{{param(actionType)}}' action '{{param(actionRef)}}' on " +
+						"'{{param(promptNodeID)}}' points to must return to this node through onSuccess",
+					Params: params,
+				})
+			}
+			continue
+		}
+		if err := validateLinkingVerificationSegment(node, target, nodeIndex, params); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// linkingSegmentForbiddenExecutors are the executors that must not run between CONFIRM and the
+// return to the linking node: each would act before the checkpoint is restored and the verified
+// account is checked against the candidates.
+var linkingSegmentForbiddenExecutors = map[string]bool{
+	executormeta.ExecutorNameAccountLinking: true,
+	executormeta.ExecutorNameProvisioning:   true,
+	executormeta.ExecutorNameAuthAssert:     true,
+}
+
+// validateLinkingVerificationSegment checks the verification steps a CONFIRM action runs in this
+// flow. The segment is every node reachable from the action's target without passing through the
+// linking node. It must not end the flow or run an executor that acts before the linking node settles
+// the verification, and it must lead back to the linking node.
+func validateLinkingVerificationSegment(node, start *providers.NodeDefinition,
+	nodeIndex map[string]*providers.NodeDefinition, params map[string]string) *tidcommon.ServiceError {
+	returns := false
+	visited := map[string]bool{start.ID: true}
+	queue := []*providers.NodeDefinition{start}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		forbidden := current.Type == string(common.NodeTypeEnd) ||
+			(current.Executor != nil && linkingSegmentForbiddenExecutors[current.Executor.Name])
+		if forbidden {
+			params["segmentNodeID"] = current.ID
+			return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+				Key: "error.flowmgtservice.linking_verification_segment_forbidden_node_description",
+				DefaultValue: "Node '{{param(nodeID)}}': the verification that the '{{param(actionType)}}' " +
+					"action '{{param(actionRef)}}' on '{{param(promptNodeID)}}' starts reaches " +
+					"'{{param(segmentNodeID)}}' before returning to this node, and must not end the flow, " +
+					"link, provision or sign in before it returns",
+				Params: params,
+			})
+		}
+
+		for _, ref := range collectAllNodeReferences([]providers.NodeDefinition{*current}) {
+			if ref.targetNodeID == node.ID {
+				returns = true
+				continue
+			}
+			next := nodeIndex[ref.targetNodeID]
+			if next == nil || visited[next.ID] {
+				continue
+			}
+			visited[next.ID] = true
+			queue = append(queue, next)
+		}
+	}
+
+	if !returns {
+		return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+			Key: "error.flowmgtservice.linking_verification_segment_not_returning_description",
+			DefaultValue: "Node '{{param(nodeID)}}': the verification that the '{{param(actionType)}}' " +
+				"action '{{param(actionRef)}}' on '{{param(promptNodeID)}}' starts never returns to " +
+				"this node",
+			Params: params,
+		})
+	}
+	return nil
+}
+
+// linkingFederatedExecutors are the executors that sign in at a connection, replacing whoever
+// verified with the identity the connection returns.
+var linkingFederatedExecutors = map[string]bool{
+	executormeta.ExecutorNameOAuth:      true,
+	executormeta.ExecutorNameOIDCAuth:   true,
+	executormeta.ExecutorNameGoogleAuth: true,
+	executormeta.ExecutorNameGitHubAuth: true,
+}
+
+// validateLinkingFailurePath checks that the linking node's onFailure does not lead back to it
+// without passing through a federated executor's onSuccess, which signs in again first.
+func validateLinkingFailurePath(node *providers.NodeDefinition,
+	nodeIndex map[string]*providers.NodeDefinition) *tidcommon.ServiceError {
+	start := nodeIndex[node.OnFailure]
+	if start == nil {
+		return nil
+	}
+	visited := map[string]bool{start.ID: true}
+	queue := []*providers.NodeDefinition{start}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		federated := current.Executor != nil && linkingFederatedExecutors[current.Executor.Name]
+
+		for _, ref := range collectAllNodeReferences([]providers.NodeDefinition{*current}) {
+			if federated && ref.fieldName == "onSuccess" {
+				continue
+			}
+			if ref.targetNodeID == node.ID {
+				return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+					Key: "error.flowmgtservice.linking_failure_path_returns_description",
+					DefaultValue: "Node '{{param(nodeID)}}': the path from its onFailure target " +
+						"'{{param(failureNodeID)}}' must sign in at a connection again before it returns to " +
+						"this node",
+					Params: map[string]string{"nodeID": node.ID, "failureNodeID": start.ID},
+				})
+			}
+			next := nodeIndex[ref.targetNodeID]
+			if next == nil || visited[next.ID] {
+				continue
+			}
+			visited[next.ID] = true
+			queue = append(queue, next)
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

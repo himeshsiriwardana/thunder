@@ -32,8 +32,9 @@ I18N_EXTRACTOR_GOLANGCI_LINT ?= $(I18N_EXTRACTOR_TOOL_BIN)/golangci-lint
 CLI_E2E_DIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))/tests/e2e-cli
 
 # Tools versions
-GOLANGCI_LINT_VERSION ?= v1.64.8
-MOCKERY_VERSION ?= v3.5.5
+GOLANGCI_LINT_VERSION ?= v2.14.0
+MOCKERY_VERSION ?= v3.8.0
+MOCKERY_XTOOLS_VERSION ?= v0.51.0
 
 $(TOOL_BIN):
 	mkdir -p $(TOOL_BIN)
@@ -54,13 +55,16 @@ prepare:
 clean:
 	./build.sh clean $(OS) $(ARCH)
 
-build: build_frontend build_backend package_samples
+build: build_frontend build_backend build_cp_backend package_samples build_quickstart
 
 build_backend:
 	./build.sh build_backend $(OS) $(ARCH)
 
 build_cp_backend:
 	./build.sh build_cp_backend $(OS) $(ARCH)
+
+build_quickstart:
+	./build.sh build_quickstart $(OS) $(ARCH)
 
 build_frontend:
 	./build.sh build_frontend
@@ -71,6 +75,12 @@ build_docs:
 package_samples:
 	./build.sh package_samples
 
+package_cp:
+	./build.sh package_cp $(OS) $(ARCH)
+
+package_quickstart:
+	./build.sh package_quickstart $(OS) $(ARCH)
+
 test:
 	./build.sh test $(OS) $(ARCH)
 
@@ -79,6 +89,11 @@ test_unit:
 
 test_integration:
 	./build.sh test_integration "$(OS)" "$(ARCH)" "$(RUN)" "$(PACKAGE)"
+
+# Runs tests/integration/controlplane against the Control Plane binary (build_cp_backend), swapped
+# into the distribution build_backend packages.
+test_integration_cp:
+	INTEGRATION_PLANE=control ./build.sh test_integration "$(OS)" "$(ARCH)" "$(RUN)" "$(PACKAGE)"
 
 build_with_coverage:
 	@echo "================================================================"
@@ -227,11 +242,16 @@ help:
 	@echo "  clean                         - Remove build artifacts."
 	@echo "  build                         - Build $(PRODUCT_NAME) (backend + frontend + samples)."
 	@echo "  build_backend                 - Build the backend Go application."
+	@echo "  build_cp_backend              - Build and package the Control Plane server (backend/cmd/cpserver)."
+	@echo "  build_quickstart              - Build and package a combined Control Plane + Data Plane quickstart, pre-wired together."
 	@echo "  build_frontend                - Build the frontend applications."
 	@echo "  build_docs                    - Build the documentation."
 	@echo "  package_samples               - Package sample applications."
+	@echo "  package_cp                    - Package the Control Plane server (assumes build_cp_backend already ran)."
+	@echo "  package_quickstart            - Package the combined quickstart (assumes build_backend and build_cp_backend already ran)."
 	@echo "  test_unit                     - Run unit tests."
 	@echo "  test_integration              - Run integration tests. Use RUN= for test filter, PACKAGE= for package filter."
+	@echo "  test_integration_cp           - Run the Control Plane integration tests. Needs build_backend and build_cp_backend first."
 	@echo "  build_with_coverage  		   - Build with coverage flags, run unit and integration tests, and generate combined coverage report."
 	@echo "  build_with_coverage_only      - Build with coverage instrumentation (unit tests only, no integration tests)."
 	@echo "  test                          - Run all tests (unit and integration)."
@@ -271,10 +291,10 @@ help:
 	@echo "  generate_i18n                 - Extract i18n messages and generate defaults.go."
 	@echo "  help                          - Show this help message."
 
-.PHONY: all prepare clean build build_backend build_cp_backend build_frontend build_docs package_samples run
+.PHONY: all prepare clean build build_backend build_cp_backend build_quickstart build_frontend build_docs package_samples package_cp package_quickstart run
 .PHONY: docker-build docker-build-latest docker-build-multiarch
 .PHONY: docker-build-multiarch-latest docker-build-multiarch-push
-.PHONY: test_unit test_integration build_with_coverage build_with_coverage_only test
+.PHONY: test_unit test_integration test_integration_cp build_with_coverage build_with_coverage_only test
 .PHONY: help go_install_tool
 .PHONY: lint lint_backend lint_frontend lint_docs golangci-lint mockery install-mockery
 .PHONY: tools_build tools_test tools_lint tools_build_cli tools_test_cli tools_lint_cli
@@ -291,18 +311,23 @@ endef
 golangci-lint: $(GOLANGCI_LINT)
 
 $(GOLANGCI_LINT): $(TOOL_BIN)
-	$(call go_install_tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go_install_tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 $(CLI_GOLANGCI_LINT): $(CLI_TOOL_BIN)
-	cd /tmp && GOBIN=$(CLI_TOOL_BIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	cd /tmp && GOBIN=$(CLI_TOOL_BIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 $(I18N_EXTRACTOR_GOLANGCI_LINT): $(I18N_EXTRACTOR_TOOL_BIN)
-	cd /tmp && GOBIN=$(I18N_EXTRACTOR_TOOL_BIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	cd /tmp && GOBIN=$(I18N_EXTRACTOR_TOOL_BIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 install-mockery: $(MOCKERY)
 
+# mockery $(MOCKERY_VERSION) pins a golang.org/x/tools that can't read Go 1.27.2 export data, so it
+# is built in a throwaway module with a newer x/tools.
 $(MOCKERY): $(TOOL_BIN)
-	$(call go_install_tool,$(MOCKERY),github.com/vektra/mockery/v3,$(MOCKERY_VERSION))
+	tmp=$$(mktemp -d) && cd $$tmp && go mod init mockery-build >/dev/null 2>&1 && \
+	GOFLAGS= go get github.com/vektra/mockery/v3@$(MOCKERY_VERSION) golang.org/x/tools@$(MOCKERY_XTOOLS_VERSION) && \
+	GOFLAGS= GOBIN=$(TOOL_BIN) go install github.com/vektra/mockery/v3 && \
+	rm -rf $$tmp
 
 install-i18n-extractor: $(I18N_EXTRACTOR)
 

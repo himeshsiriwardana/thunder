@@ -1,4 +1,4 @@
-// Copyright 2025 The ThunderID Authors
+// Copyright 2025-2026 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package idp
@@ -15,17 +15,21 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/thunder-id/thunderid/internal/connection/connectionou"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/group"
+	"github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/role"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 	"github.com/thunder-id/thunderid/tests/mocks/groupmock"
+	"github.com/thunder-id/thunderid/tests/mocks/oumock"
 	"github.com/thunder-id/thunderid/tests/mocks/resourceserverprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/rolemock"
 )
@@ -71,6 +75,7 @@ func newNoBlockingDepsRegistry() *stubDependencyRegistry {
 type IDPServiceTestSuite struct {
 	suite.Suite
 	mockStore    *idpStoreInterfaceMock
+	mockOU       *oumock.OrganizationUnitServiceInterfaceMock
 	mockET       *entitytypemock.EntityTypeServiceInterfaceMock
 	mockRole     *rolemock.RoleServiceInterfaceMock
 	mockGroup    *groupmock.GroupServiceInterfaceMock
@@ -109,7 +114,16 @@ func (s *IDPServiceTestSuite) SetupTest() {
 	s.mockRole = rolemock.NewRoleServiceInterfaceMock(s.T())
 	s.mockGroup = groupmock.NewGroupServiceInterfaceMock(s.T())
 	s.mockResource = resourceserverprovidermock.NewResourceServerProviderMock(s.T())
+	s.mockOU = oumock.NewOrganizationUnitServiceInterfaceMock(s.T())
+	// Every identity provider names the organization unit it belongs to; unless a test is about the owner, "ou-1"
+	// exists.
+	s.mockOU.On("IsOrganizationUnitExists", mock.Anything, "ou-1").Return(true, nil).Maybe()
 	s.idpService = &idpService{
+		ouResolver: connectionou.Initialize(s.mockOU, connectionou.Errors{
+			Required: ErrorIDPOURequired,
+			NotFound: ErrorInvalidIDPOU,
+			Changed:  ErrorIDPOUUpdateNotAllowed,
+		}),
 		idpStore:           s.mockStore,
 		transactioner:      &mockTransactioner{},
 		dependencyRegistry: newNoBlockingDepsRegistry(),
@@ -138,6 +152,7 @@ func createOIDCProperties() []cmodels.Property {
 // TestCreateIdentityProvider_Success tests successful IDP creation
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_Success() {
 	idp := &providers.IDPDTO{
+		OUID:        "ou-1",
 		Name:        "Test IDP",
 		Description: "Test Description",
 		Type:        providers.IDPTypeOIDC,
@@ -224,6 +239,7 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_InvalidType() {
 // TestCreateIdentityProvider_AlreadyExists tests duplicate IDP name
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AlreadyExists() {
 	idp := &providers.IDPDTO{
+		OUID:       "ou-1",
 		Name:       "Existing IDP",
 		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
@@ -243,6 +259,7 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AlreadyExists() {
 // TestCreateIdentityProvider_CheckExistingStoreError tests store error when checking existing IDP
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_CheckExistingStoreError() {
 	idp := &providers.IDPDTO{
+		OUID:       "ou-1",
 		Name:       "Test IDP",
 		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
@@ -262,6 +279,7 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_CheckExistingStoreError
 // TestCreateIdentityProvider_StoreError tests store error handling
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_StoreError() {
 	idp := &providers.IDPDTO{
+		OUID:       "ou-1",
 		Name:       "Test IDP",
 		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
@@ -283,6 +301,7 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_StoreError() {
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_WithPresetID() {
 	presetID := "preset-idp-id-1234"
 	idp := &providers.IDPDTO{
+		OUID:        "ou-1",
 		ID:          presetID,
 		Name:        "Test IDP",
 		Description: "Test Description",
@@ -307,6 +326,7 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_WithPresetID() {
 // TestCreateIdentityProvider_UUIDGenerationError tests that a UUID generation failure returns InternalServerError.
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_UUIDGenerationError() {
 	idp := &providers.IDPDTO{
+		OUID:       "ou-1",
 		Name:       "Test IDP",
 		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
@@ -1072,7 +1092,8 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_FailsForDeclarativeIDP(
 	fileStore.On("GetIdentityProviderByName", context.Background(), "Updated Name").
 		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 
-	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{},
+		connectionou.Initialize(nil, connectionou.Errors{}))
 
 	updatedIDP := &providers.IDPDTO{
 		Name:        "Updated Name",
@@ -1124,7 +1145,8 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_SucceedsForMutableIDP()
 		return dto.ID == idpID && dto.Name == "Updated Name"
 	})).Return(nil)
 
-	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{},
+		connectionou.Initialize(nil, connectionou.Errors{}))
 
 	updatedIDP := &providers.IDPDTO{
 		Name:        "Updated Name",
@@ -1166,7 +1188,8 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_FailsForDeclarativeIDP(
 	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 	fileStore.On("GetIdentityProvider", context.Background(), idpID).Return(existingIDP, nil)
 
-	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{},
+		connectionou.Initialize(nil, connectionou.Errors{}))
 	service.SetDependencyRegistry(newNoBlockingDepsRegistry())
 
 	err := service.DeleteIdentityProvider(context.Background(), idpID)
@@ -1204,7 +1227,8 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_SucceedsForMutableIDP()
 	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return(existingIDP, nil)
 	dbStore.On("DeleteIdentityProvider", context.Background(), idpID).Return(nil)
 
-	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{},
+		connectionou.Initialize(nil, connectionou.Errors{}))
 	service.SetDependencyRegistry(newNoBlockingDepsRegistry())
 
 	err := service.DeleteIdentityProvider(context.Background(), idpID)
@@ -1453,7 +1477,7 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DynamicResoluti
 
 // --- ApplySchemaAwareDefaults ---
 
-const seedUserType = "Person"
+const seedUserType = "person"
 
 // newSeedingService builds a service with a dedicated entity-type mock, bypassing the suite-level
 // catch-all so each case controls exactly what the schema looks like.
@@ -1538,7 +1562,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SeedsLinkingAndMappin
 	for _, tc := range testCases {
 		s.Run(string(tc.idpType), func() {
 			service, mockET := s.newSeedingService()
-			expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+			expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType})
 			expectSchemaFor(mockET, seedUserType, []string{"username", "email"}, []string{"username", "email"})
 
 			idp := seedTestIDP(tc.idpType, tc.scopes)
@@ -1567,9 +1591,9 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SeedsLinkingAndMappin
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_ResolvesWhenOneTypeRequiresUsername() {
 	service, mockET := s.newSeedingService()
 	expectUserTypes(mockET,
-		entitytype.EntityTypeListItem{Name: "Guest", AllowSelfRegistration: true},
-		entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: true})
-	expectSchemaFor(mockET, "Guest", []string{"email"}, []string{"email"})
+		entitytype.EntityTypeListItem{Handle: "guest", AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Handle: seedUserType, AllowSelfRegistration: true})
+	expectSchemaFor(mockET, "guest", []string{"email"}, []string{"email"})
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
@@ -1591,11 +1615,11 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_ResolvesWhenOneTypeRe
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_MapsEveryTypeRequiringUsername() {
 	service, mockET := s.newSeedingService()
 	expectUserTypes(mockET,
-		entitytype.EntityTypeListItem{Name: "Employee", AllowSelfRegistration: true},
-		entitytype.EntityTypeListItem{Name: "Guest", AllowSelfRegistration: true},
-		entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: true})
-	expectSchemaFor(mockET, "Employee", []string{"email"}, []string{"username", "email"})
-	expectSchemaFor(mockET, "Guest", []string{"email"}, []string{"email"})
+		entitytype.EntityTypeListItem{Handle: "employee", AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Handle: "guest", AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Handle: seedUserType, AllowSelfRegistration: true})
+	expectSchemaFor(mockET, "employee", []string{"email"}, []string{"username", "email"})
+	expectSchemaFor(mockET, "guest", []string{"email"}, []string{"email"})
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
@@ -1611,21 +1635,21 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_MapsEveryTypeRequirin
 		s.Equal("username", entry.Attributes[0].LocalAttribute)
 	}
 	// Guest requires no username, so it is left out.
-	s.Equal([]string{"Employee", seedUserType}, mapped)
+	s.Equal([]string{"employee", seedUserType}, mapped)
 
 	// The first requiring type becomes the default, and it must be one that has a mapping.
 	s.Require().NotNil(idp.AttributeConfiguration.UserTypeResolution)
-	s.Equal("Employee", idp.AttributeConfiguration.UserTypeResolution.Default)
+	s.Equal("employee", idp.AttributeConfiguration.UserTypeResolution.Default)
 }
 
 // Email must be resolvable to a single user whichever type an identity provisions into.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsLinkingWhenACandidateLacksUniqueEmail() {
 	service, mockET := s.newSeedingService()
 	expectUserTypes(mockET,
-		entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: true},
-		entitytype.EntityTypeListItem{Name: "Guest", AllowSelfRegistration: true})
+		entitytype.EntityTypeListItem{Handle: seedUserType, AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Handle: "guest", AllowSelfRegistration: true})
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
-	expectSchemaFor(mockET, "Guest", []string{"username"}, []string{"email"})
+	expectSchemaFor(mockET, "guest", []string{"username"}, []string{"email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
 	service.ApplySchemaAwareDefaults(context.Background(), idp)
@@ -1645,10 +1669,10 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsWhenNothingQuali
 		{name: "no user types", types: nil},
 		{
 			name:  "no type offers a unique email or requires a username",
-			types: []entitytype.EntityTypeListItem{{Name: "Person"}, {Name: "Partner"}},
+			types: []entitytype.EntityTypeListItem{{Handle: "person"}, {Handle: "partner"}},
 			schemas: func(mockET *entitytypemock.EntityTypeServiceInterfaceMock) {
-				expectSchemaFor(mockET, "Person", []string{"username"}, nil)
-				expectSchemaFor(mockET, "Partner", []string{"username"}, nil)
+				expectSchemaFor(mockET, "person", []string{"username"}, nil)
+				expectSchemaFor(mockET, "partner", []string{"username"}, nil)
 			},
 		},
 	}
@@ -1673,7 +1697,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsWhenNothingQuali
 // registration still gets one. Its users may be created manually and still sign in federated.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SeedsTypeWithoutSelfRegistration() {
 	service, mockET := s.newSeedingService()
-	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: false})
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType, AllowSelfRegistration: false})
 	expectSchemaFor(mockET, seedUserType, []string{"username", "email"}, []string{"username", "email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
@@ -1689,7 +1713,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SeedsTypeWithoutSelfR
 // Linking on a non-unique attribute cannot resolve a single user, so it is not seeded.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsLinkingWhenEmailIsNotUnique() {
 	service, mockET := s.newSeedingService()
-	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType})
 	expectSchemaFor(mockET, seedUserType, []string{"username"}, []string{"email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
@@ -1703,7 +1727,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsLinkingWhenEmail
 // Linking on an attribute the connection never returns would match nothing, so it is worse than no default.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsLinkingWhenScopesCannotYieldEmail() {
 	service, mockET := s.newSeedingService()
-	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType})
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,profile")
@@ -1719,7 +1743,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsLinkingWhenScope
 // a user type, and that default is taken from the types email can match so it agrees with linking.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_DefaultsToEmailTypeWhenUsernameIsOptional() {
 	service, mockET := s.newSeedingService()
-	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType})
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
@@ -1738,9 +1762,9 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_DefaultsToEmailTypeWh
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_DefaultSkipsTypeWithoutUniqueEmail() {
 	service, mockET := s.newSeedingService()
 	expectUserTypes(mockET,
-		entitytype.EntityTypeListItem{Name: "Guest", AllowSelfRegistration: true},
-		entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: true})
-	expectSchemaFor(mockET, "Guest", []string{"phone"}, []string{"phone"})
+		entitytype.EntityTypeListItem{Handle: "guest", AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Handle: seedUserType, AllowSelfRegistration: true})
+	expectSchemaFor(mockET, "guest", []string{"phone"}, []string{"phone"})
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
@@ -1757,7 +1781,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_DefaultSkipsTypeWitho
 // No candidate can be matched on email and none needs a username, so there is nothing to derive.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SeedsNothingWhenNoTypeHasEmail() {
 	service, mockET := s.newSeedingService()
-	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType})
 	expectSchemaFor(mockET, seedUserType, []string{"phone"}, []string{"phone"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
@@ -1770,7 +1794,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SeedsNothingWhenNoTyp
 // anyway would leave an entry resolving to nothing while the connection looked configured.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsMappingWhenScopesCannotYieldEmail() {
 	service, mockET := s.newSeedingService()
-	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType})
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,profile")
@@ -1782,7 +1806,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsMappingWhenScope
 // GitHub takes its username from the login claim in the profile, so no email scope is involved.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_GitHubMapsLoginWithoutEmailScope() {
 	service, mockET := s.newSeedingService()
-	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType})
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
 
 	idp := seedTestIDP(providers.IDPTypeGitHub, "read:user")
@@ -1798,7 +1822,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_GitHubMapsLoginWithou
 // A claim-driven resolution the administrator configured must survive the default being filled in.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_PreservesClaimDrivenResolution() {
 	service, mockET := s.newSeedingService()
-	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType})
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
 
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
@@ -1821,7 +1845,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_PreservesClaimDrivenR
 // Generic OAuth carries no scope or claim semantics ThunderID can infer.
 func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_LeavesGenericOAuthAlone() {
 	service, mockET := s.newSeedingService()
-	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Handle: seedUserType})
 	expectSchemaFor(mockET, seedUserType, []string{"username", "email"}, []string{"username", "email"})
 
 	idp := seedTestIDP(providers.IDPTypeOAuth, "email")
@@ -1841,9 +1865,9 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_PreservesExplicitConf
 	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
 	idp.AttributeConfiguration = &providers.AttributeConfiguration{
 		AccountLinking:     &providers.AccountLinking{Attributes: []string{"phone_number"}},
-		UserTypeResolution: &providers.UserTypeResolution{Default: "Employee"},
+		UserTypeResolution: &providers.UserTypeResolution{Default: "employee"},
 		UserTypeAttributeMappings: []providers.UserTypeAttributeMapping{{
-			UserType:   "Employee",
+			UserType:   "employee",
 			Attributes: []providers.AttributeMapping{{ExternalAttribute: "sub", LocalAttribute: "username"}},
 		}},
 	}
@@ -1852,7 +1876,7 @@ func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_PreservesExplicitConf
 
 	s.Equal([]string{"phone_number"}, idp.AttributeConfiguration.AccountLinking.Attributes)
 	s.Len(idp.AttributeConfiguration.UserTypeAttributeMappings, 1)
-	s.Equal("Employee", idp.AttributeConfiguration.UserTypeResolution.Default)
+	s.Equal("employee", idp.AttributeConfiguration.UserTypeResolution.Default)
 }
 
 // A transient read failure must not block creating a connection.
@@ -1909,7 +1933,7 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_DoesNotReSeedRemovedDef
 	mockET.On("GetEntityTypeList", mock.Anything, entitytype.TypeCategoryUser,
 		mock.Anything, mock.Anything, mock.Anything).
 		Return(&entitytype.EntityTypeListResponse{Types: []entitytype.EntityTypeListItem{
-			{Name: seedUserType, AllowSelfRegistration: true},
+			{Handle: seedUserType, AllowSelfRegistration: true},
 		}}, nil).Maybe()
 	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
 	service := &idpService{
@@ -1917,6 +1941,7 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_DoesNotReSeedRemovedDef
 		transactioner:      &mockTransactioner{},
 		dependencyRegistry: newNoBlockingDepsRegistry(),
 		entityTypeService:  mockET,
+		ouResolver:         connectionou.Initialize(nil, connectionou.Errors{}),
 		logger:             log.GetLogger().With(log.String(log.LoggerKeyComponentName, "IdPService")),
 		uuidGenerator:      utils.GenerateUUIDv7,
 	}
@@ -2043,6 +2068,7 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationRuleMappin
 		Return([]string{}, nil)
 
 	idp := &providers.IDPDTO{
+		OUID:       "ou-1",
 		Name:       "Authz Mapping Test IDP",
 		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
@@ -2508,6 +2534,7 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationDirectMapp
 		Return(&providers.ResourceServer{ID: "rs-1"}, nil)
 
 	idp := &providers.IDPDTO{
+		OUID:       "ou-1",
 		Name:       "Direct Mapping Test IDP",
 		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
@@ -2696,4 +2723,182 @@ func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_RoleServiceError
 	s.Nil(targets)
 	s.Require().NotNil(err)
 	s.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+// newIDPForOU is an identity provider that names its organization unit by the given id and handle.
+func (s *IDPServiceTestSuite) newIDPForOU(ouID, ouHandle string) *providers.IDPDTO {
+	return &providers.IDPDTO{Name: "Test IDP", Type: providers.IDPTypeOIDC, Properties: createOIDCProperties(),
+		OUID: ouID, OUHandle: ouHandle}
+}
+
+// expectCreate expects the identity provider to be created under the given organization unit.
+func (s *IDPServiceTestSuite) expectCreate(ouID string) {
+	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test IDP").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("CreateIdentityProvider", mock.Anything, mock.MatchedBy(func(dto providers.IDPDTO) bool {
+		return dto.OUID == ouID
+	})).Return(nil)
+}
+
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_OUHandling() {
+	callerCtx := security.WithSecurityContextTest(context.Background(),
+		security.NewSecurityContextForTest("user-1", "caller-ou", "", nil, nil))
+	tests := []struct {
+		name        string
+		ctx         context.Context
+		ouID        string
+		ouHandle    string
+		armOU       func()
+		wantOU      string
+		wantErrCode string
+	}{
+		{name: "GivenOU", ctx: context.Background(), ouID: "ou-1", wantOU: "ou-1"},
+		{
+			name:     "GivenOUHandle",
+			ctx:      context.Background(),
+			ouHandle: "acme",
+			armOU: func() {
+				s.mockOU.On("GetOrganizationUnitByPath", mock.Anything, "acme").
+					Return(ou.OrganizationUnit{ID: "ou-acme"}, nil)
+			},
+			wantOU: "ou-acme",
+		},
+		{name: "IDWinsOverHandle", ctx: context.Background(), ouID: "ou-1", ouHandle: "acme", wantOU: "ou-1"},
+		{name: "NoOUWhoeverTheCallerIs", ctx: callerCtx, wantErrCode: ErrorIDPOURequired.Code},
+		{
+			name: "UnknownOUID",
+			ctx:  context.Background(),
+			ouID: "missing",
+			armOU: func() {
+				s.mockOU.On("IsOrganizationUnitExists", mock.Anything, "missing").Return(false, nil)
+			},
+			wantErrCode: ErrorInvalidIDPOU.Code,
+		},
+		{
+			name:     "UnknownOUHandle",
+			ctx:      context.Background(),
+			ouHandle: "nowhere",
+			armOU: func() {
+				s.mockOU.On("GetOrganizationUnitByPath", mock.Anything, "nowhere").
+					Return(ou.OrganizationUnit{}, &ou.ErrorOrganizationUnitNotFound)
+			},
+			wantErrCode: ErrorInvalidIDPOU.Code,
+		},
+		{
+			name: "OUIDLookupFails",
+			ctx:  context.Background(),
+			ouID: "broken",
+			armOU: func() {
+				s.mockOU.On("IsOrganizationUnitExists", mock.Anything, "broken").
+					Return(false, &tidcommon.ServiceError{Type: tidcommon.ServerErrorType})
+			},
+			wantErrCode: tidcommon.InternalServerError.Code,
+		},
+		{
+			name:     "OUHandleLookupRefused",
+			ctx:      context.Background(),
+			ouHandle: "denied",
+			armOU: func() {
+				s.mockOU.On("GetOrganizationUnitByPath", mock.Anything, "denied").Return(ou.OrganizationUnit{},
+					&tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "OU-9999"})
+			},
+			wantErrCode: tidcommon.InternalServerError.Code,
+		},
+	}
+
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			if tc.armOU != nil {
+				tc.armOU()
+			}
+			if tc.wantErrCode == "" {
+				s.expectCreate(tc.wantOU)
+			}
+
+			result, err := s.idpService.CreateIdentityProvider(tc.ctx, s.newIDPForOU(tc.ouID, tc.ouHandle))
+
+			if tc.wantErrCode != "" {
+				s.Nil(result)
+				s.Require().NotNil(err)
+				s.Equal(tc.wantErrCode, err.Code)
+				s.mockStore.AssertNotCalled(s.T(), "CreateIdentityProvider", mock.Anything, mock.Anything)
+				return
+			}
+			s.Nil(err)
+			s.Equal(tc.wantOU, result.OUID)
+		})
+	}
+}
+
+// expectUpdate expects the identity provider, stored under existingOU, to be updated under updatedOU. An empty
+// updatedOU expects no update.
+func (s *IDPServiceTestSuite) expectUpdate(existingOU, updatedOU string) {
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return(&providers.IDPDTO{
+		ID: "idp-123", Name: "Test IDP", Type: providers.IDPTypeOIDC, Properties: createOIDCProperties(),
+		OUID: existingOU}, nil)
+	if updatedOU != "" {
+		s.mockStore.On("UpdateIdentityProvider", mock.Anything, mock.MatchedBy(func(dto *providers.IDPDTO) bool {
+			return dto.OUID == updatedOU
+		})).Return(nil)
+	}
+}
+
+func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_OUHandling() {
+	tests := []struct {
+		name        string
+		ouID        string
+		ouHandle    string
+		armOU       func()
+		wantOU      string
+		wantErrCode string
+	}{
+		{name: "KeepsOUWhenOmitted", wantOU: "ou-1"},
+		{name: "SameOUByID", ouID: "ou-1", wantOU: "ou-1"},
+		{
+			name:     "SameOUByHandle",
+			ouHandle: "acme",
+			armOU: func() {
+				s.mockOU.On("GetOrganizationUnitByPath", mock.Anything, "acme").
+					Return(ou.OrganizationUnit{ID: "ou-1"}, nil)
+			},
+			wantOU: "ou-1",
+		},
+		{name: "ChangeNotAllowed", ouID: "ou-2", wantErrCode: ErrorIDPOUUpdateNotAllowed.Code},
+	}
+
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			if tc.armOU != nil {
+				tc.armOU()
+			}
+			s.expectUpdate("ou-1", tc.wantOU)
+
+			result, err := s.idpService.UpdateIdentityProvider(
+				context.Background(), "idp-123", s.newIDPForOU(tc.ouID, tc.ouHandle))
+
+			if tc.wantErrCode != "" {
+				s.Nil(result)
+				s.Require().NotNil(err)
+				s.Equal(tc.wantErrCode, err.Code)
+				return
+			}
+			s.Nil(err)
+			s.Equal(tc.wantOU, result.OUID)
+		})
+	}
+}
+
+func (s *IDPServiceTestSuite) TestResolveIdentityProviderOU() {
+	s.mockOU.On("GetOrganizationUnitByPath", mock.Anything, "acme").
+		Return(ou.OrganizationUnit{ID: "ou-acme"}, nil)
+	byHandle := s.newIDPForOU("", "acme")
+
+	s.Nil(s.idpService.ResolveIdentityProviderOU(context.Background(), byHandle))
+	s.Equal("ou-acme", byHandle.OUID)
+
+	none := s.idpService.ResolveIdentityProviderOU(context.Background(), s.newIDPForOU("", ""))
+	s.Require().NotNil(none)
+	s.Equal(ErrorIDPOURequired.Code, none.Code)
 }

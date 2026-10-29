@@ -24,6 +24,7 @@ const (
 	KeyTypeIDP                     KeyType = "idp"
 	KeyTypeNotificationSender      KeyType = "notification-sender"
 	KeyTypeAuthZENPDP              KeyType = "authzen-pdp"
+	KeyTypeHTTPConnection          KeyType = "http-connection"
 	KeyTypeEntityType              KeyType = "user-type"
 	KeyTypeOU                      KeyType = "ou"
 	KeyTypeFlow                    KeyType = "flow"
@@ -42,6 +43,9 @@ const (
 	KeyTypePresentationDefinition  KeyType = "presentation-definition"
 	KeyTypeCredentialConfiguration KeyType = "credential-configuration" //nolint:gosec
 	KeyTypeServerConfig            KeyType = "server-config"
+	KeyTypeGateway                 KeyType = "gateway"
+	KeyTypeNotificationTemplate    KeyType = "notification-template"
+	KeyTypeAuthorizationDetailType KeyType = "authorization-detail-type"
 )
 
 // String returns the string representation of KeyType
@@ -53,10 +57,11 @@ func (kt KeyType) String() string {
 func (kt KeyType) IsValid() bool {
 	switch kt {
 	case KeyTypeApplication, KeyTypeNotification, KeyTypeIDP, KeyTypeNotificationSender, KeyTypeAuthZENPDP,
+		KeyTypeHTTPConnection,
 		KeyTypeEntityType, KeyTypeOU, KeyTypeFlow, KeyTypeTranslation, KeyTypeTheme, KeyTypeLayout,
 		KeyTypeResourceServer, KeyTypeResource, KeyTypeAction, KeyTypeRole, KeyTypeUser, KeyTypeTemplate,
 		KeyTypeInboundAuth, KeyTypeGroup, KeyTypePresentationDefinition, KeyTypeCredentialConfiguration,
-		KeyTypeServerConfig,
+		KeyTypeServerConfig, KeyTypeGateway, KeyTypeNotificationTemplate, KeyTypeAuthorizationDetailType,
 		KeyTypeEntity:
 		return true
 	default:

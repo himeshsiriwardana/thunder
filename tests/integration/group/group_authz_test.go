@@ -143,8 +143,9 @@ func (ts *GroupAuthzTestSuite) SetupSuite() {
 
 	// ---- 2. Create user type for user-manager in OU1 ----
 	schemaOU1ID, err := testutils.CreateUserType(testutils.UserType{
-		Name: entityTypeOU1Name,
-		OUID: ts.groupOU1ID,
+		Handle:      entityTypeOU1Name,
+		DisplayName: "Authz Mgr Schema Ou1",
+		OUID:        ts.groupOU1ID,
 		Schema: map[string]interface{}{
 			"username":     map[string]interface{}{"type": "string"},
 			"password":     map[string]interface{}{"type": "string", "credential": true},
@@ -180,8 +181,9 @@ func (ts *GroupAuthzTestSuite) SetupSuite() {
 
 	// ---- 3c. Create a user type for OU2 ----
 	schemaOU2ID, err := testutils.CreateUserType(testutils.UserType{
-		Name: memberSchemaOU2Name,
-		OUID: ts.groupOU2ID,
+		Handle:      memberSchemaOU2Name,
+		DisplayName: "Authz Member Schema Ou2",
+		OUID:        ts.groupOU2ID,
 		Schema: map[string]interface{}{
 			"username":     map[string]interface{}{"type": "string"},
 			"password":     map[string]interface{}{"type": "string", "credential": true},
@@ -319,8 +321,9 @@ func (ts *GroupAuthzTestSuite) SetupSuite() {
 	ts.emptyOUID = emptyOUID
 
 	emptySchemaID, err := testutils.CreateUserType(testutils.UserType{
-		Name: emptyOUSchemaName,
-		OUID: ts.emptyOUID,
+		Handle:      emptyOUSchemaName,
+		DisplayName: "Authz Empty Ou Schema",
+		OUID:        ts.emptyOUID,
 		Schema: map[string]interface{}{
 			"username":     map[string]interface{}{"type": "string"},
 			"password":     map[string]interface{}{"type": "string", "credential": true},
@@ -374,8 +377,9 @@ func (ts *GroupAuthzTestSuite) SetupSuite() {
 
 	// ---- 10. Create a manager scoped to the declarative OU ----
 	declSchemaID, err := testutils.CreateUserType(testutils.UserType{
-		Name: declOUSchemaName,
-		OUID: declGroupOUID,
+		Handle:      declOUSchemaName,
+		DisplayName: "Authz Decl Ou Schema",
+		OUID:        declGroupOUID,
 		Schema: map[string]interface{}{
 			"username":     map[string]interface{}{"type": "string"},
 			"password":     map[string]interface{}{"type": "string", "credential": true},
@@ -579,6 +583,39 @@ func (ts *GroupAuthzTestSuite) TestListGroups() {
 		"list must include target group in OU1, got IDs: %v", ids)
 	ts.NotContainsf(ids, ts.targetGroupOU2ID,
 		"list must NOT include target group in OU2 (sibling), got IDs: %v", ids)
+}
+
+// TestListGroupsFilteredOnOwnOU verifies an OU filter on the manager's own OU lists that OU's groups.
+func (ts *GroupAuthzTestSuite) TestListGroupsFilteredOnOwnOU() {
+	resp := ts.doGroup(http.MethodGet, "/groups?limit=100&"+groupOUFilter(ts.groupOU1ID), nil)
+	defer resp.Body.Close()
+
+	ts.Require().Equal(http.StatusOK, resp.StatusCode)
+
+	var listResp GroupListResponse
+	ts.Require().NoError(json.NewDecoder(resp.Body).Decode(&listResp))
+
+	ids := make([]string, 0, len(listResp.Groups))
+	for _, g := range listResp.Groups {
+		ts.Equal(ts.groupOU1ID, g.OUID, "group %s", g.Id)
+		ids = append(ids, g.Id)
+	}
+	ts.Containsf(ids, ts.targetGroupOU1ID, "filtered list must include the OU1 group, got IDs: %v", ids)
+}
+
+// TestListGroupsFilteredOnOtherOUReturnsNothing verifies an OU filter on an OU the manager cannot
+// list groups from returns an empty list rather than an error.
+func (ts *GroupAuthzTestSuite) TestListGroupsFilteredOnOtherOUReturnsNothing() {
+	resp := ts.doGroup(http.MethodGet, "/groups?"+groupOUFilter(ts.groupOU2ID), nil)
+	defer resp.Body.Close()
+
+	ts.Require().Equal(http.StatusOK, resp.StatusCode)
+
+	var listResp GroupListResponse
+	ts.Require().NoError(json.NewDecoder(resp.Body).Decode(&listResp))
+
+	ts.Zero(listResp.TotalResults)
+	ts.Empty(listResp.Groups)
 }
 
 // TestGetGroupInOwnOU verifies the group-manager can read a group in their own OU.

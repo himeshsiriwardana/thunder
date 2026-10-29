@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -126,6 +127,16 @@ func (ts *tokenService) ProcessTokenRequest(
 		}
 	}
 
+	// Other grants carry no authorization details, so the parameter is refused rather than ignored.
+	if tokenRequest.AuthorizationDetails != "" && !acceptsAuthorizationDetails(grantType) {
+		publishTokenIssuanceFailedEvent(ts.observabilitySvc, ctx, oauthApp, clientID, grantTypeStr, scopeStr,
+			400, "Unsupported authorization_details", startTime)
+		return nil, &model.ErrorResponse{
+			Error:            constants.ErrorInvalidAuthorizationDetails,
+			ErrorDescription: "authorization_details is not supported for this grant type",
+		}
+	}
+
 	// Validate the token request via the grant handler.
 	tokenError := grantHandler.ValidateGrant(ctx, tokenRequest, oauthApp)
 	if tokenError != nil && tokenError.Error != "" {
@@ -232,12 +243,13 @@ func (ts *tokenService) ProcessTokenRequest(
 	// Build token response.
 	scopes := strings.Join(tokenRespDTO.AccessToken.Scopes, " ")
 	tokenResponse := &model.TokenResponse{
-		AccessToken:  tokenRespDTO.AccessToken.Token,
-		TokenType:    tokenRespDTO.AccessToken.TokenType,
-		ExpiresIn:    tokenRespDTO.AccessToken.ExpiresIn,
-		RefreshToken: tokenRespDTO.RefreshToken.Token,
-		Scope:        scopes,
-		IDToken:      tokenRespDTO.IDToken.Token,
+		AccessToken:          tokenRespDTO.AccessToken.Token,
+		TokenType:            tokenRespDTO.AccessToken.TokenType,
+		ExpiresIn:            tokenRespDTO.AccessToken.ExpiresIn,
+		RefreshToken:         tokenRespDTO.RefreshToken.Token,
+		Scope:                scopes,
+		IDToken:              tokenRespDTO.IDToken.Token,
+		AuthorizationDetails: tokenRespDTO.AccessToken.AuthorizationDetails,
 	}
 
 	// For token exchange, determine the issued_token_type from the request.
@@ -284,7 +296,7 @@ func (ts *tokenService) verifyDPoPProof(ctx *context.Context, oauthApp *provider
 	result, err := ts.dpopVerifier.Verify(*ctx, dpop.VerifyParams{
 		Proof: proof,
 		HTM:   "POST",
-		HTU:   ts.tokenEndpoint,
+		HTU:   ts.expectedHTU(*ctx),
 	})
 	if err != nil {
 		return &model.ErrorResponse{
@@ -294,6 +306,38 @@ func (ts *tokenService) verifyDPoPProof(ctx *context.Context, oauthApp *provider
 	}
 	*ctx = dpop.WithJkt(*ctx, result.JKT)
 	return nil
+}
+
+// expectedHTU is the URI a proof presented at this endpoint has to be bound to.
+//
+// The path comes from the request, because one handler serves both the bare and the
+// organization-unit-scoped endpoint and a proof is bound to the URI it was sent to (RFC 9449
+// section 4.3). The scheme and host stay those of the configured endpoint: reading them off the
+// request would trust a Host header the attacker who writes the proof can also set.
+func (ts *tokenService) expectedHTU(ctx context.Context) string {
+	path := dpop.GetRequestPath(ctx)
+	if path == "" {
+		return ts.tokenEndpoint
+	}
+	endpoint, err := url.Parse(ts.tokenEndpoint)
+	if err != nil {
+		return ts.tokenEndpoint
+	}
+	// A proxy strips any published path prefix before the mux sees the request, so put it back or
+	// every proof would be compared against a URI the client never called.
+	prefix, found := strings.CutSuffix(endpoint.EscapedPath(), constants.OAuth2TokenEndpoint)
+	if !found {
+		return ts.tokenEndpoint
+	}
+	// Parsed rather than assigned: Path holds the decoded form and RawPath the escaped one, so
+	// assigning an escaped string to Path alone would escape its percent signs a second time.
+	requested, err := url.Parse(prefix + path)
+	if err != nil {
+		return ts.tokenEndpoint
+	}
+	endpoint.Path = requested.Path
+	endpoint.RawPath = requested.RawPath
+	return endpoint.String()
 }
 
 // publishTokenIssuanceStartedEvent publishes an event indicating that token issuance has started.
@@ -314,6 +358,7 @@ func (ts *tokenService) publishTokenIssuanceStartedEvent(
 		WithData(event.DataKey.GrantType, grantType).
 		WithData(event.DataKey.Scope, scope).
 		WithData(event.DataKey.CorrelationID, sysContext.GetTraceID(ctx))
+	addAccessingOUData(ctx, evt)
 	addActorData(evt, oauthApp)
 
 	ts.observabilitySvc.PublishEvent(ctx, evt)
@@ -347,6 +392,7 @@ func (ts *tokenService) publishTokenIssuedEvent(
 		WithData(event.DataKey.Scope, scope).
 		WithData(event.DataKey.CorrelationID, correlationID).
 		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", duration))
+	addAccessingOUData(ctx, evt)
 	addActorData(evt, oauthApp)
 	addSubjectData(evt, &tokenRespDTO.AccessToken)
 
@@ -387,9 +433,19 @@ func publishTokenIssuanceFailedEvent(
 		}).
 		WithData(event.DataKey.CorrelationID, sysContext.GetTraceID(ctx)).
 		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", duration))
+	addAccessingOUData(ctx, evt)
 	addActorData(evt, oauthApp)
 
 	svc.PublishEvent(ctx, evt)
+}
+
+// addAccessingOUData stamps the organization unit a token was requested for. It matters most on a
+// refusal, which deliberately names none, so the event is where an operator finds out which one a
+// request was about. The key's presence means the /ou/{ouId} form was used.
+func addAccessingOUData(ctx context.Context, evt *providers.Event) {
+	if ouID := sysContext.GetAccessingOUID(ctx); ouID != "" {
+		evt.WithData(event.DataKey.AccessingOUID, ouID)
+	}
 }
 
 // addActorData stamps the acting principal onto a token issuance event: the entity category of the
@@ -429,4 +485,10 @@ func addSubjectData(evt *providers.Event, accessToken *model.TokenDTO) {
 	if accessToken.ActorSub != "" {
 		evt.WithData(event.DataKey.ActorSub, accessToken.ActorSub)
 	}
+}
+
+// acceptsAuthorizationDetails reports whether the grant type accepts authorization_details.
+func acceptsAuthorizationDetails(grantType providers.GrantType) bool {
+	return grantType == providers.GrantTypeClientCredentials || grantType == providers.GrantTypeAuthorizationCode ||
+		grantType == providers.GrantTypeRefreshToken || grantType == providers.GrantTypeCIBA
 }

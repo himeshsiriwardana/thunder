@@ -18,10 +18,19 @@ func NewFlowExecServiceInterfaceMock(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *FlowExecServiceInterfaceMock {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &FlowExecServiceInterfaceMock{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -85,7 +94,7 @@ type FlowExecServiceInterfaceMock_Execute_Call struct {
 //   - challengeToken string
 //   - flowSecret string
 //   - attestationToken string
-func (_e *FlowExecServiceInterfaceMock_Expecter) Execute(ctx interface{}, appID interface{}, executionID interface{}, flowType interface{}, verbose interface{}, action interface{}, inputs interface{}, challengeToken interface{}, flowSecret interface{}, attestationToken interface{}) *FlowExecServiceInterfaceMock_Execute_Call {
+func (_e *FlowExecServiceInterfaceMock_Expecter) Execute(ctx any, appID any, executionID any, flowType any, verbose any, action any, inputs any, challengeToken any, flowSecret any, attestationToken any) *FlowExecServiceInterfaceMock_Execute_Call {
 	return &FlowExecServiceInterfaceMock_Execute_Call{Call: _e.mock.On("Execute", ctx, appID, executionID, flowType, verbose, action, inputs, challengeToken, flowSecret, attestationToken)}
 }
 
@@ -200,7 +209,7 @@ type FlowExecServiceInterfaceMock_ExecuteByID_Call struct {
 //   - action string
 //   - inputs map[string]string
 //   - challengeToken string
-func (_e *FlowExecServiceInterfaceMock_Expecter) ExecuteByID(ctx interface{}, flowID interface{}, executionID interface{}, verbose interface{}, action interface{}, inputs interface{}, challengeToken interface{}) *FlowExecServiceInterfaceMock_ExecuteByID_Call {
+func (_e *FlowExecServiceInterfaceMock_Expecter) ExecuteByID(ctx any, flowID any, executionID any, verbose any, action any, inputs any, challengeToken any) *FlowExecServiceInterfaceMock_ExecuteByID_Call {
 	return &FlowExecServiceInterfaceMock_ExecuteByID_Call{Call: _e.mock.On("ExecuteByID", ctx, flowID, executionID, verbose, action, inputs, challengeToken)}
 }
 
@@ -257,6 +266,76 @@ func (_c *FlowExecServiceInterfaceMock_ExecuteByID_Call) RunAndReturn(run func(c
 	return _c
 }
 
+// ExecuteSystemFlow provides a mock function for the type FlowExecServiceInterfaceMock
+func (_mock *FlowExecServiceInterfaceMock) ExecuteSystemFlow(ctx context.Context, sysCtx *flowexec.SystemFlowContext) (*flowexec.SystemFlowResult, *common.ServiceError) {
+	ret := _mock.Called(ctx, sysCtx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ExecuteSystemFlow")
+	}
+
+	var r0 *flowexec.SystemFlowResult
+	var r1 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *flowexec.SystemFlowContext) (*flowexec.SystemFlowResult, *common.ServiceError)); ok {
+		return returnFunc(ctx, sysCtx)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *flowexec.SystemFlowContext) *flowexec.SystemFlowResult); ok {
+		r0 = returnFunc(ctx, sysCtx)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*flowexec.SystemFlowResult)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *flowexec.SystemFlowContext) *common.ServiceError); ok {
+		r1 = returnFunc(ctx, sysCtx)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*common.ServiceError)
+		}
+	}
+	return r0, r1
+}
+
+// FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ExecuteSystemFlow'
+type FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call struct {
+	*mock.Call
+}
+
+// ExecuteSystemFlow is a helper method to define mock.On call
+//   - ctx context.Context
+//   - sysCtx *flowexec.SystemFlowContext
+func (_e *FlowExecServiceInterfaceMock_Expecter) ExecuteSystemFlow(ctx any, sysCtx any) *FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call {
+	return &FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call{Call: _e.mock.On("ExecuteSystemFlow", ctx, sysCtx)}
+}
+
+func (_c *FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call) Run(run func(ctx context.Context, sysCtx *flowexec.SystemFlowContext)) *FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *flowexec.SystemFlowContext
+		if args[1] != nil {
+			arg1 = args[1].(*flowexec.SystemFlowContext)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call) Return(systemFlowResult *flowexec.SystemFlowResult, serviceError *common.ServiceError) *FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call {
+	_c.Call.Return(systemFlowResult, serviceError)
+	return _c
+}
+
+func (_c *FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call) RunAndReturn(run func(ctx context.Context, sysCtx *flowexec.SystemFlowContext) (*flowexec.SystemFlowResult, *common.ServiceError)) *FlowExecServiceInterfaceMock_ExecuteSystemFlow_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // InitiateAndExecute provides a mock function for the type FlowExecServiceInterfaceMock
 func (_mock *FlowExecServiceInterfaceMock) InitiateAndExecute(ctx context.Context, initContext *flowexec.FlowInitContext) (*flowexec.FlowStep, *common.ServiceError) {
 	ret := _mock.Called(ctx, initContext)
@@ -295,7 +374,7 @@ type FlowExecServiceInterfaceMock_InitiateAndExecute_Call struct {
 // InitiateAndExecute is a helper method to define mock.On call
 //   - ctx context.Context
 //   - initContext *flowexec.FlowInitContext
-func (_e *FlowExecServiceInterfaceMock_Expecter) InitiateAndExecute(ctx interface{}, initContext interface{}) *FlowExecServiceInterfaceMock_InitiateAndExecute_Call {
+func (_e *FlowExecServiceInterfaceMock_Expecter) InitiateAndExecute(ctx any, initContext any) *FlowExecServiceInterfaceMock_InitiateAndExecute_Call {
 	return &FlowExecServiceInterfaceMock_InitiateAndExecute_Call{Call: _e.mock.On("InitiateAndExecute", ctx, initContext)}
 }
 
@@ -363,7 +442,7 @@ type FlowExecServiceInterfaceMock_InitiateFlow_Call struct {
 // InitiateFlow is a helper method to define mock.On call
 //   - ctx context.Context
 //   - initContext *flowexec.FlowInitContext
-func (_e *FlowExecServiceInterfaceMock_Expecter) InitiateFlow(ctx interface{}, initContext interface{}) *FlowExecServiceInterfaceMock_InitiateFlow_Call {
+func (_e *FlowExecServiceInterfaceMock_Expecter) InitiateFlow(ctx any, initContext any) *FlowExecServiceInterfaceMock_InitiateFlow_Call {
 	return &FlowExecServiceInterfaceMock_InitiateFlow_Call{Call: _e.mock.On("InitiateFlow", ctx, initContext)}
 }
 

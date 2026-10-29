@@ -93,20 +93,6 @@ var (
 		},
 	}
 
-	// ErrorInvalidAgentName is returned when name is empty.
-	ErrorInvalidAgentName = tidcommon.ServiceError{
-		Type: tidcommon.ClientErrorType,
-		Code: "AGT-1009",
-		Error: tidcommon.I18nMessage{
-			Key:          "error.agentservice.invalid_agent_name",
-			DefaultValue: "Invalid agent name",
-		},
-		ErrorDescription: tidcommon.I18nMessage{
-			Key:          "error.agentservice.invalid_agent_name_description",
-			DefaultValue: "The agent name must be provided and non-empty",
-		},
-	}
-
 	// ErrorInvalidAgentType is returned when type is empty.
 	ErrorInvalidAgentType = tidcommon.ServiceError{
 		Type: tidcommon.ClientErrorType,
@@ -146,20 +132,6 @@ var (
 		ErrorDescription: tidcommon.I18nMessage{
 			Key:          "error.agentservice.invalid_offset_description",
 			DefaultValue: "The offset parameter must be a non-negative integer",
-		},
-	}
-
-	// ErrorAgentAlreadyExistsWithName is returned when another agent already has the same name.
-	ErrorAgentAlreadyExistsWithName = tidcommon.ServiceError{
-		Type: tidcommon.ClientErrorType,
-		Code: "AGT-1013",
-		Error: tidcommon.I18nMessage{
-			Key:          "error.agentservice.agent_already_exists_with_name",
-			DefaultValue: "Agent already exists",
-		},
-		ErrorDescription: tidcommon.I18nMessage{
-			Key:          "error.agentservice.agent_already_exists_with_name_description",
-			DefaultValue: "An agent with the same name already exists",
 		},
 	}
 
@@ -527,6 +499,21 @@ var (
 			Key: "error.agentservice.invalid_subject_attribute_mapping_description",
 			DefaultValue: "The subject attribute mapping must reference an attribute that is unique, required, " +
 				"and string-typed in an allowed agent type",
+		},
+	}
+
+	// ErrorMissingDelegationGrantType is returned when a delegated agent is given grant types beyond
+	// client credentials but none that lets it act for a signed-in user.
+	ErrorMissingDelegationGrantType = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "AGT-1044",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.agentservice.missing_delegation_grant_type",
+			DefaultValue: "Missing required grant types for a delegated agent",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.agentservice.missing_delegation_grant_type_description",
+			DefaultValue: "A delegated agent needs at least one of these grant types: {{param(grantTypes)}}",
 		},
 	}
 )

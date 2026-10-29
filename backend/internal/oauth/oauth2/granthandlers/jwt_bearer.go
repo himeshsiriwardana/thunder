@@ -85,7 +85,7 @@ func (h *jwtBearerGrantHandler) HandleGrant(ctx context.Context, tokenRequest *m
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTBearerGrantHandler"))
 
 	assertionClaims, err := h.tokenValidator.ValidateIDJAGAssertion(
-		ctx, tokenRequest.Assertion)
+		ctx, tokenRequest.Assertion, tokenRequest.ClientID)
 	if err != nil {
 		logger.Debug(ctx, "Failed to validate ID-JAG assertion", log.Error(err))
 		switch {
@@ -152,7 +152,7 @@ func (h *jwtBearerGrantHandler) HandleGrant(ctx context.Context, tokenRequest *m
 	oidcScopes, permissionScopes := oauth2utils.SeparateOIDCAndNonOIDCScopes(
 		tokenservice.JoinScopes(grantedScopes), oauthApp.ScopeClaims)
 	targetRS, errResp := resourceindicators.ResolveAudienceBinding(
-		ctx, h.resourceService, resources, permissionScopes)
+		ctx, h.resourceService, resources, permissionScopes, false)
 	if errResp != nil {
 		return nil, errResp
 	}

@@ -1,13 +1,23 @@
-// Copyright 2025 The ThunderID Authors
+// Copyright 2025-2026 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
 package export
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"text/template"
+
+	"github.com/thunder-id/thunderid/internal/system/outboundauth"
+	"github.com/thunder-id/thunderid/tests/mocks/crypto/cryptomock"
+
+	"gopkg.in/yaml.v3"
+
+	authzdetailmgt "github.com/thunder-id/thunderid/internal/authzdetail/mgt"
+	"github.com/thunder-id/thunderid/tests/mocks/authzdetailmgtmock"
 
 	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -17,19 +27,23 @@ import (
 	"github.com/thunder-id/thunderid/internal/application"
 	appmodel "github.com/thunder-id/thunderid/internal/application/model"
 	"github.com/thunder-id/thunderid/internal/connection"
+	"github.com/thunder-id/thunderid/internal/connection/httpconnection"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	flowmgt "github.com/thunder-id/thunderid/internal/flow/mgt"
 	"github.com/thunder-id/thunderid/internal/idp"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	"github.com/thunder-id/thunderid/internal/notification"
 	"github.com/thunder-id/thunderid/internal/notification/common"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/tests/mocks/applicationmock"
+	"github.com/thunder-id/thunderid/tests/mocks/connection/httpconnectionmock"
 	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/flowmgtmock"
 	"github.com/thunder-id/thunderid/tests/mocks/idp/idpmock"
 	"github.com/thunder-id/thunderid/tests/mocks/notification/notificationmock"
+	"github.com/thunder-id/thunderid/tests/mocks/sharingmock"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -88,14 +102,14 @@ func (suite *ExportServiceTestSuite) SetupTest() {
 
 	// Create exporters
 	exporters := []declarativeresource.ResourceExporter{
-		application.NewApplicationExporterForTest(suite.appServiceMock),
-		connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService, nil),
+		application.NewApplicationExporterForTest(suite.appServiceMock, sharingWithNoPolicies(suite.T())),
+		connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService, nil, nil),
 		entitytype.NewEntityTypeExporterForTest(suite.mockEntityTypeService, entitytype.TypeCategoryUser),
 		flowmgt.NewFlowGraphExporterForTest(suite.mockFlowService),
 	}
 
 	// Create parameterizer instance
-	parameterizer := newParameterizer(templatingRules{})
+	parameterizer := newParameterizer(templatingRules{}, TemplatePlaceholders)
 
 	suite.exportService = newExportService(exporters, parameterizer)
 }
@@ -280,6 +294,18 @@ func (suite *ExportServiceTestSuite) TestExportResources_CompleteOAuthApplicatio
 
 	assert.Equal(suite.T(), 1, result.Summary.ResourceTypes["application"])
 	assert.Equal(suite.T(), int64(len(file.Content)), file.Size)
+}
+
+// A list the resource does not have is still a range in its document, so the .env gives it as an
+// empty list an import can range over rather than as no value.
+func (suite *ExportServiceTestSuite) TestGenerateEnvFile_AbsentListIsAnEmptyList() {
+	envFile := (&exportService{}).generateEnvFile([]ExportFile{{Content: "clientId: {{.APP_CLIENT_ID}}\n" +
+		"redirectUris:\n{{- range .APP_REDIRECT_URIS}}\n  - {{.}}\n{{- end}}\n" +
+		"scopes:\n{{- range .APP_SCOPES}}\n  - {{.}}\n{{- end}}\n"}},
+		map[string]string{"APP_SCOPES": `["openid"]`})
+
+	suite.Require().NotNil(envFile)
+	suite.Equal("APP_CLIENT_ID=\nAPP_REDIRECT_URIS=[]\nAPP_SCOPES=[\"openid\"]\n", envFile.Content)
 }
 
 // TestExportResources_HyphenatedApplicationName tests that a resource name containing a hyphen
@@ -480,7 +506,7 @@ func (suite *ExportServiceTestSuite) TestExportResources_WildcardApplications() 
 		Description: "Third App",
 	}
 
-	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything).Return(mockAppList, nil)
+	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything, mock.Anything).Return(mockAppList, nil)
 	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp1ID).Return(mockApp1, nil)
 	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp2ID).Return(mockApp2, nil)
 	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp3ID).Return(mockApp3, nil)
@@ -509,7 +535,7 @@ func (suite *ExportServiceTestSuite) TestExportResources_WildcardApplications_Li
 		Error: tidcommon.I18nMessage{DefaultValue: "Failed to list applications"},
 	}
 
-	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything).Return(nil, listError)
+	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything, mock.Anything).Return(nil, listError)
 
 	result, err := suite.exportService.ExportResources(context.Background(), request)
 
@@ -534,7 +560,7 @@ func (suite *ExportServiceTestSuite) TestExportResources_WildcardApplications_Em
 		Applications: []appmodel.BasicApplicationResponse{},
 	}
 
-	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything).Return(mockAppList, nil)
+	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything, mock.Anything).Return(mockAppList, nil)
 
 	result, err := suite.exportService.ExportResources(context.Background(), request)
 
@@ -580,7 +606,7 @@ func (suite *ExportServiceTestSuite) TestExportResources_WildcardApplications_Pa
 		Error: tidcommon.I18nMessage{DefaultValue: "Application not found"},
 	}
 
-	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything).Return(mockAppList, nil)
+	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything, mock.Anything).Return(mockAppList, nil)
 	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp1ID).Return(mockApp1, nil)
 	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp2ID).Return(nil, appError)
 	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp3ID).Return(mockApp3, nil)
@@ -1229,16 +1255,24 @@ type MockParameterizer struct {
 
 func (m *MockParameterizer) ToParameterizedYAML(_ context.Context, obj interface{},
 	resourceType string, resourceName string,
-	rules *declarativeresource.ResourceRules) (string, map[string]string, error) {
+	rules *declarativeresource.ResourceRules) (string, map[string]string, map[string]bool, error) {
 	if m.shouldFail {
-		return "", nil, fmt.Errorf("%s", m.errorMsg)
+		return "", nil, nil, fmt.Errorf("%s", m.errorMsg)
 	}
 	// Return minimal valid YAML
-	return "id: test\nname: test\n", nil, nil
+	return "id: test\nname: test\n", nil, nil, nil
+}
+
+func (m *MockParameterizer) PlaceholderValues(_ context.Context, _ interface{}, _ string, _ string,
+	_ *declarativeresource.ResourceRules) (map[string]string, map[string]string, error) {
+	if m.shouldFail {
+		return nil, nil, fmt.Errorf("%s", m.errorMsg)
+	}
+	return map[string]string{}, map[string]string{}, nil
 }
 
 func (m *MockParameterizer) VarPrefix(resourceName string) string {
-	return newParameterizer(templatingRules{}).VarPrefix(resourceName)
+	return newParameterizer(templatingRules{}, TemplatePlaceholders).VarPrefix(resourceName)
 }
 
 // TestExportResources_TemplateGenerationError tests the error path in generateTemplateFromStruct.
@@ -1271,8 +1305,8 @@ func (suite *ExportServiceTestSuite) TestExportResources_TemplateGenerationError
 
 	// Create exporters with the test services
 	exporters := []declarativeresource.ResourceExporter{
-		application.NewApplicationExporterForTest(suite.appServiceMock),
-		connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService, nil),
+		application.NewApplicationExporterForTest(suite.appServiceMock, sharingWithNoPolicies(suite.T())),
+		connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService, nil, nil),
 		entitytype.NewEntityTypeExporterForTest(suite.mockEntityTypeService, entitytype.TypeCategoryUser),
 	}
 
@@ -1365,10 +1399,11 @@ func (suite *ExportServiceTestSuite) TestExportResources_WithGroupByTypeStructur
 	appFiles := 0
 	idpFiles := 0
 	for _, file := range result.Files {
-		if file.ResourceType == "application" {
+		switch file.ResourceType {
+		case "application":
 			assert.Equal(suite.T(), "applications", file.FolderPath)
 			appFiles++
-		} else if file.ResourceType == "connection" {
+		case "connection":
 			assert.Equal(suite.T(), "connections", file.FolderPath)
 			idpFiles++
 		}
@@ -1645,7 +1680,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_Success() {
 
 	mockSchema := &entitytype.EntityType{
 		ID:                    "schema1",
-		Name:                  "Test Schema",
+		Handle:                "test-schema",
+		DisplayName:           "Test Schema",
 		OUID:                  "ou1",
 		AllowSelfRegistration: true,
 		Schema:                []byte(`{"type":"object","properties":{"email":{"type":"string"}}}`),
@@ -1664,7 +1700,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_Success() {
 	assert.Contains(suite.T(), result.Summary.ResourceTypes, "user_type")
 	assert.Equal(suite.T(), "Test_Schema.yaml", result.Files[0].FileName)
 	assert.Equal(suite.T(), "user_type", result.Files[0].ResourceType)
-	assert.Contains(suite.T(), result.Files[0].Content, "name: Test Schema")
+	assert.Contains(suite.T(), result.Files[0].Content, "handle: test-schema")
+	assert.Contains(suite.T(), result.Files[0].Content, "displayName: Test Schema")
 }
 
 // TestExportEntityTypes_Multiple tests exporting multiple entity types.
@@ -1678,7 +1715,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_Multiple() {
 
 	mockSchema1 := &entitytype.EntityType{
 		ID:                    "schema1",
-		Name:                  "Customer Schema",
+		Handle:                "customer-schema",
+		DisplayName:           "Customer Schema",
 		OUID:                  "ou1",
 		AllowSelfRegistration: true,
 		Schema:                []byte(`{"type":"object","properties":{"email":{"type":"string"}}}`),
@@ -1686,7 +1724,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_Multiple() {
 
 	mockSchema2 := &entitytype.EntityType{
 		ID:                    "schema2",
-		Name:                  "Employee Schema",
+		Handle:                "employee-schema",
+		DisplayName:           "Employee Schema",
 		OUID:                  "ou1",
 		AllowSelfRegistration: false,
 		Schema:                []byte(`{"type":"object","properties":{"empId":{"type":"string"}}}`),
@@ -1719,7 +1758,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_Wildcard() {
 
 	mockSchema1 := &entitytype.EntityType{
 		ID:                    "schema1",
-		Name:                  "Customer Schema",
+		Handle:                "customer-schema",
+		DisplayName:           "Customer Schema",
 		OUID:                  "ou1",
 		AllowSelfRegistration: true,
 		Schema:                []byte(`{"type":"object","properties":{"email":{"type":"string"}}}`),
@@ -1727,7 +1767,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_Wildcard() {
 
 	mockSchema2 := &entitytype.EntityType{
 		ID:                    "schema2",
-		Name:                  "Employee Schema",
+		Handle:                "employee-schema",
+		DisplayName:           "Employee Schema",
 		OUID:                  "ou1",
 		AllowSelfRegistration: false,
 		Schema:                []byte(`{"type":"object","properties":{"empId":{"type":"string"}}}`),
@@ -1737,8 +1778,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_Wildcard() {
 		TotalResults: 2,
 		Count:        2,
 		Types: []entitytype.EntityTypeListItem{
-			{ID: "schema1", Name: "Customer Schema", OUID: "ou1"},
-			{ID: "schema2", Name: "Employee Schema", OUID: "ou1"},
+			{ID: "schema1", Handle: "customer-schema", DisplayName: "Customer Schema", OUID: "ou1"},
+			{ID: "schema2", Handle: "employee-schema", DisplayName: "Employee Schema", OUID: "ou1"},
 		},
 	}
 
@@ -1799,7 +1840,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_EmptyName() {
 
 	mockSchema := &entitytype.EntityType{
 		ID:                    "schema-no-name",
-		Name:                  "", // Empty name
+		Handle:                "schema-no-name",
+		DisplayName:           "", // Empty name
 		OUID:                  "ou1",
 		AllowSelfRegistration: true,
 		Schema:                []byte(`{"type":"object"}`),
@@ -1828,7 +1870,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_NoSchema() {
 
 	mockSchema := &entitytype.EntityType{
 		ID:                    "schema-no-def",
-		Name:                  "Empty Schema",
+		Handle:                "empty-schema",
+		DisplayName:           "Empty Schema",
 		OUID:                  "ou1",
 		AllowSelfRegistration: true,
 		Schema:                []byte{}, // Empty schema
@@ -1846,7 +1889,7 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_NoSchema() {
 	assert.NotNil(suite.T(), result)
 	assert.Len(suite.T(), result.Files, 1)
 	assert.Equal(suite.T(), 1, result.Summary.TotalFiles)
-	assert.Contains(suite.T(), result.Files[0].Content, "name: Empty Schema")
+	assert.Contains(suite.T(), result.Files[0].Content, "displayName: Empty Schema")
 }
 
 // TestExportEntityTypes_WildcardPartialFailure tests wildcard export with partial failures.
@@ -1860,7 +1903,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_WildcardPartialFailur
 
 	mockSchema1 := &entitytype.EntityType{
 		ID:                    "schema1",
-		Name:                  "Customer Schema",
+		Handle:                "customer-schema",
+		DisplayName:           "Customer Schema",
 		OUID:                  "ou1",
 		AllowSelfRegistration: true,
 		Schema:                []byte(`{"type":"object"}`),
@@ -1868,7 +1912,8 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_WildcardPartialFailur
 
 	mockSchema3 := &entitytype.EntityType{
 		ID:                    "schema3",
-		Name:                  "Partner Schema",
+		Handle:                "partner-schema",
+		DisplayName:           "Partner Schema",
 		OUID:                  "ou1",
 		AllowSelfRegistration: false,
 		Schema:                []byte(`{"type":"object"}`),
@@ -1878,9 +1923,9 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_WildcardPartialFailur
 		TotalResults: 3,
 		Count:        3,
 		Types: []entitytype.EntityTypeListItem{
-			{ID: "schema1", Name: "Customer Schema"},
-			{ID: "schema2", Name: "Employee Schema"},
-			{ID: "schema3", Name: "Partner Schema"},
+			{ID: "schema1", Handle: "customer-schema", DisplayName: "Customer Schema"},
+			{ID: "schema2", Handle: "employee-schema", DisplayName: "Employee Schema"},
+			{ID: "schema3", Handle: "partner-schema", DisplayName: "Partner Schema"},
 		},
 	}
 
@@ -2092,7 +2137,7 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WildcardSuc
 		Description: "Second App",
 	}
 
-	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything).Return(mockAppList, nil)
+	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything, mock.Anything).Return(mockAppList, nil)
 	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp1ID).Return(mockApp1, nil)
 	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp2ID).Return(mockApp2, nil)
 
@@ -2117,7 +2162,7 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WildcardFai
 		Error: tidcommon.I18nMessage{DefaultValue: "Failed to list applications"},
 	}
 
-	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything).Return(nil, listError)
+	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything, mock.Anything).Return(nil, listError)
 
 	exporter, _ := suite.exportService.(*exportService).registry.Get(resourceTypeApplication)
 	options := &ExportOptions{Format: formatYAML}
@@ -2139,7 +2184,7 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WildcardEmp
 		Applications: []appmodel.BasicApplicationResponse{},
 	}
 
-	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything).Return(mockAppList, nil)
+	suite.appServiceMock.EXPECT().GetApplicationList(mock.Anything, mock.Anything).Return(mockAppList, nil)
 
 	exporter, _ := suite.exportService.(*exportService).registry.Get(resourceTypeApplication)
 	options := &ExportOptions{Format: formatYAML}
@@ -2277,7 +2322,8 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_EntityType(
 	schemaID := "schema-test-id"
 	mockSchema := &entitytype.EntityType{
 		ID:                    schemaID,
-		Name:                  "Test Schema",
+		Handle:                "test-schema",
+		DisplayName:           "Test Schema",
 		OUID:                  "ou1",
 		AllowSelfRegistration: true,
 		Schema:                []byte(`{"type":"object","properties":{"email":{"type":"string"}}}`),
@@ -2820,5 +2866,196 @@ func TestExport_DistinctVariablesDoNotClash(t *testing.T) {
 	clash, _ := claimedElsewhere(`clientId: "{{.APPLICATION_B_CLIENT_ID}}"`, owners, "application/app-b")
 	if clash != "" {
 		t.Fatalf("expected no clash between distinct variables, got %q", clash)
+	}
+}
+
+// sharingWithNoPolicies is a sharing service holding no policy for any application, which is what
+// every export test here starts from.
+func sharingWithNoPolicies(t interface {
+	mock.TestingT
+	Cleanup(func())
+}) *sharingmock.SharingServiceInterfaceMock {
+	m := sharingmock.NewSharingServiceInterfaceMock(t)
+	m.EXPECT().ExportPolicies(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+	return m
+}
+
+func TestExport_AuthorizationDetailTypeRoundTrips(t *testing.T) {
+	original := &providers.AuthorizationDetailType{
+		ID: "adt-1", Type: "payment_initiation", Name: "Payment initiation",
+		Description: "Initiates a payment", Version: 3,
+		Schema: json.RawMessage(`{"type":"object","properties":{"amount":{"type":"string",` +
+			`"policy":{"suppliedBy":"client"}}}}`),
+		ConsentTemplate: "Pay {{amount}}",
+		Processor:       &providers.AuthorizationDetailProcessor{Endpoint: "https://bank.example.com/rar"},
+	}
+	service := authzdetailmgtmock.NewAuthorizationDetailMgtServiceInterfaceMock(t)
+	service.EXPECT().GetAuthorizationDetailType(mock.Anything, "adt-1").Return(original, nil)
+	exportService := newExportService([]declarativeresource.ResourceExporter{
+		authzdetailmgt.NewTypeExporterForTest(service),
+	}, newParameterizer(templatingRules{}, TemplatePlaceholders))
+
+	resp, svcErr := exportService.ExportResources(context.Background(),
+		&ExportRequest{AuthorizationDetailTypes: []string{"adt-1"}})
+	require.Nil(t, svcErr)
+	require.Len(t, resp.Files, 1)
+	assert.Equal(t, "authorization_detail_type", resp.Files[0].ResourceType)
+
+	var doc yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte(resp.Files[0].Content), &doc))
+	got, err := authzdetailmgt.ParseAuthorizationDetailTypeNode(doc.Content[0])
+	require.NoError(t, err)
+	assert.Equal(t, string(original.Schema), string(got.Schema),
+		"the schema keeps the order it declares its members in")
+	assert.NotContains(t, resp.Files[0].Content, "version:", "the version is not exported")
+	assert.Equal(t, 1, got.Version, "a type read back from its file is version 1")
+	// A processor exported without authentication reads back with none.
+	authentication, err := outboundauth.FromProperties(got.Processor.AuthenticationProperties)
+	require.NoError(t, err)
+	assert.False(t, authentication.Enabled())
+	got.Processor.AuthenticationProperties = nil
+	want := *original
+	want.Version = 1
+	assert.Equal(t, &want, got)
+}
+
+func TestExport_AuthorizationDetailTypeProcessorCredentialIsAVariable(t *testing.T) {
+	crypto := cryptomock.NewConfigCryptoProviderMock(t)
+	crypto.EXPECT().Encrypt(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, content []byte) ([]byte, error) {
+			return []byte(hex.EncodeToString(content)), nil
+		}).Maybe()
+	crypto.EXPECT().Decrypt(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, content []byte) ([]byte, error) { return hex.DecodeString(string(content)) }).Maybe()
+	cmodels.SetConfigCryptoProvider(crypto)
+	t.Cleanup(func() { cmodels.SetConfigCryptoProvider(testConfigCrypto) })
+	stored, err := outboundauth.ToProperties(outboundauth.Config{Type: outboundauth.TypeBearer,
+		Properties: map[string]string{outboundauth.FieldBearerToken: "processor-token"}})
+	require.NoError(t, err)
+	schema := `{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"string"}}}`
+	original := &providers.AuthorizationDetailType{
+		ID: "adt-1", Type: "payment_initiation", Name: "Payment initiation", Schema: json.RawMessage(schema),
+		Processor: &providers.AuthorizationDetailProcessor{Endpoint: "https://bank.example.com/rar",
+			AuthenticationProperties: stored},
+	}
+	service := authzdetailmgtmock.NewAuthorizationDetailMgtServiceInterfaceMock(t)
+	service.EXPECT().GetAuthorizationDetailType(mock.Anything, "adt-1").Return(original, nil)
+	exportService := newExportService([]declarativeresource.ResourceExporter{
+		authzdetailmgt.NewTypeExporterForTest(service),
+	}, newParameterizer(templatingRules{}, TemplatePlaceholders))
+
+	resp, svcErr := exportService.ExportResources(context.Background(),
+		&ExportRequest{AuthorizationDetailTypes: []string{"adt-1"}})
+
+	require.Nil(t, svcErr)
+	require.Len(t, resp.Files, 1)
+	content := resp.Files[0].Content
+	assert.NotContains(t, content, "processor-token", "the credential is not written to the file")
+	assert.Contains(t, content, "type: bearer")
+	assert.Contains(t, content, schema, "the schema keeps the order it declares its members in")
+}
+
+func (suite *ExportServiceTestSuite) TestExportResources_HTTPConnectionPasswordIsAParameter() {
+	authProps, err := outboundauth.ToProperties(outboundauth.Config{Type: outboundauth.TypeBasic,
+		Properties: map[string]string{
+			outboundauth.FieldBasicUsername: "svc-user",
+			outboundauth.FieldBasicPassword: "http-s3cret",
+		}})
+	suite.Require().NoError(err)
+	stored := &httpconnection.HTTPConnection{
+		ID: "http-1", Name: "Risk Engine", URL: "https://risk.example.com/evaluate", TimeoutMS: 5000,
+		Headers:        []httpconnection.Header{{Name: "X-Tenant", Value: "acme"}},
+		AuthProperties: authProps,
+	}
+	httpService := httpconnectionmock.NewHTTPConnectionServiceInterfaceMock(suite.T())
+	httpService.EXPECT().GetHTTPConnection(mock.Anything, "http-1").Return(stored, nil)
+	suite.idpServiceMock.EXPECT().GetIdentityProvider(mock.Anything, "http-1").
+		Return(nil, &idp.ErrorIDPNotFound)
+	suite.mockNotificationService.EXPECT().GetSender(mock.Anything, "http-1").
+		Return(nil, &notification.ErrorSenderNotFound)
+	exportService := newExportService([]declarativeresource.ResourceExporter{
+		connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService, nil,
+			httpService),
+	}, newParameterizer(templatingRules{}, TemplatePlaceholders))
+
+	result, svcErr := exportService.ExportResources(context.Background(), &ExportRequest{
+		Connections: []string{"http-1"}, Options: &ExportOptions{Format: "yaml"},
+	})
+
+	suite.Require().Nil(svcErr)
+	suite.Require().Len(result.Files, 1)
+	content := result.Files[0].Content
+	assert.Equal(suite.T(), "Risk_Engine.yaml", result.Files[0].FileName)
+	assert.NotContains(suite.T(), content, "http-s3cret")
+	assert.Contains(suite.T(), content, "type: http")
+	assert.Contains(suite.T(), content, "url: https://risk.example.com/evaluate")
+	assert.Contains(suite.T(), content, "timeoutMs: 5000")
+	assert.Contains(suite.T(), content, "username: svc-user")
+	assert.Contains(suite.T(), content, "password: {{.CONNECTION_RISK_ENGINE_PASSWORD}}")
+	suite.Require().NotNil(result.EnvFile)
+	assert.Contains(suite.T(), result.EnvFile.Content, "CONNECTION_RISK_ENGINE_PASSWORD=http-s3cret")
+}
+
+func (suite *ExportServiceTestSuite) TestExportResources_HTTPConnectionBearerAndAPIKeyAreParameters() {
+	cases := map[string]struct {
+		config    outboundauth.Config
+		inYAML    []string
+		inEnv     []string
+		notInYAML []string
+	}{
+		"bearer": {
+			config: outboundauth.Config{Type: outboundauth.TypeBearer,
+				Properties: map[string]string{outboundauth.FieldBearerToken: "bearer-s3cret"}},
+			inYAML:    []string{"type: bearer", "token: {{.CONNECTION_RISK_ENGINE_TOKEN}}"},
+			inEnv:     []string{"CONNECTION_RISK_ENGINE_TOKEN=bearer-s3cret"},
+			notInYAML: []string{"bearer-s3cret"},
+		},
+		"api_key": {
+			config: outboundauth.Config{Type: outboundauth.TypeAPIKey,
+				Properties: map[string]string{"X-Tenant-Key": "tenant-s3cret", "X-Region-Key": "region-s3cret"}},
+			inYAML: []string{"type: api_key",
+				"X-Tenant-Key: {{.CONNECTION_RISK_ENGINE_X_TENANT_KEY}}",
+				"X-Region-Key: {{.CONNECTION_RISK_ENGINE_X_REGION_KEY}}"},
+			inEnv: []string{"CONNECTION_RISK_ENGINE_X_TENANT_KEY=tenant-s3cret",
+				"CONNECTION_RISK_ENGINE_X_REGION_KEY=region-s3cret"},
+			notInYAML: []string{"tenant-s3cret", "region-s3cret"},
+		},
+	}
+	for name, tc := range cases {
+		suite.Run(name, func() {
+			suite.SetupTest()
+			authProps, err := outboundauth.ToProperties(tc.config)
+			suite.Require().NoError(err)
+			httpService := httpconnectionmock.NewHTTPConnectionServiceInterfaceMock(suite.T())
+			httpService.EXPECT().GetHTTPConnection(mock.Anything, "http-1").Return(&httpconnection.HTTPConnection{
+				ID: "http-1", Name: "Risk Engine", URL: "https://risk.example.com/evaluate", TimeoutMS: 5000,
+				AuthProperties: authProps,
+			}, nil)
+			suite.idpServiceMock.EXPECT().GetIdentityProvider(mock.Anything, "http-1").
+				Return(nil, &idp.ErrorIDPNotFound)
+			suite.mockNotificationService.EXPECT().GetSender(mock.Anything, "http-1").
+				Return(nil, &notification.ErrorSenderNotFound)
+			exportService := newExportService([]declarativeresource.ResourceExporter{
+				connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService, nil,
+					httpService),
+			}, newParameterizer(templatingRules{}, TemplatePlaceholders))
+
+			result, svcErr := exportService.ExportResources(context.Background(), &ExportRequest{
+				Connections: []string{"http-1"}, Options: &ExportOptions{Format: "yaml"},
+			})
+
+			suite.Require().Nil(svcErr)
+			suite.Require().Len(result.Files, 1)
+			for _, want := range tc.inYAML {
+				assert.Contains(suite.T(), result.Files[0].Content, want)
+			}
+			for _, secret := range tc.notInYAML {
+				assert.NotContains(suite.T(), result.Files[0].Content, secret)
+			}
+			suite.Require().NotNil(result.EnvFile)
+			for _, want := range tc.inEnv {
+				assert.Contains(suite.T(), result.EnvFile.Content, want)
+			}
+		})
 	}
 }

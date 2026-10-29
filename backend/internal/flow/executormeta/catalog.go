@@ -17,19 +17,18 @@ import (
 // services those constructors need. TestCatalogMatchesRegistry in the executor package holds the
 // two together: it registers the real executors and fails on any difference.
 var catalog = map[string]providers.ExecutorMeta{
+	ExecutorNameAccountLinking: {
+		SupportedFlowTypes: []providers.FlowType{"AUTHENTICATION", "REGISTRATION"},
+	},
 	ExecutorNameApplicationActionValidator: {
 		SupportedModes:     []string{"revoke_all", "revoke_before_action"},
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION", "SYSTEM"},
 	},
 	ExecutorNameApplicationDelete: {
 		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
 	},
-	ExecutorNameAttributeCollect: {},
-	ExecutorNameAttributeUniquenessValidator: {
-		SupportedProperties: []providers.ExecutorSupportedProperties{
-			{Property: "mode"},
-		},
-	},
+	ExecutorNameAttributeCollect:             {},
+	ExecutorNameAttributeUniquenessValidator: {},
 	ExecutorNameAuthAssert: {
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "callbackType"},
@@ -48,15 +47,27 @@ var catalog = map[string]providers.ExecutorMeta{
 	ExecutorNameCredentialSetter: {},
 	ExecutorNameCredentialsAuth:  {},
 	ExecutorNameCriteriaRevocation: {
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+		DefaultMode:        ExecutorModeRevoke,
+		SupportedModes:     []string{ExecutorModeAdvanceCutoff, ExecutorModeRevoke},
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION", "SYSTEM"},
 	},
 	ExecutorNameEmailExecutor: {
 		SupportedModes: []string{"send"},
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "emailTemplate", IsRequired: true},
+			{Property: "senderId"},
+			{Property: "bestEffort"},
 		},
 	},
-	ExecutorNameFederatedAuthResolver: {},
+	ExecutorNameExtension: {
+		SupportedProperties: []providers.ExecutorSupportedProperties{
+			{Property: "connectionId", IsRequired: true},
+			{Property: "inputKeys"},
+			{Property: "runtimeDataKeys"},
+			{Property: "responseKeys"},
+			{Property: "maxAttempts"},
+		},
+	},
 	ExecutorNameGitHubAuth: {
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "idpId", IsRequired: true},
@@ -88,6 +99,10 @@ var catalog = map[string]providers.ExecutorMeta{
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "loginHintAttribute"},
 		},
+	},
+	ExecutorNameIdentityGovernance: {
+		SupportedModes:     []string{ExecutorModeUnlock, ExecutorModeSuspend, ExecutorModeUnsuspend},
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION", "RECOVERY"},
 	},
 	ExecutorNameInviteExecutor: {
 		SupportedModes: []string{"generate", "verify"},
@@ -160,12 +175,15 @@ var catalog = map[string]providers.ExecutorMeta{
 		SupportedModes:     []string{"revoke_all"},
 		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
 	},
+	ExecutorNamePreSuspend: {
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+	},
 	ExecutorNameProvisioning: {
 		SupportedFlowTypes: []providers.FlowType{
 			"AUTHENTICATION", "REGISTRATION", "USER_ONBOARDING", "ADMINISTRATION",
 		},
 		SupportedProperties: []providers.ExecutorSupportedProperties{
-			{Property: "mode"},
+			{Property: "delegated"},
 			{Property: "includeOptional"},
 			{Property: "includeOptionalCredentials"},
 			{Property: "maxPerPrompt"},
@@ -192,7 +210,7 @@ var catalog = map[string]providers.ExecutorMeta{
 		SupportedFlowTypes: []providers.FlowType{"AUTHENTICATION"},
 	},
 	ExecutorNameSessionRevocation: {
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION", "SYSTEM"},
 	},
 	ExecutorNameSessionSignOut: {
 		SupportedFlowTypes: []providers.FlowType{"SIGNOUT"},
@@ -213,6 +231,30 @@ var catalog = map[string]providers.ExecutorMeta{
 	},
 	ExecutorNameOwnerResolver: {
 		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION", "REGISTRATION"},
+	},
+	ExecutorNameAccessChangeValidator: {
+		SupportedModes: []string{
+			ExecutorModeActionDeletion,
+			ExecutorModeGroupDeletion,
+			ExecutorModeGroupMembershipRemoval,
+			ExecutorModeRoleAssignmentRemoval,
+			ExecutorModeRoleDeletion,
+			ExecutorModeRolePermissionRemoval,
+		},
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+	},
+	ExecutorNameRole: {
+		SupportedModes: []string{
+			ExecutorModeRoleAssignmentRemoval, ExecutorModeRoleDeletion, ExecutorModeRolePermissionRemoval,
+		},
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+	},
+	ExecutorNameGroup: {
+		SupportedModes:     []string{ExecutorModeGroupDeletion, ExecutorModeGroupMembershipRemoval},
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+	},
+	ExecutorNameActionDeletion: {
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
 	},
 }
 

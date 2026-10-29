@@ -1,7 +1,7 @@
 // Copyright 2026 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import {QueryErrorNotice, ResourceAvatar, SettingsCard, UnsavedChangesBar} from '@thunderid/components';
+import {DocumentTitle, QueryErrorNotice, ResourceAvatar, SettingsCard, UnsavedChangesBar} from '@thunderid/components';
 import {useConfig} from '@thunderid/contexts';
 import {getErrorMessage} from '@thunderid/utils';
 import {
@@ -25,6 +25,7 @@ import useDeleteConnection from '../api/useDeleteConnection';
 import useTrustedIssuer from '../api/useTrustedIssuer';
 import useUpdateTrustedIssuer from '../api/useUpdateTrustedIssuer';
 import ConnectionDeleteDialog from '../components/ConnectionDeleteDialog';
+import OrganizationUnitSection from '../components/OrganizationUnitSection';
 import ConnectionConstants from '../constants/connection-constants';
 import useConnectionRoutes from '../hooks/useConnectionRoutes';
 import {ConnectionTypes} from '../models/connection';
@@ -146,6 +147,7 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
 
   return (
     <PageContent>
+      <DocumentTitle title={data?.name ?? t('navigation:pages.connections', 'Connections')} />
       <Button
         variant="text"
         startIcon={<ChevronLeft size={16} />}
@@ -277,8 +279,10 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
               </Stack>
             </SettingsCard>
 
+            {data?.ouId && <OrganizationUnitSection ouId={data.ouId} />}
+
             <SettingsCard
-              title={t('trustedIssuers:detail.tokenExchange.title', 'Token Exchange')}
+              title={t('trustedIssuers:detail.tokenExchange.title', 'Token exchange')}
               description={t(
                 'trustedIssuers:detail.tokenExchange.description',
                 'Exchange subject tokens from this issuer for access tokens.',

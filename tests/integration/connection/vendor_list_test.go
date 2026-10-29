@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/thunder-id/thunderid/tests/integration/testutils"
 )
 
 // connectionInstanceSummary mirrors backend/internal/connection/models.go connectionInstanceSummary,
@@ -28,6 +30,7 @@ type VendorListTestSuite struct {
 	oidcID       string
 	twilioID     string
 	smsGatewayID string
+	smtpID       string
 }
 
 func TestVendorListSuite(t *testing.T) {
@@ -35,14 +38,19 @@ func TestVendorListSuite(t *testing.T) {
 }
 
 func (ts *VendorListTestSuite) SetupSuite() {
+	ouID, err := testutils.DefaultConnectionOUID()
+	ts.Require().NoError(err, "Failed to resolve the connection organization unit")
+
 	ts.googleID = ts.create("google", googleConnectionRequest{
 		Name:         "Vendor List Google",
+		OUID:         ouID,
 		ClientID:     "vendor-list-google-client",
 		ClientSecret: "vendor-list-google-secret",
 		RedirectURI:  "https://localhost:8095/flow/authn",
 	})
 	ts.oidcID = ts.create("oidc", oidcConnectionRequest{
 		Name:                  "Vendor List OIDC",
+		OUID:                  ouID,
 		ClientID:              "vendor-list-oidc-client",
 		ClientSecret:          "vendor-list-oidc-secret",
 		RedirectURI:           "https://localhost:8095/flow/authn",
@@ -51,14 +59,23 @@ func (ts *VendorListTestSuite) SetupSuite() {
 	})
 	ts.twilioID = ts.create("twilio", twilioConnectionRequest{
 		Name:       "Vendor List Twilio",
+		OUID:       ouID,
 		AccountSID: "AC00000000000000000000000000000001",
 		AuthToken:  "vendor-list-twilio-token",
 		SenderID:   "+10000000001",
 	})
 	ts.smsGatewayID = ts.create("sms-gateway", smsGatewayConnectionRequest{
 		Name:       "Vendor List SMS Gateway",
+		OUID:       ouID,
 		URL:        "https://vendor-list.example.com/sms",
 		HTTPMethod: "POST",
+	})
+	ts.smtpID = ts.create("email-smtp", smtpConnectionRequest{
+		Name:        "Vendor List SMTP",
+		OUID:        ouID,
+		Host:        "vendor-list.example.com",
+		Port:        587,
+		FromAddress: "noreply@vendor-list.example.com",
 	})
 }
 
@@ -68,6 +85,7 @@ func (ts *VendorListTestSuite) TearDownSuite() {
 		"oidc":        ts.oidcID,
 		"twilio":      ts.twilioID,
 		"sms-gateway": ts.smsGatewayID,
+		"email-smtp":  ts.smtpID,
 	} {
 		if id == "" {
 			continue
@@ -136,6 +154,22 @@ func (ts *VendorListTestSuite) TestIdentityProviderVendorListIsScopedToItsType()
 				"The listed instance must carry the name it was created with")
 		}
 	}
+}
+
+// TestEmailProviderVendorListIsScopedToItsProvider asserts that the email provider collection
+// lists only its own senders, and in particular none of the message senders that share the same
+// underlying notification sender store.
+func (ts *VendorListTestSuite) TestEmailProviderVendorListIsScopedToItsProvider() {
+	smtpInstances := ts.listVendor("email-smtp")
+	ts.True(containsSummaryID(smtpInstances, ts.smtpID), "The smtp list must contain the smtp sender")
+	ts.False(containsSummaryID(smtpInstances, ts.twilioID),
+		"The smtp list must not contain the twilio sender")
+	ts.False(containsSummaryID(smtpInstances, ts.smsGatewayID),
+		"The smtp list must not contain the custom gateway sender")
+
+	twilioInstances := ts.listVendor("twilio")
+	ts.False(containsSummaryID(twilioInstances, ts.smtpID),
+		"The twilio list must not contain the smtp sender")
 }
 
 // TestMessageProviderVendorListIsScopedToItsProvider asserts the same scoping for the message

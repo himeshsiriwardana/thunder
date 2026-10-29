@@ -5,6 +5,8 @@ package connection
 
 import (
 	"github.com/thunder-id/thunderid/internal/connection/authzenpdp"
+	"github.com/thunder-id/thunderid/internal/connection/httpconnection"
+	"github.com/thunder-id/thunderid/internal/system/outboundauth"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
@@ -20,6 +22,11 @@ type connectionExportModel struct {
 	Type        string `yaml:"type"                  json:"type"`
 	Name        string `yaml:"name"                  json:"name"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+
+	// OUID is the organization unit the connection belongs to. A document may name it by OUHandle instead, which is
+	// resolved to its id; when both are given the id wins. One of them is required.
+	OUID     string `yaml:"ouId,omitempty"     json:"ouId,omitempty"`
+	OUHandle string `yaml:"ouHandle,omitempty" json:"ouHandle,omitempty"`
 
 	// IdP-backed vendor fields (google, github, oidc, oauth).
 	ClientID              string   `yaml:"clientId,omitempty"              json:"clientId,omitempty"`
@@ -38,10 +45,10 @@ type connectionExportModel struct {
 	//nolint:lll
 	AttributeConfiguration *providers.AttributeConfiguration `yaml:"attributeConfiguration,omitempty" json:"attributeConfiguration,omitempty"`
 
-	// AuthZEN PDP connection fields.
+	// AuthZEN PDP connection fields. The timeout is shared with HTTP endpoint connections.
 	AuthZENPDPEndpoint      string `yaml:"endpoint,omitempty"                 json:"endpoint,omitempty"`
 	AuthZENPDPBatchEndpoint string `yaml:"batchEndpoint,omitempty"            json:"batchEndpoint,omitempty"`
-	AuthZENPDPTimeoutMS     int    `yaml:"timeoutMs,omitempty"                json:"timeoutMs,omitempty"`
+	TimeoutMS               int    `yaml:"timeoutMs,omitempty"                json:"timeoutMs,omitempty"`
 	AuthZENPDPRetryCount    *int   `yaml:"retryCount,omitempty"               json:"retryCount,omitempty"`
 	//nolint:lll
 	SubjectAttributeMappings []authzenpdp.SubjectAttributeMapping `yaml:"subjectAttributeMappings,omitempty" json:"subjectAttributeMappings,omitempty"`
@@ -56,4 +63,18 @@ type connectionExportModel struct {
 	HTTPMethod  string `yaml:"httpMethod,omitempty"  json:"httpMethod,omitempty"`
 	HTTPHeaders string `yaml:"httpHeaders,omitempty" json:"httpHeaders,omitempty"`
 	ContentType string `yaml:"contentType,omitempty" json:"contentType,omitempty"`
+
+	// Email-backed vendor fields (smtp).
+	Host        string `yaml:"host,omitempty"        json:"host,omitempty"`
+	Port        int    `yaml:"port,omitempty"        json:"port,omitempty"`
+	FromAddress string `yaml:"fromAddress,omitempty" json:"fromAddress,omitempty"`
+	FromName    string `yaml:"fromName,omitempty"    json:"fromName,omitempty"`
+	TLS         string `yaml:"tls,omitempty"         json:"tls,omitempty"`
+
+	// HTTP endpoint connection fields. The URL, timeout and authentication are the shared fields
+	// of those names.
+	Headers []httpconnection.Header `yaml:"headers,omitempty" json:"headers,omitempty"`
+
+	// Outbound authentication, shared by every vendor that dials out with credentials.
+	Authentication *outboundauth.Authentication `yaml:"authentication,omitempty" json:"authentication,omitempty"`
 }
