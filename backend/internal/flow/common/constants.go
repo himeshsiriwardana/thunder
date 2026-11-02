@@ -30,6 +30,9 @@ const (
 	NodeTypePrompt NodeType = "PROMPT"
 	// NodeTypeCall represents a CALL node that invokes another flow
 	NodeTypeCall NodeType = "CALL"
+	// NodeTypeVariables represents a VARIABLES node, which declares the variables of a flow and resolves their values
+	// without showing anything to the user.
+	NodeTypeVariables NodeType = "VARIABLES"
 )
 
 // NodeStatus defines the status of a node in the flow execution.
@@ -134,6 +137,12 @@ const (
 	// NodePropertyOUResolveFrom specifies the strategy for resolving the organization unit.
 	// Supported values: "caller" (use the caller's OU).
 	NodePropertyOUResolveFrom = "resolveFrom"
+	// NodePropertyOUParent names the organization unit the "prompt" strategy selects below. It takes the place of
+	// the default OU set by UserTypeResolver, for flows such as sign-in that have no user type step.
+	NodePropertyOUParent = "parentOuId"
+	// NodePropertyOUDirectChildrenOnly limits the "prompt" strategy to the direct children of the parent OU: the one
+	// named by NodePropertyOUParent or, when the node sets none, the default OU set by UserTypeResolver.
+	NodePropertyOUDirectChildrenOnly = "directChildrenOnly"
 	// NodePropertyAuthMethodMapping maps authentication classes to action refs on login_options PROMPT nodes.
 	NodePropertyAuthMethodMapping = "authMethodMapping"
 	// NodePropertySkipInterceptors indicates whether to skip interceptor execution for the current node.
@@ -157,6 +166,9 @@ const (
 
 // RuntimeData keys.
 const (
+	// RuntimeKeyOUID holds the organization unit a flow has been asked to act for, such as the one a user picked on a
+	// prompt.
+	RuntimeKeyOUID = "ouId"
 	// RuntimeKeyUserAutoProvisioned indicates whether the user was auto-provisioned
 	RuntimeKeyUserAutoProvisioned = "userAutoProvisioned"
 	// RuntimeKeyUserEligibleForProvisioning indicates whether the user is eligible for auto provisioning
@@ -182,6 +194,10 @@ const (
 	// RuntimeKeyConsentedPermissions holds the space-separated permission scopes the user has consented to
 	// release to the client, as produced by the ConsentExecutor.
 	RuntimeKeyConsentedPermissions = "consented_permissions"
+	// RuntimeKeyRequestedAuthorizationDetails holds the requested RFC 9396 authorization details as JSON.
+	RuntimeKeyRequestedAuthorizationDetails = "requested_authorization_details"
+	// RuntimeKeyConsentedAuthorizationDetails holds the authorization details granted by consent as JSON.
+	RuntimeKeyConsentedAuthorizationDetails = "consented_authorization_details"
 	// RuntimeKeyRequiredEssentialAttributes holds the space-separated essential user attributes required for the flow.
 	RuntimeKeyRequiredEssentialAttributes = "required_essential_attributes"
 	// RuntimeKeyRequiredOptionalAttributes holds the space-separated optional user attributes required for the flow.
@@ -446,4 +462,5 @@ var ValidNodeTypes = map[string]bool{
 	string(NodeTypeTaskExecution): true,
 	string(NodeTypePrompt):        true,
 	string(NodeTypeCall):          true,
+	string(NodeTypeVariables):     true,
 }

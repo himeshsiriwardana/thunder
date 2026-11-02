@@ -1413,6 +1413,7 @@ const translations = {
     'edit.page.validation.missingAllowedUserType': 'select at least one allowed user type',
     'edit.page.validation.missingCertificate': 'add a certificate',
     'edit.page.validation.invalidBackchannelLogoutUri': 'fix the back-channel logout URI',
+    'edit.page.validation.invalidIdentityAssertions': 'fix the identity assertions (ID-JAG) settings',
     'edit.page.validation.tokenSettings': 'fix the token settings',
     'edit.page.reset': 'Reset',
     'edit.page.save': 'Save',
@@ -1531,14 +1532,15 @@ const translations = {
     'edit.flows.allowedUserTypes.required': 'Select at least one user type that can sign up through this agent.',
     'edit.flows.delegationLock.message':
       'These settings are frozen for this agent. Turn on Delegated mode in the Advanced tab to unlock and start using them.',
+    'edit.flows.signInGrantLock.message':
+      'Sign-in flows apply only when this agent signs users in with the authorization code or CIBA grant type.',
 
     // Edit page - Advanced tab
     'edit.advanced.mode.title': 'Operating mode',
     'edit.advanced.delegationToggle.label': 'Delegated mode',
     'edit.advanced.mode.onOwnBehalf.description':
       'This agent authenticates with its own credentials without user interaction, using client credentials.',
-    'edit.advanced.mode.onBehalfOfUser.description':
-      'This agent acts on behalf of a signed-in user, using authorization code with PKCE.',
+    'edit.advanced.mode.onBehalfOfUser.description': 'This agent can act on behalf of a user.',
     'edit.advanced.agentSignIn.title': 'Agent sign-in',
     'edit.advanced.agentSignIn.description': 'Allow agents to sign in through this agent using the sign-in flow.',
     'edit.advanced.agentSignIn.toggle.label': 'Enable agent sign-in',
@@ -1578,6 +1580,9 @@ const translations = {
     'edit.tokens.audience.footnote': 'Attribute sets are configured independently for each audience.',
     'edit.tokens.delegationLock.message':
       'This agent does not receive tokens on behalf of a user. Turn on Delegated mode in the <advancedLink>Advanced tab</advancedLink> to configure them.',
+    'edit.tokens.user.tokenExchangeAttributes.note':
+      'Token exchange keeps only the selected attributes that the incoming token already carries.',
+    'edit.tokens.user.jwtBearerAttributes.note': 'Tokens from a redeemed ID-JAG carry no user attributes.',
     'edit.tokens.agent.attributes.title': 'Access token attributes',
     'edit.tokens.agent.attributes.description':
       'Extra attributes to add to the access token this agent receives for itself.',
@@ -1628,7 +1633,7 @@ const translations = {
     'errors.AGT-1042':
       'The subject attribute mapping must reference an attribute that is unique, required, and string typed in an allowed agent type.',
     'errors.AGT-1044':
-      'A delegated agent needs at least one grant type that lets it act for a signed-in user, such as authorization code.',
+      'A delegated agent needs at least one grant type that lets it act for a user, such as authorization code.',
   },
 
   // ============================================================================
@@ -1803,7 +1808,7 @@ const translations = {
     'errors.OU-1004': 'An organization unit with the same name already exists under the same parent.',
     'errors.OU-1005': 'The selected parent organization unit could not be found.',
     'errors.OU-1006':
-      'This organization unit has child units, users, groups, or connections and cannot be deleted while they exist.',
+      'This organization unit has child units, users, groups, connections, or flows and cannot be deleted while they exist.',
     'errors.OU-1007': 'This parent selection would create a circular dependency in the organization hierarchy.',
     'errors.OU-1008': 'An organization unit with the same handle already exists under the same parent.',
     'errors.OU-1012': 'This organization unit is managed by configuration and cannot be modified or deleted.',
@@ -2215,6 +2220,7 @@ const translations = {
     'card.configured': 'Configured',
     'card.notConfigured': 'Not configured',
     'card.comingSoon': 'Coming soon',
+    'card.default': 'Default',
     'card.addCustom.title': 'Add custom connection',
     'card.addCustom.description': "Set up a connection that isn't in the catalog.",
 
@@ -2289,6 +2295,7 @@ const translations = {
 
     // Connection detail / edit page
     'detail.backToConnections': 'Back to connections',
+    'detail.defaultBadgeManaged': 'Managed by server configuration.',
     'detail.loadError.title': 'Failed to load connection',
     'detail.notFound.title': 'Connection not found',
     'detail.notFound.description': 'This connection may have been deleted or the link is incorrect.',
@@ -2625,14 +2632,30 @@ const translations = {
     'delete.usages.loading': 'Checking affected resources…',
     'delete.usages.more': '+{{count}} more',
     'delete.blocking.title': 'This connection cannot be deleted until the following resources are updated or removed:',
+    'delete.defaultEmailSender':
+      'This is the default email sender. After you delete it, system-generated emails, such as account lock notifications, are not sent until another sender is set as the default.',
 
     // Toasts
     'create.success': 'Connection created successfully.',
     'create.error': 'Failed to create connection.',
+    'create.setDefaultError': 'Connection created, but it could not be made the default email sender.',
     'update.success': 'Connection updated successfully.',
     'update.error': 'Failed to update connection.',
     'delete.success': 'Connection deleted successfully.',
     'delete.error': 'Failed to delete connection.',
+
+    // Default email sender
+    'setDefault.action': 'Set as default',
+    'setDefault.title': 'Set default email sender',
+    'setDefault.message':
+      '<bold>{{name}}</bold> will be used as the default sender for system-generated emails, such as account lock notifications.',
+    'setDefault.replaces': 'This will replace the current default email sender.',
+    'setDefault.confirm': 'Set as default',
+    'setDefault.setting': 'Setting…',
+    'setDefault.success': '{{name}} is now the default email sender.',
+    'setDefault.error': 'Failed to set the default email sender.',
+    'setDefault.lockedReason': 'The default email sender is fixed by the deployment configuration.',
+    'defaultSender.loadError': 'Failed to load the default email sender.',
 
     // Errors / validation
     'error.duplicateName': 'A connection with this name already exists.',
@@ -2683,6 +2706,9 @@ const translations = {
     'errors.CON-1026':
       'This connection is used by one or more resources. Remove it from those resources before deleting it.',
     'errors.CON-1027': 'The number of service endpoint connections exceeds the maximum allowed in composite mode.',
+    'errors.CON-1028': 'The selected organization unit no longer exists. Choose another one and try again.',
+    'errors.CON-1029': "A connection's organization unit can't be changed once it is created.",
+    'errors.CON-1030': 'Choose an organization unit for this connection.',
     'errors.IDP-1001': 'This identity provider no longer exists. It may have already been deleted.',
     'errors.IDP-1002': 'The identity provider ID is invalid or missing.',
     'errors.IDP-1003': 'The identity provider name is invalid or missing.',
@@ -2735,6 +2761,9 @@ const translations = {
     'create.form.idJagEnabled.label': 'Enable Identity Assertion JWT Authorization Grant (ID-JAG)',
     'create.form.idJagEnabled.hint':
       'Accept and exchange signed identity assertions from this issuer for access tokens.',
+
+    // Shared by the create form and the detail page
+    'idJag.acceptanceUnavailable': 'This server does not accept identity assertions from any issuer.',
 
     // Detail page
     'detail.back': 'Back to connections',
@@ -2858,6 +2887,20 @@ const translations = {
     allow: 'Allow',
     deny: 'Deny',
     learnMore: 'Learn more',
+    'authorizationDetails.approve': 'Approve',
+    'authorizationDetails.showMore': 'Show more',
+    'authorizationDetails.showLess': 'Show less',
+    'authorizationDetails.moreItems': '+{{count}} more',
+    'authorizationDetails.invalidNumber': 'Enter a number.',
+    'authorizationDetails.numberMax': 'Enter {{value}} or less.',
+    'authorizationDetails.numberMin': 'Enter {{value}} or more.',
+    'authorizationDetails.invalidDate': 'Enter a date.',
+    'authorizationDetails.dateMax': 'Choose {{value}} or earlier.',
+    'authorizationDetails.dateMin': 'Choose {{value}} or later.',
+    'authorizationDetails.removeItem': '{{item}}, remove',
+    'authorizationDetails.addItem': '{{item}}, add',
+    'authorizationDetails.addBackItem': '{{item}}, add back',
+    'authorizationDetails.newItem': '{{label}}, add',
   },
 
   // ============================================================================
@@ -3671,8 +3714,12 @@ const translations = {
     // Token section
     'edit.token.seconds': 'seconds',
     'edit.token.labels.token_validity': 'Token validity',
+    'edit.token.labels.access_token_validity': 'Access token validity',
     'edit.token.loading_attributes': 'Loading user attributes...',
     'edit.token.no_user_attributes': 'No user attributes available. Configure allowed user types for this {{entity}}.',
+    'edit.token.no_user_attributes.allUserTypes':
+      'No user type defines any attributes yet. Add attributes to a user type to select them here.',
+    'edit.token.user_attributes_load_error': 'Failed to load the user attributes.',
     'edit.token.click_to_add': 'Click to add',
     'edit.token.click_to_remove': 'Click to remove',
     'edit.token.configure_attributes': 'Add or remove attributes',
@@ -3683,12 +3730,18 @@ const translations = {
     'edit.token.validity.error': 'Validity period must be at least 1 second',
     'edit.token.token_profile_card.title': 'Token attributes & response',
     'edit.token.token_profile_card.title.native': 'Token attributes',
+    'edit.token.token_profile_card.title.accessTokenOnly': 'Access token attributes',
+    'edit.token.token_profile_card.title.accessTokenWithoutAttributes': 'Access token',
     'edit.token.token_profile_card.description':
       'Choose the attributes in each token and the user info response, and how each is returned.',
     'edit.token.token_profile_card.description.noUserInfo':
       'Choose the attributes in each token issued to this {{entity}}, and how each is returned.',
     'edit.token.token_profile_card.description.native':
       'Choose the attributes included in the token issued to this {{entity}}.',
+    'edit.token.token_profile_card.description.accessTokenOnly':
+      'The user attributes in the access token issued to this {{entity}} on behalf of a user.',
+    'edit.token.token_profile_card.description.accessTokenWithoutAttributes':
+      'The access token issued to this {{entity}} on behalf of a user.',
     'edit.token.tabs.access_token': 'Access token',
     'edit.token.tabs.id_token': 'ID token',
     'edit.token.tabs.refresh_token': 'Refresh token',
@@ -3699,6 +3752,8 @@ const translations = {
     'edit.token.user_info.inherit_info': 'User info response will use the same attributes as the ID token',
     'edit.token.scopes_card.title': 'Scopes & user attribute mappings',
     'edit.token.scopes_card.description': 'Configure the OAuth2 scopes and the user attributes exposed for each scope',
+    'edit.token.scopes_card.description.scopesOnly':
+      'A custom scope listed here is kept as an OpenID Connect scope instead of being treated as a resource server permission. Its mapped attributes are not added to the access token.',
     'edit.token.scopes.title': 'Available scopes',
     'edit.token.scopes.hint': 'Toggle the OAuth2 scopes available to this {{entity}}.',
     'edit.token.scopes.active_label': 'Active',
@@ -3831,6 +3886,8 @@ const translations = {
     'edit.advanced.idJag.validityPeriod.error': 'Enter a value of at least 1 second.',
     'edit.advanced.idJag.validityPeriod.hint': 'How long an issued assertion stays valid. Default 300.',
     'edit.advanced.idJag.grantTypeHint': 'The token exchange grant type is enabled together with this feature.',
+    'edit.advanced.idJag.tokenExchangeUnavailable':
+      'This server does not allow the token exchange grant, so identity assertions cannot be issued.',
     'create.success': 'Application created successfully.',
     'create.error': 'Failed to create application. Please try again.',
     'create.flowGenerationError': 'Failed to generate the authentication flow. Please try again.',
@@ -4291,9 +4348,14 @@ const translations = {
     'delete.usages.more': '+{{count}} more',
 
     // Create flow wizard
+    'create.steps.organizationUnit': 'Organization unit',
     'create.steps.type': 'Flow type',
     'create.steps.template': 'Template',
     'create.steps.configure': 'Details',
+    'create.organizationUnit.title': 'Where should this flow belong?',
+    'create.organizationUnit.subtitle':
+      "Choose the organization unit that will own this flow. You can't change this once created.",
+    'create.organizationUnit.required': 'Organization unit is required',
     'create.configure.title': "Let's collect some details about your flow",
     'create.configure.name.label': 'Flow name',
     'create.configure.name.placeholder': 'e.g. Customer sign-in',
@@ -4486,6 +4548,12 @@ const translations = {
     'core.executions.ouResolver.resolveFrom.caller': 'Caller',
     'core.executions.ouResolver.resolveFrom.prompt': 'Prompt',
     'core.executions.ouResolver.resolveFrom.promptAll': 'Prompt all',
+    'core.executions.ouResolver.parentOuId.label': 'Parent OU ID',
+    'core.executions.ouResolver.parentOuId.placeholder': 'OU ID',
+    'core.executions.ouResolver.parentOuId.hint': 'Users select an OU below this one.',
+    'core.executions.ouResolver.directChildrenOnly.label': 'Limit to direct children',
+    'core.executions.ouResolver.directChildrenOnly.hint':
+      'Only direct children of the parent OU can be selected. Declare an ouHandle input below to select by handle.',
 
     // Invite executor
     'core.executions.invite.description': 'Configure the invite executor mode.',
@@ -5114,6 +5182,9 @@ const translations = {
     'errors.FLM-1025': 'A CALL node references a flow that does not exist.',
     'errors.FLM-1026':
       'This update was rejected because a resource that references this flow would be left in an inconsistent state.',
+    'errors.FLM-1027': 'The organization unit for this flow does not exist.',
+    'errors.FLM-1028': 'The organization unit of a flow cannot be changed once the flow is created.',
+    'errors.FLM-1029': 'A flow needs an organization unit.',
   },
 
   // ============================================================================

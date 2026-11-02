@@ -24,8 +24,8 @@ import (
 	agentmodel "github.com/thunder-id/thunderid/internal/agent/model"
 	"github.com/thunder-id/thunderid/internal/application"
 	"github.com/thunder-id/thunderid/internal/application/model"
+	"github.com/thunder-id/thunderid/internal/connection"
 	"github.com/thunder-id/thunderid/internal/connection/authzenpdp"
-	"github.com/thunder-id/thunderid/internal/connection/connectionou"
 	"github.com/thunder-id/thunderid/internal/connection/httpconnection"
 	layoutmgt "github.com/thunder-id/thunderid/internal/design/layout/mgt"
 	thememgt "github.com/thunder-id/thunderid/internal/design/theme/mgt"
@@ -359,10 +359,20 @@ func (f *fakeSenderService) UpdateSender(
 }
 
 type fakeFlowService struct {
-	created []*flowmgt.FlowDefinition
-	updated []*flowmgt.FlowDefinition
-	byID    map[string]*providers.CompleteFlowDefinition
-	byKey   map[string]*providers.CompleteFlowDefinition
+	created    []*flowmgt.FlowDefinition
+	updated    []*flowmgt.FlowDefinition
+	byID       map[string]*providers.CompleteFlowDefinition
+	byKey      map[string]*providers.CompleteFlowDefinition
+	ouIDByPath map[string]string
+	sharingErr *tidcommon.ServiceError
+	getErr     *tidcommon.ServiceError
+	deleted    []string
+	// withSharing records the policies each update that came with them carried, and updateSharingErr refuses them.
+	withSharing      [][]sharing.PolicyRequest
+	updateSharingErr *tidcommon.ServiceError
+	// valuesSet records the values each unit was given, in order, and valuesErr refuses them.
+	valuesSet []flowmgt.SetVariablesRequest
+	valuesErr *tidcommon.ServiceError
 }
 
 type fakeThemeService struct {
@@ -692,13 +702,14 @@ func (f *fakeOUService) UpdateOrganizationUnit(
 type fakeRoleService struct {
 	created []role.RoleCreationDetail
 	updated []role.RoleUpdateDetail
+	deleted []string
 }
 
 func (f *fakeRoleService) CreateRole(
 	_ context.Context, req role.RoleCreationDetail,
 ) (*role.RoleWithPermissionsAndAssignments, *tidcommon.ServiceError) {
 	f.created = append(f.created, req)
-	return &role.RoleWithPermissionsAndAssignments{ID: "role-1", Name: req.Name}, nil
+	return &role.RoleWithPermissionsAndAssignments{ID: "role-1", Name: req.Name, OUID: req.OUID}, nil
 }
 
 func (f *fakeRoleService) GetRoleWithPermissions(
@@ -715,7 +726,7 @@ func (f *fakeRoleService) UpdateRoleWithPermissions(
 	_ context.Context, _ string, req role.RoleUpdateDetail,
 ) (*role.RoleWithPermissions, *tidcommon.ServiceError) {
 	f.updated = append(f.updated, req)
-	return &role.RoleWithPermissions{ID: "role-1", Name: req.Name}, nil
+	return &role.RoleWithPermissions{ID: "role-1", Name: req.Name, OUID: req.OUID}, nil
 }
 
 type fakeRoleAssignmentService struct {
@@ -723,8 +734,8 @@ type fakeRoleAssignmentService struct {
 	assignmentErr *tidcommon.ServiceError
 }
 
-func (f *fakeRoleAssignmentService) AddAssignments(
-	_ context.Context, _ string, assignments []role.RoleAssignment,
+func (f *fakeRoleAssignmentService) AddAssigneesToRoles(
+	_ context.Context, assignments []role.RoleAssignment, _ []string,
 ) *tidcommon.ServiceError {
 	if f.assignmentErr != nil {
 		return f.assignmentErr
@@ -856,6 +867,7 @@ func (f *fakeFlowService) CreateFlow(
 		Name:     flowDef.Name,
 		FlowType: flowDef.FlowType,
 		Nodes:    flowDef.Nodes,
+		OUID:     flowDef.OUID,
 	}
 	f.created = append(f.created, flowDef)
 	f.byID[id] = created
@@ -866,6 +878,9 @@ func (f *fakeFlowService) CreateFlow(
 func (f *fakeFlowService) GetFlow(
 	_ context.Context, flowID string,
 ) (*providers.CompleteFlowDefinition, *tidcommon.ServiceError) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	if v, ok := f.byID[flowID]; ok {
 		return v, nil
 	}
@@ -905,11 +920,53 @@ func (f *fakeFlowService) UpdateFlow(
 		Name:     flowDef.Name,
 		FlowType: flowDef.FlowType,
 		Nodes:    flowDef.Nodes,
+		OUID:     f.byID[flowID].OUID,
 	}
 	f.updated = append(f.updated, flowDef)
 	f.byID[flowID] = updated
 	f.byKey[string(flowDef.FlowType)+":"+flowDef.Handle] = updated
 	return updated, nil
+}
+
+func (f *fakeFlowService) UpdateFlowWithSharing(
+	ctx context.Context, flowID string, flowDef *flowmgt.FlowDefinition, policies []sharing.PolicyRequest,
+) (*providers.CompleteFlowDefinition, *tidcommon.ServiceError) {
+	if f.updateSharingErr != nil {
+		return nil, f.updateSharingErr
+	}
+	f.withSharing = append(f.withSharing, policies)
+	return f.UpdateFlow(ctx, flowID, flowDef)
+}
+
+func (f *fakeFlowService) ValidateSharingPolicies(
+	_ context.Context, _ string, _ []sharing.PolicyRequest,
+) *tidcommon.ServiceError {
+	return f.sharingErr
+}
+
+func (f *fakeFlowService) SetVariables(
+	_ context.Context, _, _ string, req flowmgt.SetVariablesRequest,
+) (*flowmgt.VariablesResponse, *tidcommon.ServiceError) {
+	if f.valuesErr != nil {
+		return nil, f.valuesErr
+	}
+	f.valuesSet = append(f.valuesSet, req)
+	return &flowmgt.VariablesResponse{Values: req.Values}, nil
+}
+
+func (f *fakeFlowService) ResolveFlowOU(_ context.Context, flowDef *flowmgt.FlowDefinition) *tidcommon.ServiceError {
+	if flowDef.OUID == "" {
+		if flowDef.OUHandle == "" {
+			return &flowmgt.ErrorFlowOURequired
+		}
+		ouID, ok := f.ouIDByPath[flowDef.OUHandle]
+		if !ok {
+			return &flowmgt.ErrorInvalidFlowOU
+		}
+		flowDef.OUID = ouID
+	}
+	flowDef.OUHandle = ""
+	return nil
 }
 
 // fakeSharingService records what the importer asked it to replay.
@@ -1143,6 +1200,7 @@ func TestImportResources_CreateIDPAndFlow(t *testing.T) {
 		"handle: login",
 		"name: Login Flow",
 		"flowType: AUTHENTICATION",
+		"ouId: ou-1",
 		"nodes: []",
 		"",
 	}, "\n")
@@ -1873,6 +1931,7 @@ func TestImportResources_FlowUpsertCreatePreservesID(t *testing.T) {
 		"handle: registration-flow",
 		"name: Updated Registration Flow",
 		"flowType: REGISTRATION",
+		"ouId: ou-1",
 		"nodes: []",
 		"",
 	}, "\n")
@@ -1888,6 +1947,112 @@ func TestImportResources_FlowUpsertCreatePreservesID(t *testing.T) {
 	assert.Len(t, flowSvc.created, 1)
 	assert.Equal(t, "missing-flow-id", flowSvc.created[0].ID)
 	assert.Len(t, flowSvc.updated, 0)
+}
+
+func TestImportResources_FlowKeepsItsOrganizationUnit(t *testing.T) {
+	flowSvc := &fakeFlowService{
+		byID:  map[string]*providers.CompleteFlowDefinition{},
+		byKey: map[string]*providers.CompleteFlowDefinition{},
+	}
+	svc := newImportService(
+		nil, nil, nil, flowSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	content := strings.Join([]string{
+		"resource_type: flow",
+		"id: owned-flow-id",
+		"handle: owned-flow",
+		"name: Owned Flow",
+		"flowType: AUTHENTICATION",
+		"ouId: ou-1",
+		"nodes: []",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	require.Len(t, flowSvc.created, 1)
+	assert.Equal(t, "ou-1", flowSvc.created[0].OUID)
+}
+
+func TestImportResources_FlowOrganizationUnit(t *testing.T) {
+	flowDoc := func(owner string) string {
+		lines := []string{
+			"resource_type: flow",
+			"id: owned-flow-id",
+			"handle: owned-flow",
+			"name: Owned Flow",
+			"flowType: AUTHENTICATION",
+		}
+		if owner != "" {
+			lines = append(lines, owner)
+		}
+		return strings.Join(append(lines, "nodes: []", ""), "\n")
+	}
+	existing := func() *fakeFlowService {
+		flow := &providers.CompleteFlowDefinition{
+			ID: "owned-flow-id", Handle: "owned-flow", Name: "Owned Flow",
+			FlowType: providers.FlowTypeAuthentication, OUID: "ou-1",
+		}
+		return &fakeFlowService{
+			byID:       map[string]*providers.CompleteFlowDefinition{"owned-flow-id": flow},
+			byKey:      map[string]*providers.CompleteFlowDefinition{"AUTHENTICATION:owned-flow": flow},
+			ouIDByPath: map[string]string{"default": "ou-1", "other": "ou-2"},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		owner        string
+		dryRun       bool
+		wantStatus   string
+		wantCode     string
+		wantUpdated  int
+		wantOwnerSet string
+	}{
+		{name: "handle resolved to the id", owner: "ouHandle: default", wantStatus: statusSuccess,
+			wantUpdated: 1, wantOwnerSet: "ou-1"},
+		{name: "id wins over the handle", owner: "ouId: ou-1\nouHandle: other", wantStatus: statusSuccess,
+			wantUpdated: 1, wantOwnerSet: "ou-1"},
+		{name: "no owner is refused", owner: "", wantStatus: statusFailed, wantCode: flowmgt.ErrorFlowOURequired.Code},
+		{name: "unknown handle is refused", owner: "ouHandle: nowhere", wantStatus: statusFailed,
+			wantCode: flowmgt.ErrorInvalidFlowOU.Code},
+		{name: "dry run without an owner is refused", owner: "", dryRun: true, wantStatus: statusFailed,
+			wantCode: flowmgt.ErrorFlowOURequired.Code},
+		{name: "dry run accepts the owner the flow has", owner: "ouHandle: default", dryRun: true,
+			wantStatus: statusSuccess},
+		{name: "dry run refuses another owner by id", owner: "ouId: ou-2", dryRun: true, wantStatus: statusFailed,
+			wantCode: flowmgt.ErrorOUUpdateNotAllowed.Code},
+		{name: "dry run refuses another owner by handle", owner: "ouHandle: other", dryRun: true,
+			wantStatus: statusFailed, wantCode: flowmgt.ErrorOUUpdateNotAllowed.Code},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			flowSvc := existing()
+			svc := newImportService(
+				nil, nil, nil, flowSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			resp, err := svc.ImportResources(context.Background(), &ImportRequest{
+				Content: flowDoc(tc.owner),
+				DryRun:  tc.dryRun,
+				Options: &ImportOptions{
+					Upsert: boolPtr(true), ContinueOnError: boolPtr(true), Target: importTargetRuntime,
+				},
+			})
+
+			require.Nil(t, err)
+			require.Len(t, resp.Results, 1)
+			assert.Equal(t, tc.wantStatus, resp.Results[0].Status)
+			assert.Equal(t, tc.wantCode, resp.Results[0].Code)
+			assert.Len(t, flowSvc.updated, tc.wantUpdated)
+			assert.Empty(t, flowSvc.created)
+			if tc.wantOwnerSet != "" {
+				assert.Equal(t, tc.wantOwnerSet, flowSvc.updated[0].OUID)
+				assert.Empty(t, flowSvc.updated[0].OUHandle)
+			}
+		})
+	}
 }
 
 func TestImportResources_FlowUpsertDuplicateHandleFallsBackToHandleUpdate(t *testing.T) {
@@ -1913,6 +2078,7 @@ func TestImportResources_FlowUpsertDuplicateHandleFallsBackToHandleUpdate(t *tes
 		"handle: registration-flow",
 		"name: Updated Registration Flow",
 		"flowType: REGISTRATION",
+		"ouId: ou-1",
 		"nodes: []",
 		"",
 	}, "\n")
@@ -1955,6 +2121,7 @@ func TestImportResources_ApplicationFlowReferencesAreRemappedFromFlowAlias(t *te
 		"handle: registration-flow",
 		"name: Updated Registration Flow",
 		"flowType: REGISTRATION",
+		"ouId: ou-1",
 		"nodes: []",
 		"",
 		"---",
@@ -2258,6 +2425,7 @@ func TestImportResources_UpsertCreatePreservesIDsAcrossResourceTypes(t *testing.
 		"handle: registration-flow",
 		"name: Registration Flow",
 		"flowType: REGISTRATION",
+		"ouId: ou-1",
 		"nodes: []",
 		"",
 	}, "\n")
@@ -3128,6 +3296,7 @@ func TestImportAgent_FlowAliasRemapsFlowIDs(t *testing.T) {
 				"handle: " + tc.flowHandle,
 				"name: " + tc.flowName,
 				"flowType: " + tc.flowType,
+				"ouId: ou-1",
 				"nodes: []",
 				"---",
 				"resource_type: agent",
@@ -3195,6 +3364,17 @@ type fakeResourceServerService struct {
 	updated []providers.ResourceServer
 	// resources are the resources created under a server, in the order they were written.
 	resources []providers.Resource
+	// actions are the actions created under a server, in the order they were written, each with the
+	// ID of the resource it was created under, empty for an action of the server itself.
+	actions []importedAction
+	// actionErrs are the errors CreateAction returns, by action handle.
+	actionErrs map[string]*tidcommon.ServiceError
+}
+
+// importedAction is an action an import created, with the ID of the resource it was created under.
+type importedAction struct {
+	resourceID string
+	action     providers.Action
 }
 
 func (f *fakeResourceServerService) CreateResourceServer(
@@ -3235,8 +3415,16 @@ func (f *fakeResourceServerService) GetResourceList(
 }
 
 func (f *fakeResourceServerService) CreateAction(
-	_ context.Context, _ string, _ *string, _ providers.Action,
+	_ context.Context, _ string, resourceID *string, action providers.Action,
 ) (*providers.Action, *tidcommon.ServiceError) {
+	if svcErr, ok := f.actionErrs[action.Handle]; ok {
+		return nil, svcErr
+	}
+	created := importedAction{action: action}
+	if resourceID != nil {
+		created.resourceID = *resourceID
+	}
+	f.actions = append(f.actions, created)
 	return &providers.Action{}, nil
 }
 
@@ -3705,6 +3893,107 @@ func TestImportResourceServer_SameHandleUnderDifferentParents(t *testing.T) {
 	}, parents)
 }
 
+// TestImportResourceServer_ServerActions verifies that the actions declared on a resource server
+// itself are created at the server level, with or without resources, and that an action whose handle
+// already exists is skipped.
+func TestImportResourceServer_ServerActions(t *testing.T) {
+	tests := []struct {
+		name      string
+		resources []string
+		expected  []importedAction
+	}{
+		{
+			name: "without resources",
+			expected: []importedAction{
+				{action: providers.Action{Name: "Read All", Handle: "read_all", Permission: "read_all"}},
+			},
+		},
+		{
+			name: "beside resources",
+			resources: []string{
+				"resources:",
+				"  - name: Orders",
+				"    handle: orders",
+				"    actions:",
+				"      - { name: Read, handle: read }",
+			},
+			expected: []importedAction{
+				{action: providers.Action{Name: "Read All", Handle: "read_all", Permission: "read_all"}},
+				{resourceID: "id-orders", action: providers.Action{
+					Name: "Read", Handle: "read", Permission: "orders:read",
+				}},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rsSvc := &fakeResourceServerService{actionErrs: map[string]*tidcommon.ServiceError{
+				"existing": &resource.ErrorHandleConflict,
+			}}
+			svc := newImportService(
+				nil, nil, nil, nil, nil, nil, nil, nil, nil, rsSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			content := strings.Join(append([]string{
+				"resource_type: resource_server",
+				"id: rs-new",
+				"name: Test RS",
+				"identifier: test-rs",
+				"ouId: ou-explicit",
+				"actions:",
+				"  - { name: Read All, handle: read_all }",
+				"  - { name: Existing, handle: existing }",
+			}, append(tc.resources, "")...), "\n")
+
+			resp, err := svc.ImportResources(context.Background(), &ImportRequest{
+				Content: content,
+				Options: &ImportOptions{Upsert: boolPtr(false)},
+			})
+
+			require.Nil(t, err)
+			require.Len(t, resp.Results, 1)
+			assert.Equal(t, statusSuccess, resp.Results[0].Status, resp.Results[0].Message)
+			assert.Equal(t, tc.expected, rsSvc.actions)
+		})
+	}
+}
+
+// TestImportResourceServer_ServerActionError verifies that a failure to create an action of the
+// resource server itself fails the import of that resource server.
+func TestImportResourceServer_ServerActionError(t *testing.T) {
+	rsSvc := &fakeResourceServerService{actionErrs: map[string]*tidcommon.ServiceError{
+		"read_all": {
+			Type:  tidcommon.ClientErrorType,
+			Code:  resource.ErrorInvalidRequestFormat.Code,
+			Error: tidcommon.I18nMessage{DefaultValue: "invalid action"},
+		},
+	}}
+	svc := newImportService(
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, rsSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	content := strings.Join([]string{
+		"resource_type: resource_server",
+		"id: rs-new",
+		"name: Test RS",
+		"identifier: test-rs",
+		"ouId: ou-explicit",
+		"actions:",
+		"  - { name: Read All, handle: read_all }",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{
+		Content: content,
+		Options: &ImportOptions{Upsert: boolPtr(false)},
+	})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Equal(t, resource.ErrorInvalidRequestFormat.Code, resp.Results[0].Code)
+	assert.Empty(t, rsSvc.resources)
+}
+
 // TestImportResourceServer_OUHandleNotFound verifies that an unknown ou_handle on a resource
 // server document causes the import to fail with a clear error.
 func TestImportResourceServer_OUHandleNotFound(t *testing.T) {
@@ -3941,6 +4230,35 @@ func (s *ImportNotificationTemplateTestSuite) TestCreate() {
 
 	s.Equal(statusSuccess, outcome.Status)
 	s.Equal(operationCreate, outcome.Operation)
+}
+
+func (s *ImportNotificationTemplateTestSuite) TestCreateKeepsTheDocumentID() {
+	doc, err := parseDocuments(`
+resource_type: notification_template
+id: 01900000-0000-7000-8000-0000000000a0
+channel: email
+handle: user-invite
+displayName: User Invitation Email
+description: Invite.
+content:
+  subject: Welcome
+  body: "<p>{{ctx(inviteLink)}}</p>"
+`)
+	s.Require().NoError(err)
+	s.expectValidateSucceeds()
+	s.mockAdapter.EXPECT().
+		GetTemplateByHandle(mock.Anything, notificationtemplate.ChannelTypeEmail, "user-invite").
+		Return(nil, &notificationtemplate.ErrorTemplateNotFound).Once()
+	s.mockAdapter.EXPECT().CreateTemplate(mock.Anything, notificationtemplate.ChannelTypeEmail,
+		mock.MatchedBy(func(req notificationtemplate.CreateTemplateRequest) bool {
+			return req.ID == "01900000-0000-7000-8000-0000000000a0"
+		})).Return(&notificationtemplate.Template{ID: "01900000-0000-7000-8000-0000000000a0",
+		Handle: "user-invite"}, nil).Once()
+
+	outcome := s.svc.importNotificationTemplate(s.ctx, doc[0], &ImportOptions{}, false)
+
+	s.Equal(statusSuccess, outcome.Status)
+	s.Equal("01900000-0000-7000-8000-0000000000a0", outcome.ResourceID)
 }
 
 func (s *ImportNotificationTemplateTestSuite) TestUpsertUpdatesExisting() {
@@ -4772,7 +5090,7 @@ func (s *ImportConnectionOUTestSuite) kinds() []connectionKind {
 			stored: func(ouID string) any {
 				return &authzenpdp.AuthZENPDPConnection{ID: "conn-1", Name: "pdp", OUID: ouID}
 			},
-			updateNotAllowedCode: connectionou.ErrorOUUpdateNotAllowed.Code,
+			updateNotAllowedCode: authzenpdp.ErrorOUUpdateNotAllowed.Code,
 		},
 	}
 }
@@ -4827,12 +5145,12 @@ func (s *ImportConnectionOUTestSuite) TestOwnerTheServiceCannotResolveFailsTheIt
 		for _, dryRun := range []bool{false, true} {
 			s.Run(fmt.Sprintf("%s dry run %t", kind.name, dryRun), func() {
 				s.SetupTest()
-				s.expectResolve(kind, ownerCall{wantHandle: "missing", svcErr: &connectionou.ErrorInvalidOU})
+				s.expectResolve(kind, ownerCall{wantHandle: "missing", svcErr: &authzenpdp.ErrorInvalidOU})
 
 				outcome := s.importOne(kind.doc("", "ouHandle: missing\n"), dryRun)
 
 				s.Equal(statusFailed, outcome.Status)
-				s.Equal(connectionou.ErrorInvalidOU.Code, outcome.Code)
+				s.Equal(authzenpdp.ErrorInvalidOU.Code, outcome.Code)
 			})
 		}
 	}
@@ -4911,6 +5229,7 @@ func (s *ImportHTTPConnectionTestSuite) newService(idpSvc idpAdapter, senderSvc 
 
 func (s *ImportHTTPConnectionTestSuite) importHTTPConnection(url, passwordLine string, dryRun bool) ImportItemOutcome {
 	s.T().Helper()
+	s.adapter.EXPECT().ResolveConnectionOU(mock.Anything, mock.Anything).Return(nil).Maybe()
 	resp, err := s.svc.ImportResources(context.Background(), &ImportRequest{
 		Content: fmt.Sprintf(httpConnectionImportDoc, url, passwordLine),
 		DryRun:  dryRun,
@@ -4937,6 +5256,81 @@ func (s *ImportHTTPConnectionTestSuite) stored() *httpconnection.HTTPConnection 
 	s.Require().NoError(err)
 	return &httpconnection.HTTPConnection{ID: "http-1", Name: "Risk Engine", URL: httpImportURL,
 		AuthProperties: authProps}
+}
+
+// httpSharingImportDoc is an HTTP connection document that names its owner by handle only and carries one
+// sharing policy.
+const httpSharingImportDoc = `resource_type: connection
+id: http-1
+type: http
+name: Risk Engine
+url: https://risk.example.com/evaluate
+ouHandle: root
+sharingPolicies:
+  - childUnits:
+      mode: all
+`
+
+func (s *ImportHTTPConnectionTestSuite) importSharedHTTPConnection(sharingSvc *fakeSharingService) ImportItemOutcome {
+	s.T().Helper()
+	s.svc.(*importService).sharingService = sharingSvc
+	resp, err := s.svc.ImportResources(context.Background(), &ImportRequest{
+		Content: httpSharingImportDoc,
+		Options: &ImportOptions{Upsert: boolPtr(false), Target: importTargetRuntime},
+	})
+	s.Require().Nil(err)
+	s.Require().Len(resp.Results, 1)
+	return resp.Results[0]
+}
+
+// A document that names its owner by handle is shared against the unit the handle resolves to.
+func (s *ImportHTTPConnectionTestSuite) TestSharingIsReplayedAgainstTheResolvedOwner() {
+	sharingSvc := &fakeSharingService{}
+	s.adapter.EXPECT().ResolveConnectionOU(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, connection *httpconnection.HTTPConnection) { connection.OUID = "ou-root" }).
+		Return(nil)
+	s.adapter.EXPECT().CreateHTTPConnection(mock.Anything, mock.Anything).
+		Return(&httpconnection.HTTPConnection{ID: "http-1", Name: "Risk Engine"}, nil)
+
+	outcome := s.importSharedHTTPConnection(sharingSvc)
+
+	s.Equal(statusSuccess, outcome.Status, outcome.Message)
+	s.Require().Len(sharingSvc.calls, 1)
+	s.Equal(connection.ConnectionSharingType, sharingSvc.calls[0].resourceType)
+	s.Equal("http-1", sharingSvc.calls[0].resourceID)
+	s.Equal("ou-root", sharingSvc.calls[0].owningOUID)
+	s.Len(sharingSvc.calls[0].policies, 1)
+}
+
+// A refused policy fails the document, and a connection the import just created is removed.
+func (s *ImportHTTPConnectionTestSuite) TestRefusedPoliciesRemoveTheCreatedConnection() {
+	sharingSvc := &fakeSharingService{failure: &sharing.PolicyReplayError{
+		Index: 0, InitiatingOUID: "ou-root", Err: &sharing.ErrorPolicyExists}}
+	s.adapter.EXPECT().ResolveConnectionOU(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, connection *httpconnection.HTTPConnection) { connection.OUID = "ou-root" }).
+		Return(nil)
+	s.adapter.EXPECT().CreateHTTPConnection(mock.Anything, mock.Anything).
+		Return(&httpconnection.HTTPConnection{ID: "http-1", Name: "Risk Engine"}, nil)
+	s.adapter.EXPECT().GetHTTPConnection(mock.Anything, "http-1").
+		Return(&httpconnection.HTTPConnection{ID: "http-1"}, nil)
+	s.adapter.EXPECT().DeleteHTTPConnection(mock.Anything, "http-1").Return(nil)
+
+	outcome := s.importSharedHTTPConnection(sharingSvc)
+
+	s.Equal(statusFailed, outcome.Status)
+}
+
+// An owner that cannot be resolved fails the document before anything is written.
+func (s *ImportHTTPConnectionTestSuite) TestAnUnresolvableOwnerWritesNothing() {
+	sharingSvc := &fakeSharingService{}
+	s.adapter.EXPECT().ResolveConnectionOU(mock.Anything, mock.Anything).
+		Return(&httpconnection.ErrorInvalidOU)
+
+	outcome := s.importSharedHTTPConnection(sharingSvc)
+
+	s.Equal(statusFailed, outcome.Status)
+	s.Equal(httpconnection.ErrorInvalidOU.Code, outcome.Code)
+	s.Empty(sharingSvc.calls)
 }
 
 // Flows reference a connection by ID, so an imported one must keep the document's.
@@ -5206,4 +5600,501 @@ func TestImportResources_ProjectFailureIsReported(t *testing.T) {
 	require.Len(t, resp.Results, 1)
 	assert.Equal(t, statusFailed, resp.Results[0].Status)
 	assert.Equal(t, "PRJ-1012", resp.Results[0].Code)
+}
+
+type ImportRoleSharingTestSuite struct {
+	suite.Suite
+	roleSvc           *fakeRoleService
+	roleAssignmentSvc *fakeRoleAssignmentService
+	sharingSvc        *fakeSharingService
+	svc               ImportServiceInterface
+}
+
+func TestImportRoleSharingTestSuite(t *testing.T) {
+	suite.Run(t, new(ImportRoleSharingTestSuite))
+}
+
+func (s *ImportRoleSharingTestSuite) SetupTest() {
+	s.roleSvc = &fakeRoleService{}
+	s.roleAssignmentSvc = &fakeRoleAssignmentService{}
+	s.sharingSvc = &fakeSharingService{}
+	svc := newImportService(
+		nil, nil, nil, nil, nil, nil, s.roleSvc, s.roleAssignmentSvc,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	svc.(*importService).sharingService = s.sharingSvc
+	s.svc = svc
+}
+
+// roleDocWithPolicies is one role document carrying a sharing policy and its assignments.
+func roleDocWithPolicies(id string) string {
+	return strings.Join([]string{
+		"resource_type: role",
+		"id: " + id,
+		"name: Support Agent",
+		"ouId: ou-owner",
+		"permissions: []",
+		"sharingPolicies:",
+		"  - id: " + id + "-policy-owner",
+		"    childUnits:",
+		"      mode: all",
+		"assignments:",
+		"  - type: group",
+		"    id: group1",
+		"  - type: user",
+		"    id: user1",
+		"    ouId: ou-child",
+		"",
+	}, "\n")
+}
+
+// connectionDocWithPolicies is an identity provider connection document in ou-1 that carries one sharing
+// policy.
+func connectionDocWithPolicies(id string) string {
+	return strings.Join([]string{
+		"resource_type: connection",
+		"id: " + id,
+		"name: idp-one",
+		"type: google",
+		"clientId: abc",
+		"ouId: ou-1",
+		"sharingPolicies:",
+		"  - childUnits:",
+		"      mode: all",
+		"",
+	}, "\n")
+}
+
+// The importer replays the policies a role document carries once the role exists, against the
+// organization unit that owns it.
+func (s *ImportRoleSharingTestSuite) TestPoliciesAreReplayedOnCreate() {
+	resp, err := s.svc.ImportResources(context.Background(), &ImportRequest{Content: roleDocWithPolicies("role-new")})
+
+	s.Require().Nil(err)
+	s.Require().Len(resp.Results, 1)
+	s.Equal(statusSuccess, resp.Results[0].Status)
+	s.Require().Len(s.roleSvc.created, 1)
+	s.Empty(s.roleSvc.created[0].Assignments, "assignments wait for the policies that let the role reach them")
+	s.Equal([]role.RoleAssignment{
+		{ID: "group1", Type: role.AssigneeTypeGroup},
+		{ID: "user1", Type: role.AssigneeTypeUser, OUID: "ou-child"},
+	}, s.roleAssignmentSvc.assignments, "each assignment keeps the organization unit it names")
+
+	s.Require().Len(s.sharingSvc.calls, 1)
+	call := s.sharingSvc.calls[0]
+	s.Equal(role.RoleSharingType, call.resourceType)
+	s.Equal("role-1", call.resourceID)
+	s.Equal("ou-owner", call.owningOUID)
+	s.Require().Len(call.policies, 1)
+	s.Require().NotNil(call.policies[0].ChildUnits)
+	s.Empty(s.roleSvc.deleted)
+}
+
+// A refused policy has to undo the create: the caller is told the document failed and gets no id
+// back, so a role left behind would hold the name a retry needs.
+func (s *ImportRoleSharingTestSuite) TestRefusedPoliciesUndoTheCreate() {
+	s.sharingSvc.failure = &sharing.PolicyReplayError{
+		Index: 0, InitiatingOUID: "ou-owner", Err: &sharing.ErrorInvalidRequestFormat}
+
+	resp, _ := s.svc.ImportResources(context.Background(), &ImportRequest{Content: roleDocWithPolicies("role-new")})
+
+	s.Require().Len(resp.Results, 1)
+	s.Equal(statusFailed, resp.Results[0].Status)
+	s.Contains(resp.Results[0].Message, "sharing policy 1 (organization unit ou-owner)")
+	s.Equal([]string{"role-1"}, s.roleSvc.deleted)
+}
+
+// A refused assignment undoes the create too, for the same reason a refused policy does.
+func (s *ImportRoleSharingTestSuite) TestRefusedAssignmentsUndoTheCreate() {
+	s.roleAssignmentSvc.assignmentErr = &tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType, Code: "ROL-1026",
+		Error: tidcommon.I18nMessage{DefaultValue: "Role not shared with the organization unit"},
+	}
+
+	resp, _ := s.svc.ImportResources(context.Background(), &ImportRequest{Content: roleDocWithPolicies("role-new")})
+
+	s.Require().Len(resp.Results, 1)
+	s.Equal(statusFailed, resp.Results[0].Status)
+	s.Equal([]string{"role-1"}, s.roleSvc.deleted)
+}
+
+// An update replays the document's policies against the role as stored, and adds its assignments as
+// before.
+func (s *ImportRoleSharingTestSuite) TestUpsertReplaysPolicies() {
+	upsert := true
+	resp, err := s.svc.ImportResources(context.Background(), &ImportRequest{
+		Content: roleDocWithPolicies("role-1"),
+		Options: &ImportOptions{Upsert: &upsert},
+	})
+
+	s.Require().Nil(err)
+	s.Require().Len(resp.Results, 1)
+	s.Equal(statusSuccess, resp.Results[0].Status)
+	s.Equal(operationUpdate, resp.Results[0].Operation)
+	s.Require().Len(s.sharingSvc.calls, 1)
+	s.Equal("role-1", s.sharingSvc.calls[0].resourceID)
+	s.Len(s.roleAssignmentSvc.assignments, 2)
+	s.Empty(s.roleSvc.deleted, "an update is not undone")
+}
+
+// A document carrying no policies asks the sharing adapter nothing.
+func (s *ImportRoleSharingTestSuite) TestDocumentWithoutPoliciesAsksTheAdapterNothing() {
+	content := strings.Join([]string{
+		"resource_type: role", "id: role-plain", "name: Plain", "ouId: ou-owner", "permissions: []", "",
+	}, "\n")
+
+	resp, err := s.svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	s.Require().Nil(err)
+	s.Equal(statusSuccess, resp.Results[0].Status)
+	s.Empty(s.sharingSvc.calls)
+}
+
+// A misspelled policy field fails the document rather than being dropped, which would share the
+// role with the organization unit the document meant to exclude.
+func (s *ImportRoleSharingTestSuite) TestMisspelledPolicyFieldFailsTheDocument() {
+	content := strings.Join([]string{
+		"resource_type: role", "id: role-typo", "name: Typo", "ouId: ou-owner", "permissions: []",
+		"sharingPolicies:", "  - childUnits:", "      mode: all", "      excludeOuIds: [ou-trial]", "",
+	}, "\n")
+
+	resp, err := s.svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	s.Require().Nil(err)
+	s.Require().Len(resp.Results, 1)
+	s.Equal(statusFailed, resp.Results[0].Status)
+	s.Contains(resp.Results[0].Message, `unknown sharing policy field "excludeOuIds"`)
+	s.Empty(s.roleSvc.created, "nothing is written for a document that does not decode")
+	s.Empty(s.sharingSvc.calls)
+}
+
+func newTestConnectionImportWithSharing(sharingSvc *fakeSharingService) ImportServiceInterface {
+	idpSvc := &fakeIDPService{byID: map[string]*providers.IDPDTO{}, byName: map[string]*providers.IDPDTO{}}
+	svc := newImportService(
+		nil, idpSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	if sharingSvc != nil {
+		svc.(*importService).sharingService = sharingSvc
+	}
+	return svc
+}
+
+// A connection's sharing is replayed by the importer once the connection exists, against the unit it lives in.
+func TestImportConnectionAppliesSharingPolicies(t *testing.T) {
+	sharingSvc := &fakeSharingService{}
+	svc := newTestConnectionImportWithSharing(sharingSvc)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{
+		Content: connectionDocWithPolicies("idp-1"), Options: &ImportOptions{Upsert: boolPtr(false)}})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	require.Len(t, sharingSvc.calls, 1)
+	assert.Equal(t, connection.ConnectionSharingType, sharingSvc.calls[0].resourceType)
+	assert.Equal(t, "idp-1", sharingSvc.calls[0].resourceID)
+	assert.Equal(t, "ou-1", sharingSvc.calls[0].owningOUID)
+	assert.Len(t, sharingSvc.calls[0].policies, 1)
+}
+
+// A refused policy fails the document rather than importing a connection that is not shared as declared.
+func TestImportConnectionFailsWhenPoliciesAreRefused(t *testing.T) {
+	sharingSvc := &fakeSharingService{failure: &sharing.PolicyReplayError{
+		Index: 0, InitiatingOUID: "ou-1", Err: &sharing.ErrorPolicyExists}}
+	svc := newTestConnectionImportWithSharing(sharingSvc)
+
+	resp, _ := svc.ImportResources(context.Background(), &ImportRequest{
+		Content: connectionDocWithPolicies("idp-2"), Options: &ImportOptions{Upsert: boolPtr(false)}})
+
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Contains(t, resp.Results[0].Message, "sharing policy 1")
+}
+
+func TestImportConnectionRefusesPoliciesWithoutASharingAdapter(t *testing.T) {
+	svc := newTestConnectionImportWithSharing(nil)
+
+	resp, _ := svc.ImportResources(context.Background(), &ImportRequest{
+		Content: connectionDocWithPolicies("idp-3"), Options: &ImportOptions{Upsert: boolPtr(false)}})
+
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Contains(t, resp.Results[0].Message, "sharing")
+}
+
+// A dry run writes nothing, so it replays nothing.
+func TestImportConnectionDryRunReplaysNoPolicies(t *testing.T) {
+	sharingSvc := &fakeSharingService{}
+	svc := newTestConnectionImportWithSharing(sharingSvc)
+
+	resp, _ := svc.ImportResources(context.Background(), &ImportRequest{
+		Content: connectionDocWithPolicies("idp-4"), DryRun: true})
+
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	assert.Empty(t, sharingSvc.calls)
+}
+
+func flowDocWithPolicies() string {
+	const id = "flow-1"
+	return strings.Join([]string{
+		"resource_type: flow",
+		"id: " + id,
+		"handle: shared-flow",
+		"name: Shared Flow",
+		"flowType: AUTHENTICATION",
+		"ouId: ou-1",
+		"nodes: []",
+		"sharingPolicies:",
+		"  - childUnits:",
+		"      mode: all",
+		"",
+	}, "\n")
+}
+
+func newTestFlowImportWithSharing(flowSvc *fakeFlowService, sharingSvc *fakeSharingService) ImportServiceInterface {
+	svc := newImportService(
+		nil, nil, nil, flowSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	svc.(*importService).sharingService = sharingSvc
+	return svc
+}
+
+func newFakeFlowService() *fakeFlowService {
+	return &fakeFlowService{
+		byID:  map[string]*providers.CompleteFlowDefinition{},
+		byKey: map[string]*providers.CompleteFlowDefinition{},
+	}
+}
+
+// A flow's sharing is replayed by the importer once the flow exists, against the unit that owns it.
+func TestImportFlowAppliesSharingPolicies(t *testing.T) {
+	flowSvc := newFakeFlowService()
+	sharingSvc := &fakeSharingService{}
+	svc := newTestFlowImportWithSharing(flowSvc, sharingSvc)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithPolicies()})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	require.Len(t, sharingSvc.calls, 1)
+	assert.Equal(t, flowmgt.FlowSharingType, sharingSvc.calls[0].resourceType)
+	assert.Equal(t, "flow-1", sharingSvc.calls[0].resourceID)
+	assert.Equal(t, "ou-1", sharingSvc.calls[0].owningOUID)
+	assert.Len(t, sharingSvc.calls[0].policies, 1)
+	assert.Empty(t, flowSvc.deleted)
+}
+
+func flowDocWithValues() string {
+	return flowDocWithPolicies() + strings.Join([]string{
+		"variableValues:",
+		"  - ouId: ou-child",
+		"    values:",
+		"      supportEmail: help@child.example",
+		"      otpValiditySeconds: 300",
+		"  - ouId: ou-other",
+		"    values:",
+		"      supportEmail: help@other.example",
+		"",
+	}, "\n")
+}
+
+// The values the units saved go in after the flow and its policies, one set per unit, as the units would set them.
+func TestImportFlowAppliesTheValuesUnitsSaved(t *testing.T) {
+	flowSvc := newFakeFlowService()
+	sharingSvc := &fakeSharingService{}
+	svc := newTestFlowImportWithSharing(flowSvc, sharingSvc)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithValues()})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	require.Len(t, sharingSvc.calls, 1, "the policies are in before the values")
+	require.Len(t, flowSvc.valuesSet, 2)
+	assert.Equal(t, "ou-child", flowSvc.valuesSet[0].OUID)
+	assert.EqualValues(t, 300, flowSvc.valuesSet[0].Values["otpValiditySeconds"])
+	assert.Equal(t, "help@other.example", flowSvc.valuesSet[1].Values["supportEmail"])
+	assert.Empty(t, flowSvc.deleted)
+}
+
+// A value the flow refuses fails the document, and a flow the import created is removed again.
+func TestImportFlowWhoseValuesAreRefusedIsUndone(t *testing.T) {
+	flowSvc := newFakeFlowService()
+	flowSvc.valuesErr = &flowmgt.ErrorInvalidSharingPolicy
+	svc := newTestFlowImportWithSharing(flowSvc, &fakeSharingService{})
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithValues()})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Equal(t, []string{"flow-1"}, flowSvc.deleted)
+}
+
+// A document with no values sets none, and a dry run sets none either.
+func TestImportFlowWithoutValuesOrOnADryRunSetsNone(t *testing.T) {
+	flowSvc := newFakeFlowService()
+	svc := newTestFlowImportWithSharing(flowSvc, &fakeSharingService{})
+
+	_, err := svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithPolicies()})
+	require.Nil(t, err)
+	_, err = svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithValues(), DryRun: true})
+	require.Nil(t, err)
+
+	assert.Empty(t, flowSvc.valuesSet)
+}
+
+// An update puts the values in too, and a refusal leaves the flow as it was written, with nothing removed.
+func TestImportFlowUpdateAppliesTheValuesAndKeepsTheFlowWhenTheyAreRefused(t *testing.T) {
+	flowSvc := newFakeFlowService()
+	existing := &providers.CompleteFlowDefinition{ID: "flow-1", Handle: "shared-flow", OUID: "ou-1"}
+	flowSvc.byID["flow-1"] = existing
+	svc := newTestFlowImportWithSharing(flowSvc, &fakeSharingService{})
+	options := &ImportOptions{Upsert: boolPtr(true)}
+
+	resp, err := svc.ImportResources(context.Background(),
+		&ImportRequest{Content: flowDocWithValues(), Options: options})
+	require.Nil(t, err)
+	require.Equal(t, operationUpdate, resp.Results[0].Operation)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	assert.Len(t, flowSvc.valuesSet, 2)
+
+	flowSvc.valuesErr = &flowmgt.ErrorInvalidSharingPolicy
+	resp, err = svc.ImportResources(context.Background(),
+		&ImportRequest{Content: flowDocWithValues(), Options: options})
+	require.Nil(t, err)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Empty(t, flowSvc.deleted, "the flow existed before, so it is not removed")
+}
+
+// A dry run writes nothing, so it replays nothing.
+func TestImportFlowDryRunDoesNotApplySharing(t *testing.T) {
+	sharingSvc := &fakeSharingService{}
+	svc := newTestFlowImportWithSharing(newFakeFlowService(), sharingSvc)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{
+		Content: flowDocWithPolicies(), DryRun: true})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	assert.Empty(t, sharingSvc.calls)
+}
+
+// Terms that do not fit the variables of the flow fail the document, and a flow the import created is removed again.
+func TestImportFlowWithInvalidPolicyTermsIsUndone(t *testing.T) {
+	flowSvc := newFakeFlowService()
+	flowSvc.sharingErr = &flowmgt.ErrorInvalidSharingPolicy
+	sharingSvc := &fakeSharingService{}
+	svc := newTestFlowImportWithSharing(flowSvc, sharingSvc)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithPolicies()})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Empty(t, sharingSvc.calls, "terms are checked before anything is recorded")
+	assert.Equal(t, []string{"flow-1"}, flowSvc.deleted)
+}
+
+// A refusal by the sharing framework fails the document and removes the flow the import created.
+func TestImportFlowWhoseSharingIsRefusedIsUndone(t *testing.T) {
+	flowSvc := newFakeFlowService()
+	sharingSvc := &fakeSharingService{failure: &sharing.PolicyReplayError{
+		Index: 0, InitiatingOUID: "ou-1", Err: &sharing.ErrorInvalidRequestFormat}}
+	svc := newTestFlowImportWithSharing(flowSvc, sharingSvc)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithPolicies()})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Equal(t, []string{"flow-1"}, flowSvc.deleted)
+}
+
+// A document whose sharing policies cannot be read fails before anything is written.
+func TestImportFlowWhoseSharingCannotBeReadWritesNothing(t *testing.T) {
+	flowSvc := newFakeFlowService()
+	sharingSvc := &fakeSharingService{}
+	svc := newTestFlowImportWithSharing(flowSvc, sharingSvc)
+	content := strings.Replace(flowDocWithPolicies(), "sharingPolicies:\n  - childUnits:\n      mode: all\n",
+		"sharingPolicies: not-a-list\n", 1)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Equal(t, "flow-1", resp.Results[0].ResourceID)
+	assert.Empty(t, flowSvc.created)
+	assert.Empty(t, flowSvc.deleted)
+	assert.Empty(t, sharingSvc.calls)
+}
+
+// A flow that cannot be read back after the create fails the document and is removed.
+func TestImportFlowThatCannotBeReadBackIsUndone(t *testing.T) {
+	flowSvc := newFakeFlowService()
+	flowSvc.getErr = &tidcommon.InternalServerError
+	sharingSvc := &fakeSharingService{}
+	svc := newTestFlowImportWithSharing(flowSvc, sharingSvc)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithPolicies()})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Equal(t, []string{"flow-1"}, flowSvc.deleted)
+	assert.Empty(t, sharingSvc.calls)
+}
+
+func existingFlowService() *fakeFlowService {
+	flowSvc := newFakeFlowService()
+	existing := &providers.CompleteFlowDefinition{
+		ID: "flow-1", Handle: "shared-flow", Name: "Shared Flow", FlowType: providers.FlowTypeAuthentication,
+		OUID: "ou-1",
+	}
+	flowSvc.byID["flow-1"] = existing
+	flowSvc.byKey[string(providers.FlowTypeAuthentication)+":shared-flow"] = existing
+	return flowSvc
+}
+
+// An update takes the sharing policies of the document in the same call as the flow, so the importer has none left
+// to apply.
+func TestImportFlowUpdateCarriesItsSharingPolicies(t *testing.T) {
+	flowSvc := existingFlowService()
+	sharingSvc := &fakeSharingService{}
+	svc := newTestFlowImportWithSharing(flowSvc, sharingSvc)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithPolicies()})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	assert.Equal(t, operationUpdate, resp.Results[0].Operation)
+	require.Len(t, flowSvc.withSharing, 1)
+	assert.Len(t, flowSvc.withSharing[0], 1)
+	assert.Empty(t, sharingSvc.calls, "the policies went in with the flow")
+	assert.Empty(t, flowSvc.deleted)
+}
+
+// A document without policies updates the flow as before.
+func TestImportFlowUpdateWithoutPoliciesIsAPlainUpdate(t *testing.T) {
+	flowSvc := existingFlowService()
+	svc := newTestFlowImportWithSharing(flowSvc, &fakeSharingService{})
+	content := strings.Replace(
+		flowDocWithPolicies(), "sharingPolicies:\n  - childUnits:\n      mode: all\n", "", 1)
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	assert.Equal(t, operationUpdate, resp.Results[0].Operation)
+	assert.Len(t, flowSvc.updated, 1)
+	assert.Empty(t, flowSvc.withSharing)
+}
+
+// A refusal of the update or of its policies fails the document, and the flow is not deleted: it existed before.
+func TestImportFlowUpdateRefusedWithItsPoliciesFailsTheDocument(t *testing.T) {
+	flowSvc := existingFlowService()
+	flowSvc.updateSharingErr = &flowmgt.ErrorFlowConflictsWithSharingPolicy
+	svc := newTestFlowImportWithSharing(flowSvc, &fakeSharingService{})
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: flowDocWithPolicies()})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
+	assert.Equal(t, flowmgt.ErrorFlowConflictsWithSharingPolicy.Code, resp.Results[0].Code)
+	assert.Equal(t, operationUpdate, resp.Results[0].Operation)
+	assert.Empty(t, flowSvc.deleted)
 }

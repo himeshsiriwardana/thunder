@@ -471,6 +471,9 @@ const (
 	// NamespacePermission represents the permission consent namespace.
 	// Used for managing consent over resource action permissions (e.g. booking:reservations:read).
 	NamespacePermission Namespace = "permission"
+	// NamespaceAuthorizationDetail represents the RFC 9396 authorization detail consent namespace.
+	// Used for managing consent over individual authorization details (e.g. one payment).
+	NamespaceAuthorizationDetail Namespace = "authorization_detail"
 )
 
 // ConsentAuthorizationStatus defines the possible statuses for a consent authorization record.
@@ -534,6 +537,9 @@ const (
 	InputTypeDate = "DATE_INPUT"
 	// InputTypeBoolean represents a boolean (checkbox) input type.
 	InputTypeBoolean = "BOOLEAN_INPUT"
+	// InputTypeConnectionSelect is the type of a flow variable whose value is the identifier of a connection. It is
+	// not an input a prompt can ask for.
+	InputTypeConnectionSelect = "CONNECTION_SELECT"
 
 	// TODO: Add support for other sensitive input types:
 	// - Passkey credential fields (credentialId, clientDataJSON, authenticatorData, signature, userHandle)

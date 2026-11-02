@@ -229,8 +229,15 @@ func (ds *discoveryService) getAllowedResponseTypes() []string {
 	return ds.cfg.OAuth.AllowedResponseTypes
 }
 
+// getAllowedGrantTypes returns the allowed grant types to advertise, less jwt-bearer while ID-JAG
+// acceptance, the only use of that grant, is off and the grant is therefore not served.
 func (ds *discoveryService) getAllowedGrantTypes() []string {
-	return ds.cfg.OAuth.AllowedGrantTypes
+	if ds.cfg.OAuth.IDJAG.Acceptance.IsEnabled() {
+		return ds.cfg.OAuth.AllowedGrantTypes
+	}
+	return slices.DeleteFunc(slices.Clone(ds.cfg.OAuth.AllowedGrantTypes), func(grantType string) bool {
+		return grantType == string(providers.GrantTypeJWTBearer)
+	})
 }
 
 func (ds *discoveryService) getAllowedTokenEndpointAuthMethods() []string {
@@ -254,7 +261,13 @@ func (ds *discoveryService) isGlobalPARRequired() bool {
 }
 
 func (ds *discoveryService) getSupportedDPoPSigningAlgs() []string {
-	return ds.cryptoProvider.GetSupportedSigningAlgorithms()
+	algs := ds.cfg.OAuth.DPoP.AllowedAlgs
+	if len(algs) == 0 {
+		return nil
+	}
+	out := make([]string, len(algs))
+	copy(out, algs)
+	return out
 }
 
 func (ds *discoveryService) getSupportedTokenEndpointAuthSigningAlgs() []string {

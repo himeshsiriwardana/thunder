@@ -70,13 +70,14 @@ func documentState(doc parsedDocument) (string, bool) {
 }
 
 type roleDeclarativeYAML struct {
-	ID          string                     `yaml:"id"`
-	Name        string                     `yaml:"name"`
-	Description string                     `yaml:"description,omitempty"`
-	OUID        string                     `yaml:"ouId,omitempty"`
-	OUHandle    string                     `yaml:"ouHandle,omitempty"`
-	Permissions []role.ResourcePermissions `yaml:"permissions"`
-	Assignments []role.RoleAssignment      `yaml:"assignments,omitempty"`
+	ID              string                     `yaml:"id"`
+	Name            string                     `yaml:"name"`
+	Description     string                     `yaml:"description,omitempty"`
+	OUID            string                     `yaml:"ouId,omitempty"`
+	OUHandle        string                     `yaml:"ouHandle,omitempty"`
+	Permissions     []role.ResourcePermissions `yaml:"permissions"`
+	SharingPolicies []sharing.PolicyRequest    `yaml:"sharingPolicies,omitempty"`
+	Assignments     []role.RoleAssignment      `yaml:"assignments,omitempty"`
 }
 
 type userDeclarativeYAML struct {
@@ -120,6 +121,7 @@ type layoutDeclarativeYAML struct {
 // notificationTemplateDeclarativeYAML is the import shape for a notification template.
 // It mirrors the API create model with an added channel discriminator.
 type notificationTemplateDeclarativeYAML struct {
+	ID          string `yaml:"id,omitempty"`
 	Channel     string `yaml:"channel"`
 	Handle      string `yaml:"handle"`
 	OUID        string `yaml:"ouId,omitempty"`
@@ -339,13 +341,14 @@ func (s *importService) importRole(
 	}
 	req.OUID = resolvedOUID
 
+	// Assignments are added once the sharing policies are in place, since one may be made in an
+	// organization unit only a policy lets the role reach.
 	createReq := role.RoleCreationDetail{
 		ID:          req.ID,
 		Name:        req.Name,
 		Description: req.Description,
 		OUID:        req.OUID,
 		Permissions: req.Permissions,
-		Assignments: req.Assignments,
 	}
 	updateReq := role.RoleUpdateDetail{
 		Name:        req.Name,
@@ -376,16 +379,12 @@ func (s *importService) importRole(
 			if updateErr != nil {
 				return serviceErrorOutcome(resourceTypeRole, req.ID, req.Name, operationUpdate, updateErr)
 			}
-			if len(req.Assignments) > 0 {
-				if s.roleAssignmentService == nil {
-					return serviceErrorOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate,
-						tidcommon.CustomServiceError(tidcommon.InternalServerError,
-							tidcommon.I18nMessage{DefaultValue: "roleAssignmentService not configured"}))
-				}
-				assignErr := s.roleAssignmentService.AddAssignments(ctx, updated.ID, req.Assignments)
-				if assignErr != nil {
-					return serviceErrorOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate, assignErr)
-				}
+			if outcome := s.applySharingPolicies(ctx, role.RoleSharingType, resourceTypeRole,
+				updated.ID, updated.Name, updated.OUID, req.SharingPolicies, operationUpdate); outcome != nil {
+				return *outcome
+			}
+			if assignErr := s.addRoleAssignments(ctx, updated.ID, req.Assignments); assignErr != nil {
+				return serviceErrorOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate, assignErr)
 			}
 			return successOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate)
 		}
@@ -399,7 +398,41 @@ func (s *importService) importRole(
 	if svcErr != nil {
 		return serviceErrorOutcome(resourceTypeRole, req.ID, req.Name, operationCreate, svcErr)
 	}
+
+	// A policy names the role it governs, so the policies are replayed once the role exists, and the
+	// assignments after them. A refusal of either undoes the create, so a retry does not meet a
+	// half-imported role.
+	outcome := s.applySharingPolicies(ctx, role.RoleSharingType, resourceTypeRole,
+		created.ID, created.Name, created.OUID, req.SharingPolicies, operationCreate)
+	if outcome == nil {
+		if assignErr := s.addRoleAssignments(ctx, created.ID, req.Assignments); assignErr != nil {
+			refused := serviceErrorOutcome(resourceTypeRole, created.ID, created.Name, operationCreate, assignErr)
+			outcome = &refused
+		}
+	}
+	if outcome != nil {
+		if delErr := s.roleService.DeleteRole(ctx, created.ID); delErr != nil {
+			log.GetLogger().Error(ctx, "Failed to remove a role whose sharing policies or assignments were refused",
+				log.String("roleID", created.ID), log.String("code", delErr.Code))
+		}
+		return *outcome
+	}
 	return successOutcome(resourceTypeRole, created.ID, created.Name, operationCreate)
+}
+
+// addRoleAssignments adds a role document's assignments, each in the organization unit it names or,
+// when it names none, in the one owning its assignee.
+func (s *importService) addRoleAssignments(
+	ctx context.Context, roleID string, assignments []role.RoleAssignment,
+) *tidcommon.ServiceError {
+	if len(assignments) == 0 {
+		return nil
+	}
+	if s.roleAssignmentService == nil {
+		return tidcommon.CustomServiceError(tidcommon.InternalServerError,
+			tidcommon.I18nMessage{DefaultValue: "roleAssignmentService not configured"})
+	}
+	return s.roleAssignmentService.AddAssigneesToRoles(ctx, assignments, []string{roleID})
 }
 
 func (s *importService) importGroup(
@@ -874,13 +907,14 @@ func (s *importService) importTranslation(ctx context.Context, doc parsedDocumen
 	return successOutcome(resourceTypeTranslation, "", req.Language, operationUpdate)
 }
 
-// importResourceServerChildren creates resources and actions nested under a resource server.
-// It first computes permission strings via ProcessResourceServer, then calls the resource service
-// for each resource and action.  Existing resources/actions (on upsert paths) are silently skipped.
+// importResourceServerChildren creates the actions of a resource server and the resources and actions
+// nested under it. It first computes permission strings via ProcessResourceServer, then calls the
+// resource service for each resource and action.  Existing resources/actions (on upsert paths) are
+// silently skipped.
 func (s *importService) importResourceServerChildren(
 	ctx context.Context, serverID string, rs providers.ResourceServer,
 ) *tidcommon.ServiceError {
-	if len(rs.Resources) == 0 {
+	if len(rs.Actions) == 0 && len(rs.Resources) == 0 {
 		return nil
 	}
 
@@ -892,6 +926,12 @@ func (s *importService) importResourceServerChildren(
 			Error: tidcommon.I18nMessage{
 				DefaultValue: fmt.Sprintf("failed to process resource server children: %v", err),
 			},
+		}
+	}
+
+	for j := range rs.Actions {
+		if svcErr := s.importResourceServerAction(ctx, serverID, nil, rs.Actions[j]); svcErr != nil {
+			return svcErr
 		}
 	}
 
@@ -944,14 +984,24 @@ func (s *importService) importResourceServerChildren(
 		pathToID[res.Permission] = created.ID
 
 		for j := range res.Actions {
-			action := res.Actions[j]
-			_, actionErr := s.resourceService.CreateAction(ctx, serverID, &created.ID, action)
-			if actionErr != nil && actionErr.Code != resource.ErrorHandleConflict.Code {
-				return actionErr
+			if svcErr := s.importResourceServerAction(ctx, serverID, &created.ID, res.Actions[j]); svcErr != nil {
+				return svcErr
 			}
 		}
 	}
 
+	return nil
+}
+
+// importResourceServerAction creates an action of a resource, or of the resource server itself when
+// resourceID is nil. An action whose handle already exists there is skipped.
+func (s *importService) importResourceServerAction(
+	ctx context.Context, serverID string, resourceID *string, action providers.Action,
+) *tidcommon.ServiceError {
+	_, svcErr := s.resourceService.CreateAction(ctx, serverID, resourceID, action)
+	if svcErr != nil && svcErr.Code != resource.ErrorHandleConflict.Code {
+		return svcErr
+	}
 	return nil
 }
 
@@ -1378,6 +1428,7 @@ func (s *importService) importNotificationTemplate(
 		design = &notificationtemplate.TemplateDesign{ColorScheme: raw.Design.ColorScheme}
 	}
 	createReq := notificationtemplate.CreateTemplateRequest{
+		ID:          raw.ID,
 		Handle:      raw.Handle,
 		OUID:        raw.OUID,
 		DisplayName: raw.DisplayName,

@@ -62,7 +62,7 @@ const (
 	RequestParamAuthReqID           string = "auth_req_id"
 
 	// RequestParamAuthorizationDetails is the RFC 9396 authorization request parameter.
-	RequestParamAuthorizationDetails string = "authorization_details"
+	RequestParamAuthorizationDetails string = systemconst.AuthorizationDetailsParamName
 )
 
 // OAuth2 HTTP headers.
@@ -195,6 +195,7 @@ const (
 	ErrorLoginRequired            string = "login_required"
 	ErrorConsentRequired          string = "consent_required"
 	ErrorAccountSelectionRequired string = "account_selection_required"
+	ErrorInteractionRequired      string = "interaction_required"
 	ErrorInvalidDPoPProof         string = "invalid_dpop_proof"
 	ErrorAuthorizationPending     string = "authorization_pending"
 	ErrorSlowDown                 string = "slow_down"
@@ -247,6 +248,10 @@ var StandardOIDCScopes = map[string]model.OIDCScope{
 		Description: "Requests access to user's assigned roles",
 		Claims:      []string{"roles"},
 	},
+	ScopeDeviceSSO: {
+		Name:        ScopeDeviceSSO,
+		Description: "Requests the device secret, which signs the user in to other applications without a redirect",
+	},
 }
 
 // Standard JWT claim names.
@@ -293,6 +298,12 @@ const (
 
 	// ClaimAuthorizationDetails carries the granted RFC 9396 authorization details on an access token.
 	ClaimAuthorizationDetails string = "authorization_details"
+	// ClaimGrantedAuthorizationDetails carries the authorization details consent granted on a flow assertion.
+	ClaimGrantedAuthorizationDetails string = "granted_authorization_details"
+	// ClaimRefreshAuthorizationDetails carries the granted authorization details on a refresh token.
+	ClaimRefreshAuthorizationDetails string = "access_token_authorization_details"
+	// ClaimRefreshAuthorizationDetailVersions carries the granted type versions on a refresh token.
+	ClaimRefreshAuthorizationDetailVersions string = "access_token_authorization_detail_versions"
 
 	// ClaimIDP identifies the source identity provider (by issuer) that authenticated the subject of a
 	// jwt-bearer-grant (ID-JAG) access token, so downstream consumers can distinguish a federated
@@ -319,9 +330,9 @@ const (
 	// ClaimSubjectType its entity category. The assertion's own sub claim holds the token subject,
 	// which the application may map to an attribute such as an email address; these two carry the
 	// opaque identity alongside it so token issuance can report the subject without resolving it
-	// again and without reporting a mapped attribute. Observability-only: both ride the internal flow
-	// assertion, neither is emitted on a client-facing token, and no authorization decision reads
-	// either claim.
+	// again and without reporting a mapped attribute. Both ride the internal flow assertion. sub_id
+	// is also the device secret's sub, and the device secret token exchange compares it to tell the
+	// user apart from another; no other token carries it and no other decision reads it.
 	ClaimSubjectID   string = "sub_id"
 	ClaimSubjectType string = "sub_type"
 )
@@ -366,6 +377,9 @@ const (
 // Standard OIDC scope names.
 const (
 	ScopeOpenID = "openid"
+	// ScopeDeviceSSO asks for the device secret, the SSO session the code was issued from, in the code
+	// exchange response (OpenID Connect Native SSO for Mobile Apps).
+	ScopeDeviceSSO = "device_sso"
 )
 
 const (

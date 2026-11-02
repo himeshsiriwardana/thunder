@@ -23,6 +23,20 @@ var APIErrorFlowRequestJSONDecodeError = apierror.ErrorResponse{
 	},
 }
 
+// APIErrorInvalidSessionData defines the error response for a sessionData entry missing its flow
+// identifier or session handle.
+var APIErrorInvalidSessionData = apierror.ErrorResponse{
+	Code: "FES-1021",
+	Message: tidcommon.I18nMessage{
+		Key:          "error.flowexecservice.invalid_session_data",
+		DefaultValue: "Invalid session data",
+	},
+	Description: tidcommon.I18nMessage{
+		Key:          "error.flowexecservice.invalid_session_data_description",
+		DefaultValue: "Each session data entry needs a flow identifier and a session handle",
+	},
+}
+
 // ErrorNodeResponse defines the error response for errors received from nodes.
 var ErrorNodeResponse = tidcommon.ServiceError{
 	Code: "FES-1002",
@@ -296,5 +310,20 @@ var ErrorFlowApplicationNotUsable = tidcommon.ServiceError{
 	ErrorDescription: tidcommon.I18nMessage{
 		Key:          "error.flowexecservice.application_not_usable_description",
 		DefaultValue: "The flow cannot be executed for the requested application",
+	},
+}
+
+// ErrorFlowConnectionNotSet is returned when a flow needs a connection that was never set for the organization unit of
+// the application driving it.
+var ErrorFlowConnectionNotSet = tidcommon.ServiceError{
+	Code: "FES-1022",
+	Type: tidcommon.ClientErrorType,
+	Error: tidcommon.I18nMessage{
+		Key:          "error.flowexecservice.connection_not_set",
+		DefaultValue: "Flow not available",
+	},
+	ErrorDescription: tidcommon.I18nMessage{
+		Key:          "error.flowexecservice.connection_not_set_description",
+		DefaultValue: "The flow is not available for this organization yet. Contact your administrator",
 	},
 }

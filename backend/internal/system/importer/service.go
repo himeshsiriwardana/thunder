@@ -20,7 +20,6 @@ import (
 	appmodel "github.com/thunder-id/thunderid/internal/application/model"
 	"github.com/thunder-id/thunderid/internal/connection"
 	"github.com/thunder-id/thunderid/internal/connection/authzenpdp"
-	"github.com/thunder-id/thunderid/internal/connection/connectionou"
 	"github.com/thunder-id/thunderid/internal/connection/httpconnection"
 	layoutmgt "github.com/thunder-id/thunderid/internal/design/layout/mgt"
 	thememgt "github.com/thunder-id/thunderid/internal/design/theme/mgt"
@@ -106,6 +105,7 @@ type httpConnectionAdapter interface {
 	UpdateHTTPConnection(ctx context.Context, existing *httpconnection.HTTPConnection,
 		connection httpconnection.HTTPConnection) (*httpconnection.HTTPConnection, *tidcommon.ServiceError)
 	DeleteHTTPConnection(ctx context.Context, id string) *tidcommon.ServiceError
+	ResolveConnectionOU(ctx context.Context, connection *httpconnection.HTTPConnection) *tidcommon.ServiceError
 	ValidateHTTPConnectionCreate(ctx context.Context, connection *httpconnection.HTTPConnection) *tidcommon.ServiceError
 	ValidateHTTPConnectionUpdate(ctx context.Context, existing *httpconnection.HTTPConnection,
 		connection httpconnection.HTTPConnection) *tidcommon.ServiceError
@@ -121,7 +121,15 @@ type flowAdapter interface {
 		*tidcommon.ServiceError)
 	UpdateFlow(ctx context.Context, flowID string, flowDef *flowmgt.FlowDefinition) (*providers.CompleteFlowDefinition,
 		*tidcommon.ServiceError)
+	UpdateFlowWithSharing(
+		ctx context.Context, flowID string, flowDef *flowmgt.FlowDefinition, policies []sharing.PolicyRequest,
+	) (*providers.CompleteFlowDefinition, *tidcommon.ServiceError)
 	DeleteFlow(ctx context.Context, flowID string) *tidcommon.ServiceError
+	ResolveFlowOU(ctx context.Context, flowDef *flowmgt.FlowDefinition) *tidcommon.ServiceError
+	ValidateSharingPolicies(
+		ctx context.Context, flowID string, policies []sharing.PolicyRequest) *tidcommon.ServiceError
+	SetVariables(ctx context.Context, flowID, ouID string, req flowmgt.SetVariablesRequest) (
+		*flowmgt.VariablesResponse, *tidcommon.ServiceError)
 }
 
 type ouAdapter interface {
@@ -174,7 +182,8 @@ type roleAdapter interface {
 }
 
 type roleAssignmentAdapter interface {
-	AddAssignments(ctx context.Context, id string, assignments []role.RoleAssignment) *tidcommon.ServiceError
+	AddAssigneesToRoles(ctx context.Context, assignments []role.RoleAssignment,
+		roleIDs []string) *tidcommon.ServiceError
 }
 
 // sharingPolicyAdapter applies the sharing policies a document carries for one resource.
@@ -651,7 +660,8 @@ func (s *importService) importDocument(
 }
 
 // importConnection imports a "connection" document, dispatching to the adapter of the service that
-// holds the DTO connection.ParseConnectionFromNode resolves.
+// holds the DTO connection.ParseConnectionFromNode resolves. The sharing policies the document
+// carries are replayed once the connection is written.
 func (s *importService) importConnection(
 	ctx context.Context, doc parsedDocument, options *ImportOptions, dryRun bool,
 ) ImportItemOutcome {
@@ -667,13 +677,17 @@ func (s *importService) importConnection(
 
 	switch dto := resource.(type) {
 	case *authzenpdp.AuthZENPDPConnection:
-		return s.importConnectionAuthZENPDP(ctx, dto, options, dryRun)
+		outcome := s.importConnectionAuthZENPDP(ctx, dto, options, dryRun)
+		return s.applyConnectionSharing(ctx, doc, outcome, dto.OUID, dryRun)
 	case *httpconnection.HTTPConnection:
-		return s.importConnectionHTTP(ctx, dto, options, dryRun)
+		outcome := s.importConnectionHTTP(ctx, dto, options, dryRun)
+		return s.applyConnectionSharing(ctx, doc, outcome, dto.OUID, dryRun)
 	case *providers.IDPDTO:
-		return s.importConnectionIDP(ctx, dto, options, dryRun)
+		outcome := s.importConnectionIDP(ctx, dto, options, dryRun)
+		return s.applyConnectionSharing(ctx, doc, outcome, dto.OUID, dryRun)
 	case *ncommon.NotificationSenderDTO:
-		return s.importConnectionSender(ctx, dto, options, dryRun)
+		outcome := s.importConnectionSender(ctx, dto, options, dryRun)
+		return s.applyConnectionSharing(ctx, doc, outcome, dto.OUID, dryRun)
 	default:
 		return ImportItemOutcome{
 			ResourceType: resourceTypeConnection,
@@ -682,6 +696,34 @@ func (s *importService) importConnection(
 			Message:      "unsupported connection document",
 		}
 	}
+}
+
+// applyConnectionSharing replays the sharing policies a connection document carries, after the connection
+// itself is written, since a policy names the resource it governs. A refusal on a create undoes it: the
+// caller is told the document failed and gets no id back, so a connection left behind would hold the name
+// a retry needs. The owning organization unit is the one the import resolved on the connection.
+func (s *importService) applyConnectionSharing(
+	ctx context.Context, doc parsedDocument, outcome ImportItemOutcome, owningOUID string, dryRun bool,
+) ImportItemOutcome {
+	if dryRun || outcome.Status != statusSuccess {
+		return outcome
+	}
+	policies, err := connection.ParseConnectionSharingPolicies(doc.Node)
+	if err != nil {
+		return decodeErrorOutcome(resourceTypeConnection, outcome.ResourceID, outcome.ResourceName, err)
+	}
+	refused := s.applySharingPolicies(ctx, connection.ConnectionSharingType, resourceTypeConnection,
+		outcome.ResourceID, outcome.ResourceName, owningOUID, policies, outcome.Operation)
+	if refused == nil {
+		return outcome
+	}
+	if outcome.Operation == operationCreate {
+		if delErr := s.deleteConnection(ctx, outcome.ResourceID); delErr != nil {
+			log.GetLogger().Error(ctx, "Failed to remove a connection whose sharing policies were refused",
+				log.String("connectionID", outcome.ResourceID), log.String("code", delErr.Code))
+		}
+	}
+	return *refused
 }
 
 // importConnectionAuthZENPDP creates or updates an AuthZEN PDP connection from an import document.
@@ -704,7 +746,7 @@ func (s *importService) importConnectionAuthZENPDP(
 				// The owner cannot change, so an update that names another one is refused here as the real apply
 				// would refuse it.
 				if existing.OUID != req.OUID {
-					return authZENPDPImportServiceError(req, operationUpdate, &connectionou.ErrorOUUpdateNotAllowed)
+					return authZENPDPImportServiceError(req, operationUpdate, &authzenpdp.ErrorOUUpdateNotAllowed)
 				}
 				return successOutcome(resourceTypeConnection, req.ID, req.Name, operationUpdate)
 			}
@@ -733,6 +775,9 @@ func (s *importService) importConnectionHTTP(
 ) ImportItemOutcome {
 	if s.httpConnectionService == nil {
 		return unsupportedAdapterOutcome(resourceTypeConnection, "HTTP connection")
+	}
+	if svcErr := s.httpConnectionService.ResolveConnectionOU(ctx, req); svcErr != nil {
+		return serviceErrorOutcome(resourceTypeConnection, req.ID, req.Name, operationCreate, svcErr)
 	}
 	if options.IsUpsertEnabled() && req.ID != "" {
 		existing, svcErr := s.httpConnectionService.GetHTTPConnection(ctx, req.ID)
@@ -971,6 +1016,107 @@ func (s *importService) importConnectionSender(
 func (s *importService) importFlow(
 	ctx context.Context, doc parsedDocument, options *ImportOptions, dryRun bool,
 ) ImportItemOutcome {
+	policies, values, err := flowmgt.ParseFlowSharing(doc.Node)
+	if err != nil {
+		var head struct {
+			ID   string `yaml:"id"`
+			Name string `yaml:"name"`
+		}
+		_ = doc.Node.Decode(&head)
+		return decodeErrorOutcome(resourceTypeFlow, head.ID, head.Name, err)
+	}
+
+	outcome := s.importFlowDefinition(ctx, doc, options, dryRun, policies)
+	if dryRun || outcome.Status != statusSuccess {
+		return outcome
+	}
+	// An update carries its sharing policies in the same transaction as the flow, so only a create is left to apply.
+	if outcome.Operation != operationUpdate {
+		if outcome = s.applyFlowSharing(ctx, outcome, policies); outcome.Status != statusSuccess {
+			return outcome
+		}
+	}
+	return s.applyFlowVariableValues(ctx, outcome, values)
+}
+
+// applyFlowSharing replays the sharing policies a flow document carries after a create, since a policy names the
+// resource it governs. The terms are checked against the variables the flow declares first. Any failure undoes the
+// create, whether the terms are refused or the flow cannot be read back: the caller is told the document failed and
+// gets no id back, so a flow left behind would hold the handle a retry needs. An update does not come through here,
+// as it applies the policies in the transaction that updates the flow.
+func (s *importService) applyFlowSharing(
+	ctx context.Context, outcome ImportItemOutcome, policies []sharing.PolicyRequest,
+) ImportItemOutcome {
+	if len(policies) == 0 {
+		return outcome
+	}
+
+	var refused *ImportItemOutcome
+	if svcErr := s.flowService.ValidateSharingPolicies(ctx, outcome.ResourceID, policies); svcErr != nil {
+		failed := serviceErrorOutcome(
+			resourceTypeFlow, outcome.ResourceID, outcome.ResourceName, outcome.Operation, svcErr)
+		refused = &failed
+	} else if flow, svcErr := s.flowService.GetFlow(ctx, outcome.ResourceID); svcErr != nil {
+		failed := serviceErrorOutcome(
+			resourceTypeFlow, outcome.ResourceID, outcome.ResourceName, outcome.Operation, svcErr)
+		refused = &failed
+	} else {
+		refused = s.applySharingPolicies(ctx, flowmgt.FlowSharingType, resourceTypeFlow,
+			outcome.ResourceID, outcome.ResourceName, flow.OUID, policies, outcome.Operation)
+	}
+	if refused == nil {
+		return outcome
+	}
+	s.undoFlowCreate(ctx, outcome.ResourceID, "sharing policies were refused")
+	return *refused
+}
+
+// applyFlowVariableValues sets the values the organization units saved for a flow, once its policies are in place,
+// since a unit may hold only what its rules let it. Each unit's values replace what it held, and a unit the document
+// does not name keeps its own. The values are checked as they would be if the unit set them through the API. A refusal
+// undoes a create, for the reason a refused policy does, and leaves an update as it was written: the flow and its
+// policies are already in.
+func (s *importService) applyFlowVariableValues(
+	ctx context.Context, outcome ImportItemOutcome, values []flowmgt.FlowUnitValues,
+) ImportItemOutcome {
+	for _, unit := range values {
+		_, svcErr := s.flowService.SetVariables(ctx, outcome.ResourceID, unit.OUID, flowmgt.SetVariablesRequest(unit))
+		if svcErr == nil {
+			continue
+		}
+		if outcome.Operation == operationCreate {
+			s.undoFlowCreate(ctx, outcome.ResourceID, "variable values were refused")
+		}
+		return serviceErrorOutcome(
+			resourceTypeFlow, outcome.ResourceID, outcome.ResourceName, outcome.Operation, svcErr)
+	}
+	return outcome
+}
+
+// undoFlowCreate removes a flow a failed document just created. The caller is told the document failed and gets no id
+// back, so a flow left behind would hold the handle a retry needs.
+func (s *importService) undoFlowCreate(ctx context.Context, flowID, reason string) {
+	if delErr := s.flowService.DeleteFlow(ctx, flowID); delErr != nil {
+		log.GetLogger().Error(ctx, "Failed to remove a flow whose document was refused: "+reason,
+			log.String("flowID", flowID), log.String("code", delErr.Code))
+	}
+}
+
+// updateImportedFlow updates a flow from a document. The sharing policies the document carries go in with the flow, in
+// one transaction, and are checked against the new definition rather than against the policies the flow holds.
+func (s *importService) updateImportedFlow(
+	ctx context.Context, flowID string, flowDef *flowmgt.FlowDefinition, policies []sharing.PolicyRequest,
+) (*providers.CompleteFlowDefinition, *tidcommon.ServiceError) {
+	if len(policies) == 0 {
+		return s.flowService.UpdateFlow(ctx, flowID, flowDef)
+	}
+	return s.flowService.UpdateFlowWithSharing(ctx, flowID, flowDef, policies)
+}
+
+// importFlowDefinition creates or updates the flow a "flow" document describes.
+func (s *importService) importFlowDefinition(
+	ctx context.Context, doc parsedDocument, options *ImportOptions, dryRun bool, policies []sharing.PolicyRequest,
+) ImportItemOutcome {
 	if s.flowService == nil {
 		return ImportItemOutcome{
 			ResourceType: resourceTypeFlow,
@@ -998,12 +1144,24 @@ func (s *importService) importFlow(
 		Name:     req.Name,
 		FlowType: req.FlowType,
 		Nodes:    req.Nodes,
+		OUID:     req.OUID,
+		OUHandle: req.OUHandle,
+	}
+
+	if svcErr := s.flowService.ResolveFlowOU(ctx, flowDef); svcErr != nil {
+		return serviceErrorOutcome(resourceTypeFlow, req.ID, req.Name, operationCreate, svcErr)
 	}
 
 	if dryRun {
 		if options.IsUpsertEnabled() && req.ID != "" {
-			_, svcErr := s.flowService.GetFlow(ctx, req.ID)
+			existing, svcErr := s.flowService.GetFlow(ctx, req.ID)
 			if svcErr == nil {
+				// The owner cannot change, so an update that names another one is refused here as the real apply
+				// would refuse it.
+				if existing != nil && existing.OUID != flowDef.OUID {
+					return serviceErrorOutcome(resourceTypeFlow, req.ID, req.Name, operationUpdate,
+						&flowmgt.ErrorOUUpdateNotAllowed)
+				}
 				return successOutcome(resourceTypeFlow, req.ID, req.Name, operationUpdate)
 			}
 
@@ -1013,6 +1171,10 @@ func (s *importService) importFlow(
 
 			existingByHandle, handleErr := s.flowService.GetFlowByHandle(ctx, req.Handle, req.FlowType)
 			if handleErr == nil {
+				if existingByHandle.OUID != flowDef.OUID {
+					return serviceErrorOutcome(resourceTypeFlow, existingByHandle.ID, req.Name, operationUpdate,
+						&flowmgt.ErrorOUUpdateNotAllowed)
+				}
 				return successOutcome(resourceTypeFlow, existingByHandle.ID, req.Name, operationUpdate)
 			}
 
@@ -1025,7 +1187,7 @@ func (s *importService) importFlow(
 	}
 
 	if options.IsUpsertEnabled() && req.ID != "" {
-		updated, svcErr := s.flowService.UpdateFlow(ctx, req.ID, flowDef)
+		updated, svcErr := s.updateImportedFlow(ctx, req.ID, flowDef, policies)
 		if svcErr == nil {
 			return ImportItemOutcome{
 				ResourceType: resourceTypeFlow,
@@ -1054,7 +1216,7 @@ func (s *importService) importFlow(
 		if options.IsUpsertEnabled() && req.ID != "" && svcErr.Code == flowmgt.ErrorDuplicateFlowHandle.Code {
 			existingByHandle, handleErr := s.flowService.GetFlowByHandle(ctx, req.Handle, req.FlowType)
 			if handleErr == nil {
-				updated, updateErr := s.flowService.UpdateFlow(ctx, existingByHandle.ID, flowDef)
+				updated, updateErr := s.updateImportedFlow(ctx, existingByHandle.ID, flowDef, policies)
 				if updateErr != nil {
 					return ImportItemOutcome{
 						ResourceType: resourceTypeFlow,

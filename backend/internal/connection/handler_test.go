@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -909,12 +910,16 @@ func (s *HTTPConnectionHandlerTestSuite) TestUpdateKeepsAnOmittedPassword() {
 }
 
 func (s *HTTPConnectionHandlerTestSuite) TestDelete() {
+	s.mockHTTP.On("GetHTTPConnection", mock.Anything, "http-1").
+		Return(&httpconnection.HTTPConnection{ID: "http-1"}, (*tidcommon.ServiceError)(nil))
 	s.mockHTTP.On("DeleteHTTPConnection", mock.Anything, "http-1").Return((*tidcommon.ServiceError)(nil))
 
 	s.Equal(http.StatusNoContent, s.serve(http.MethodDelete, "/connections/http/http-1", "").Code)
 }
 
 func (s *HTTPConnectionHandlerTestSuite) TestDeleteOfAConnectionInUseIsAConflict() {
+	s.mockHTTP.On("GetHTTPConnection", mock.Anything, "http-1").
+		Return(&httpconnection.HTTPConnection{ID: "http-1"}, (*tidcommon.ServiceError)(nil))
 	s.mockHTTP.On("DeleteHTTPConnection", mock.Anything, "http-1").
 		Return(&httpconnection.ErrorHasBlockingDependencies)
 
@@ -1025,7 +1030,22 @@ func (s *HTTPConnectionHandlerTestSuite) TestConnectionListingFiltersByHTTPCateg
 	var resp connectionListResponse
 	s.Require().NoError(json.NewDecoder(rr.Body).Decode(&resp))
 	s.Equal([]connectionInstance{{ID: "http-1", Name: "Risk", Description: "Risk engine", Type: httpVendorName,
-		OUID: "ou-1", Categories: []connectionCategory{categoryHTTP}}}, resp.Connections)
+		OUID: "ou-1", Categories: []connectionCategory{categoryHTTP}, IsOwnedByOU: new(true)}}, resp.Connections)
+}
+
+func (s *HTTPConnectionHandlerTestSuite) TestConnectionListingRefusesAFilterItCannotApply() {
+	for _, expr := range []string{
+		"ouId eq ou-1",
+		`ouId eq ""`,
+		`ouId sw "ou"`,
+		`name eq "x"`,
+		`ouId eq "ou-1" and name eq "x"`,
+	} {
+		rr := s.serve(http.MethodGet, "/connections?filter="+url.QueryEscape(expr), "")
+
+		s.Equal(http.StatusBadRequest, rr.Code, expr)
+		s.Contains(rr.Body.String(), ErrorInvalidFilter.Code, expr)
+	}
 }
 
 func (s *HTTPConnectionHandlerTestSuite) TestConnectionListingFailsWhenHTTPConnectionsCannotBeListed() {

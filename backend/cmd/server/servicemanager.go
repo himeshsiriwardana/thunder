@@ -320,7 +320,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 
 	roleService, roleAssignmentService, ouRoleResolver, roleExporter, err := role.Initialize(
 		mux, entityService, groupService, ouService, resourceService, entityTypeService, ouAuthzService,
-	)
+		sharingService)
 	fatalOnError(ctx, logger, err, "Failed to initialize RoleService")
 	exporters = append(exporters, roleExporter)
 
@@ -350,7 +350,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	// notification-sender services.
 	connectionExporter, ouDependencyProvider, httpConnectionWriter, err := connection.Initialize(
 		mux, mcpServer, idpService, notifSenderMgtSvc, resourceService, authZENPDPService, httpConnectionService,
-		nil)
+		nil, sharingService)
 	fatalOnError(ctx, logger, err, "Failed to initialize connection declarative resources")
 	exporters = append(exporters, connectionExporter)
 
@@ -412,7 +412,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 
 	// Initialize authentication services.
 	authAssertGen := authnAssert.Initialize()
-	consentEnforcer := authnConsent.Initialize(jwtService)
+	consentEnforcer := authnConsent.Initialize(jwtService, authzDetailMgtService)
 
 	_, directAuthGuard := authn.Initialize(mux, mcpServer, idpService, jwtService, authnProvider, authAssertGen,
 		otpCoreService, notifSenderSvc, notifTemplateRenderer, magicLinkService, oauthAuthnService,
@@ -473,6 +473,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 			ObservabilitySvc:    observabilitySvc,
 			IdentityGovernance:  governanceProvider,
 			ArtifactLifetime:    artifactLifetime,
+			AuthzDetailProvider: authzDetailService,
 		},
 		interceptor.InterceptorDependencies{},
 		flowConfig,
@@ -480,7 +481,8 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 
 	flowMgtService, flowMgtExporter, err := flowmgt.Initialize(
 		mux, mcpServer, cacheManager, flowFactory, execRegistry, interceptorRegistry, graphBuilder,
-		serverConfigService, ouService, notifTemplateSvc, httpConnectionService, flowConfigHandler, true)
+		serverConfigService, ouService, notifTemplateSvc, httpConnectionService, flowConfigHandler, idpService,
+		true, sharingService)
 	fatalOnError(ctx, logger, err, "Failed to initialize FlowMgtService")
 
 	// Two-phase initialization: inject the flow resolver into the OU service.
@@ -513,7 +515,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 
 	applicationService, applicationExporter, err := application.Initialize(
 		mux, mcpServer, entityService, inboundClientService, ouService, i18nService,
-		runtimeCryptoSvc, serverConfigService, artifactLifetime, sharingService, nil, governanceService)
+		runtimeCryptoSvc, serverConfigService, artifactLifetime, sharingService, nil, governanceService, nil)
 	fatalOnError(ctx, logger, err, "Failed to initialize ApplicationService")
 	// Two-phase initialization: inject the application service into the executors that act on it.
 	fatalOnError(ctx, logger, executor.SetApplicationProvider(execRegistry, applicationService),
@@ -616,7 +618,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	flowExecService, err := flowexec.Initialize(mux, flowMgtService, actorProvider,
 		execRegistry, interceptorRegistry, observabilitySvc, runtimeCryptoSvc, attestationProvider,
 		graphBuilder, jwtService, runtimeStoreProvider, transactioner, serverConfigService, ssoTransport,
-		governanceProvider, flowConfig)
+		governanceProvider, flowMgtService, flowConfig)
 	fatalOnError(ctx, logger, err, "Failed to initialize flow execution service")
 
 	// Initialize OAuth services.

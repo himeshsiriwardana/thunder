@@ -261,7 +261,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 
 	roleService, roleAssignmentService, ouRoleResolver, roleExporter, err := role.Initialize(
 		mux, entityService, groupService, ouService, resourceService, entityTypeService, ouAuthzService,
-	)
+		sharingService)
 	fatalOnError(ctx, logger, err, "Failed to initialize RoleService")
 	exporters = append(exporters, roleExporter)
 
@@ -290,7 +290,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	// notification-sender management services.
 	connectionExporter, ouDependencyProvider, httpConnectionWriter, err := connection.Initialize(
 		mux, mcpServer, idpService, notifSenderMgtSvc, resourceService, authZENPDPService, httpConnectionService,
-		valueCapture)
+		valueCapture, sharingService)
 	fatalOnError(ctx, logger, err, "Failed to initialize connection declarative resources")
 	exporters = append(exporters, connectionExporter)
 
@@ -315,7 +315,8 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 
 	flowMgtService, flowMgtExporter, err := flowmgt.Initialize(
 		mux, mcpServer, cacheManager, flowFactory, execRegistry, interceptorRegistry, graphBuilder,
-		serverConfigService, ouService, notifTemplateSvc, httpConnectionService, flowConfigHandler, false)
+		serverConfigService, ouService, notifTemplateSvc, httpConnectionService, flowConfigHandler, idpService,
+		false, sharingService)
 	fatalOnError(ctx, logger, err, "Failed to initialize FlowMgtService")
 
 	// Two-phase initialization: inject the flow resolver into the OU service.
@@ -345,7 +346,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	// deny list, and this plane issues and revokes no tokens. application treats nil as "no opinion".
 	applicationService, applicationExporter, err := application.Initialize(
 		mux, mcpServer, entityService, inboundClientService, ouService, i18nService,
-		runtimeCryptoSvc, serverConfigService, nil, sharingService, valueCapture, governanceService)
+		runtimeCryptoSvc, serverConfigService, nil, sharingService, valueCapture, governanceService, projectService)
 	fatalOnError(ctx, logger, err, "Failed to initialize ApplicationService")
 	exporters = append(exporters, applicationExporter)
 

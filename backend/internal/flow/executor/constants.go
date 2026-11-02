@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thunder-id/thunderid/internal/entitytype"
+	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/executormeta"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 )
@@ -37,6 +38,7 @@ const (
 	ExecutorNameProvisioning                 = executormeta.ExecutorNameProvisioning
 	ExecutorNameAttributeCollect             = executormeta.ExecutorNameAttributeCollect
 	ExecutorNameAuthorization                = executormeta.ExecutorNameAuthorization
+	ExecutorNameAuthorizationDetail          = executormeta.ExecutorNameAuthorizationDetail
 	ExecutorNamePermissionValidator          = executormeta.ExecutorNamePermissionValidator
 	ExecutorNameOUCreation                   = executormeta.ExecutorNameOUCreation
 	ExecutorNameHTTPRequest                  = executormeta.ExecutorNameHTTPRequest
@@ -129,6 +131,7 @@ const (
 
 	revocationInputRole           = "targetRoleId"
 	revocationInputAssignee       = "targetAssigneeId"
+	revocationInputAssignmentOU   = "targetAssignmentOuId"
 	revocationInputGroup          = "targetGroupId"
 	revocationInputMember         = "targetMemberId"
 	revocationInputPermissions    = "targetPermissions"
@@ -138,7 +141,8 @@ const (
 
 	governanceInputOperatorNote = "operatorNote"
 
-	ouIDKey        = "ouId"
+	ouIDKey        = common.RuntimeKeyOUID
+	ouHandleKey    = "ouHandle"
 	defaultOUIDKey = "defaultOUID"
 
 	// Input identifiers a flow definition declares for the entity type, one per category. A prompt

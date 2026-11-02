@@ -35,6 +35,9 @@ var catalog = map[string]providers.ExecutorMeta{
 		},
 	},
 	ExecutorNameAuthorization: {},
+	ExecutorNameAuthorizationDetail: {
+		SupportedFlowTypes: []providers.FlowType{"AUTHENTICATION"},
+	},
 	ExecutorNameClientSecret: {
 		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
 	},
@@ -148,6 +151,8 @@ var catalog = map[string]providers.ExecutorMeta{
 	ExecutorNameOUResolver: {
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "resolveFrom"},
+			{Property: "parentOuId"},
+			{Property: "directChildrenOnly"},
 		},
 	},
 	ExecutorNameOpenID4VPVerify: {
