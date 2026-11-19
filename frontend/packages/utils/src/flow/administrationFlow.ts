@@ -106,18 +106,10 @@ export const FLOW_PAGE_SIZE = 100;
 
 /**
  * `flow` server-config entries; an unset handle is the opt-out, running the native endpoint. The
- * account lifecycle actions have no native endpoint, so an unset handle withholds them.
+ * account lifecycle actions and attribute verification have no native endpoint, so an unset handle
+ * withholds them. Attribute verification names an `ADMIN_INITIATED` flow, which starts by handle.
  */
 export const AdministrationFlowConfigKey = {
-  APPLICATION_DELETION: 'applicationDeletionFlow',
-  GROUP_DELETION: 'groupDeletionFlow',
-  SECRET_REGENERATION: 'secretRegenerationFlow',
-  GROUP_MEMBERSHIP_REMOVAL: 'groupMembershipRemovalFlow',
-  ROLE_ASSIGNMENT_REMOVAL: 'roleAssignmentRemovalFlow',
-  ROLE_DELETION: 'roleDeletionFlow',
-  ROLE_PERMISSION_REMOVAL: 'rolePermissionRemovalFlow',
-  ACTION_DELETION: 'actionDeletionFlow',
-  USER_DELETION: 'userDeletionFlow',
   USER_UNLOCK: 'userUnlockFlow',
   USER_SUSPEND: 'userSuspendFlow',
   USER_UNSUSPEND: 'userUnsuspendFlow',
@@ -126,6 +118,7 @@ export const AdministrationFlowConfigKey = {
   AGENT_UNSUSPEND: 'agentUnsuspendFlow',
   APPLICATION_SUSPEND: 'applicationSuspendFlow',
   APPLICATION_UNSUSPEND: 'applicationUnsuspendFlow',
+  ADMIN_ATTRIBUTE_VERIFICATION: 'adminAttributeVerificationFlow',
 } as const;
 
 export type AdministrationFlowConfigKeyValue =
@@ -136,26 +129,22 @@ export type AdministrationFlowConfigKeyValue =
  * the wrong place.
  */
 export const AdministrationFlowInput = {
-  ACTION: 'targetActionId',
   APPLICATION: 'targetApplicationId',
-  ASSIGNEE: 'targetAssigneeId',
+  ATTRIBUTE: 'attribute',
   GROUP: 'targetGroupId',
-  MEMBER: 'targetMemberId',
   OPERATOR_NOTE: 'operatorNote',
-  PERMISSIONS: 'targetPermissions',
-  RESOURCE: 'targetResourceId',
-  RESOURCE_SERVER: 'targetResourceServerId',
   ROLE: 'targetRoleId',
   SUBJECT: 'subject',
 } as const;
 
 /**
- * Keys of values a flow returns; a regenerated client secret is readable only here. `emailSent` is
- * `"false"` when a best-effort email node sent nothing.
+ * Keys of values a flow returns. `emailSent` is `"false"` when a best-effort email node sent nothing.
+ * `channel` and `maskedDestination` say where a verification link went.
  */
 export const AdministrationFlowData = {
-  CLIENT_SECRET: 'clientSecret',
+  CHANNEL: 'channel',
   EMAIL_SENT: 'emailSent',
+  MASKED_DESTINATION: 'maskedDestination',
 } as const;
 
 /**

@@ -4,21 +4,28 @@
 package group
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/thunder-id/thunderid/internal/entity"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
+	"github.com/thunder-id/thunderid/internal/system/eventbus"
+	"github.com/thunder-id/thunderid/internal/system/managedresource"
 	"github.com/thunder-id/thunderid/internal/system/middleware"
 	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // Initialize initializes the group service and registers its routes.
+//
+// bus is required: the service publishes the audit event of every group it creates, updates or deletes,
+// and of every member it adds or removes, on it.
 func Initialize(
 	mux *http.ServeMux,
 	dbProvider provider.DBProviderInterface,
@@ -26,7 +33,14 @@ func Initialize(
 	entityService entity.EntityServiceInterface,
 	entityTypeService entitytype.EntityTypeServiceInterface,
 	authzService sysauthz.SystemAuthorizationServiceInterface,
+	sharingService sharing.SharingServiceInterface,
+	bus eventbus.EventBusInterface,
+	projectValidator projectOUValidator,
 ) (GroupServiceInterface, oupkg.OUGroupResolver, declarativeresource.ResourceExporter, error) {
+	if bus == nil {
+		return nil, nil, nil, errNilEventBus
+	}
+
 	// Step 1: Initialize store and transactioner based on store mode (no declarative loading yet).
 	store, transactioner, fileStore, dbStore, err := initializeGroupStore(dbProvider)
 	if err != nil {
@@ -35,12 +49,14 @@ func Initialize(
 
 	// Step 2: Create service with store.
 	groupService := newGroupServiceWithStore(
-		store, ouService, entityService, entityTypeService, authzService, transactioner,
+		store, ouService, entityService, entityTypeService, authzService, transactioner, sharingService, bus,
+		projectValidator,
 	)
+	groupService.managed = managedresource.GetStore()
 
 	// Step 3: Load declarative resources into file store (if applicable).
 	if fileStore != nil {
-		if err := loadDeclarativeResources(fileStore, dbStore, ouService); err != nil {
+		if err := loadDeclarativeResources(fileStore, dbStore, ouService, groupService); err != nil {
 			return nil, nil, nil, err
 		}
 	}
@@ -203,4 +219,16 @@ func registerRoutes(mux *http.ServeMux, groupHandler *groupHandler) {
 				http.NotFound(w, r)
 			}
 		}, opts4))
+}
+
+// SetSystemFlowProvider gives the group service the engine that runs the system flows around its
+// writes. It is bound after the service, once the engine exists, and only on a server that issues
+// tokens. A service that cannot take it is reported rather than left without one.
+func SetSystemFlowProvider(service GroupServiceInterface, provider systemFlowProvider) error {
+	gs, ok := service.(*groupService)
+	if !ok {
+		return fmt.Errorf("group service does not support system flow provider injection")
+	}
+	gs.systemFlows = provider
+	return nil
 }

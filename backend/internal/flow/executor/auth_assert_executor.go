@@ -20,14 +20,17 @@ import (
 	"github.com/thunder-id/thunderid/internal/attributecache"
 	"github.com/thunder-id/thunderid/internal/authn/assert"
 	authncm "github.com/thunder-id/thunderid/internal/authn/common"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/entityprovider"
 	"github.com/thunder-id/thunderid/internal/entitytype"
+	entitytypemodel "github.com/thunder-id/thunderid/internal/entitytype/model"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/role"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/security"
 )
 
 const (
@@ -45,6 +48,7 @@ type authAssertExecutor struct {
 	attributeCacheSvc   attributecache.AttributeCacheServiceInterface
 	roleService         role.RoleServiceInterface
 	entityTypeService   entitytype.EntityTypeServiceInterface
+	resourceService     providers.ResourceServerProvider
 	accessGuard         *accessGuard
 	logger              *log.Logger
 }
@@ -62,6 +66,7 @@ func newAuthAssertExecutor(
 	attributeCacheSvc attributecache.AttributeCacheServiceInterface,
 	roleService role.RoleServiceInterface,
 	entityTypeService entitytype.EntityTypeServiceInterface,
+	resourceService providers.ResourceServerProvider,
 	accessGuard *accessGuard,
 ) *authAssertExecutor {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, authAssertLoggerComponentName),
@@ -84,6 +89,7 @@ func newAuthAssertExecutor(
 		attributeCacheSvc:   attributeCacheSvc,
 		roleService:         roleService,
 		entityTypeService:   entityTypeService,
+		resourceService:     resourceService,
 		accessGuard:         accessGuard,
 		logger:              logger,
 	}
@@ -114,6 +120,9 @@ func (a *authAssertExecutor) Execute(ctx *providers.NodeContext) (*providers.Exe
 		entityRef, svcErr, fault := a.resolveEntityReference(ctx, execResp)
 		if fault == nil && svcErr == nil {
 			svcErr, fault = a.accessGuard.refuseSignInIfHeld(ctx.Context, entityRef.EntityID, logger)
+		}
+		if fault == nil && svcErr == nil {
+			svcErr, fault = a.refuseOutsideSignInBoundary(ctx, logger)
 		}
 		if fault != nil {
 			return nil, fault
@@ -166,6 +175,30 @@ func (a *authAssertExecutor) resolveEntityReference(ctx *providers.NodeContext,
 		return nil, nil, errors.New("entity reference resolved to nothing")
 	}
 	return entityRef, nil, nil
+}
+
+// refuseOutsideSignInBoundary returns the refusal for a bounded sign-in that decided no organization unit, or one
+// the OU provider does not admit it to. A failed check is returned as a fault.
+func (a *authAssertExecutor) refuseOutsideSignInBoundary(ctx *providers.NodeContext,
+	logger *log.Logger) (*tidcommon.ServiceError, error) {
+	if _, bounded := authnprovidercm.SignInBoundaryFrom(ctx.Context); !bounded {
+		return nil, nil
+	}
+	ouID := ctx.RuntimeData[common.RuntimeKeyOUID]
+	if ouID == "" {
+		logger.Debug(ctx.Context, "Refused a bounded sign-in that decided no organization unit")
+		return &ErrOrganizationNotResolved, nil
+	}
+	eligible, svcErr := a.ouService.IsEligibleOU(ctx.Context, ouID)
+	if svcErr != nil {
+		return nil, fmt.Errorf("failed to check whether the sign-in may land in its organization unit: %s",
+			svcErr.Code)
+	}
+	if !eligible {
+		logger.Debug(ctx.Context, "Refused a bounded sign-in outside its organization unit boundary")
+		return &ErrNoAccessToApplication, nil
+	}
+	return nil, nil
 }
 
 // checkAssurance verifies that the assurance accumulated in this execution satisfies the
@@ -334,7 +367,11 @@ func (a *authAssertExecutor) generateAuthAssertion(ctx *providers.NodeContext,
 	}
 
 	// Include permissions in the JWT (see resolvePermissionsForClaim for the precedence chain).
-	if permissions := a.resolvePermissionsForClaim(ctx); permissions != "" {
+	permissions, permissionErr := a.resolvePermissionsForClaim(ctx)
+	if permissionErr != nil {
+		return "", permissionErr
+	}
+	if permissions != "" {
 		jwtClaims["authorized_permissions"] = permissions
 	}
 
@@ -349,7 +386,8 @@ func (a *authAssertExecutor) generateAuthAssertion(ctx *providers.NodeContext,
 
 	// Bind the assertion to the originating auth request so the corresponding callback can verify this assertion
 	// authorizes the specific request it accompanies.
-	if authReqID, exists := ctx.RuntimeData[common.RuntimeKeyAuthorizationRequestID]; exists && authReqID != "" {
+	if authReqID := common.RuntimeDataOrShared(ctx.RuntimeData, ctx.SharedRuntimeData,
+		common.RuntimeKeyAuthorizationRequestID); authReqID != "" {
 		jwtClaims[oauth2const.ClaimAuthorizationRequestID] = authReqID
 	}
 
@@ -419,6 +457,11 @@ func (a *authAssertExecutor) generateAuthAssertion(ctx *providers.NodeContext,
 		entityRef.EntityID, entityRef.EntityCategory, entityRef.EntityType, entityRef.OUID)
 	if attrErr != nil {
 		return "", attrErr
+	}
+
+	if err := a.appendVerificationClaims(ctx.Context, requiredAttributes, resolvedAttributes, attrResp,
+		entityRef); err != nil {
+		return "", err
 	}
 
 	if err := a.recordResolvedAttributes(ctx, jwtClaims, resolvedAttributes, entityRef, logger); err != nil {
@@ -501,28 +544,42 @@ func (a *authAssertExecutor) extractAuthenticatorReferences(
 }
 
 // getRequiredUserAttributes determines the list of user attribute keys that should be included in the
-// assertion based on runtime and application configuration.
-func (a *authAssertExecutor) getRequiredUserAttributes(ctx *providers.NodeContext) (userAttributes []string) {
+// assertion based on runtime and application configuration. When consented attributes are set, the result
+// is the requested attributes restricted to the consented ones.
+func (a *authAssertExecutor) getRequiredUserAttributes(ctx *providers.NodeContext) []string {
 	logger := a.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
 
-	// Check if consent was recorded in this flow. If recorded, we should only include consented attributes
-	// We check RuntimeKeyConsentID to determine if the consent executor ran and recorded a consent.
-	if _, consentRecorded := ctx.RuntimeData[common.RuntimeKeyConsentID]; consentRecorded {
-		// Get user attributes from consented attributes if consent was collected in this flow
-		if consentedAttrsStr, exists := ctx.RuntimeData[common.RuntimeKeyConsentedAttributes]; exists {
-			logger.Debug(ctx.Context, "Consent recorded with approved attributes")
-			return strings.Fields(consentedAttrsStr)
-		}
+	requestedAttributes := a.getRequestedUserAttributes(ctx)
 
-		// If consent was recorded but no attributes were approved, attributes are empty
-		logger.Debug(ctx.Context, "Consent recorded but no attributes approved")
-		return []string{}
+	// Attributes are restricted to the consented ones when RuntimeKeyConsentedAttributes is set.
+	consentedAttrsStr, hasConsentedAttrs := ctx.RuntimeData[common.RuntimeKeyConsentedAttributes]
+	if !hasConsentedAttrs {
+		return requestedAttributes
 	}
 
-	// If consent was not recorded in this flow, check for essential/ optional attributes in runtime data.
+	logger.Debug(ctx.Context, "Restricting user attributes to consented attributes")
+	consentedAttributes := strings.Fields(consentedAttrsStr)
+	userAttributes := make([]string, 0, len(requestedAttributes))
+	for _, attr := range requestedAttributes {
+		if slices.Contains(consentedAttributes, attr) && !slices.Contains(userAttributes, attr) {
+			userAttributes = append(userAttributes, attr)
+		}
+	}
+	return userAttributes
+}
+
+// getRequestedUserAttributes determines the list of user attribute keys requested for the assertion
+// from the runtime data, falling back to the application configuration.
+func (a *authAssertExecutor) getRequestedUserAttributes(ctx *providers.NodeContext) (userAttributes []string) {
+	logger := a.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
+
+	// Check for essential/ optional attributes in runtime data.
 	// If present, we should apply attribute filtering based on these attributes
 	_, essentialExists := ctx.RuntimeData[common.RuntimeKeyRequiredEssentialAttributes]
 	_, optionalExists := ctx.RuntimeData[common.RuntimeKeyRequiredOptionalAttributes]
+	if !optionalExists {
+		_, optionalExists = ctx.SharedRuntimeData[common.RuntimeKeyRequiredOptionalAttributes]
+	}
 
 	if essentialExists || optionalExists {
 		userAttributes = []string{}
@@ -536,15 +593,14 @@ func (a *authAssertExecutor) getRequiredUserAttributes(ctx *providers.NodeContex
 		}
 		if optionalExists {
 			logger.Debug(ctx.Context, "Adding required optional attributes to user attributes list")
-			userAttributes = append(userAttributes,
-				strings.Fields(ctx.RuntimeData[common.RuntimeKeyRequiredOptionalAttributes])...)
+			userAttributes = append(userAttributes, strings.Fields(common.RuntimeDataOrShared(ctx.RuntimeData,
+				ctx.SharedRuntimeData, common.RuntimeKeyRequiredOptionalAttributes))...)
 		}
 
 		return userAttributes
 	}
 
-	// If consent was not recorded and no essential/ optional attributes specified, fallback to
-	// application token config
+	// If no essential/ optional attributes specified, fallback to application token config
 	if ctx.Application.Assertion != nil {
 		logger.Debug(ctx.Context, "Adding application token attributes to user attributes list")
 		return ctx.Application.Assertion.UserAttributes
@@ -623,6 +679,51 @@ func (a *authAssertExecutor) resolveUserAttributes(
 	return attributes, nil
 }
 
+// appendVerificationClaims sets each requested verification claim the server issues for the user's type,
+// replacing any value resolved for that name. A claim is released only with its contact, and is false
+// when the released value is not the one the verification status was read for.
+func (a *authAssertExecutor) appendVerificationClaims(ctx context.Context, requestedAttributes []string,
+	attributes map[string]interface{}, attrResp *providers.AttributesResponse,
+	entityRef *providers.EntityReference) error {
+	if !slices.ContainsFunc(requestedAttributes, entitytypemodel.IsVerificationClaimName) {
+		return nil
+	}
+
+	if _, ok := attributes[providers.RawJWTAttributeKey]; ok {
+		return nil
+	}
+
+	contacts, err := verificationClaimContacts(ctx, a.entityTypeService, entityRef.EntityCategory,
+		entityRef.EntityType)
+	if err != nil {
+		return err
+	}
+
+	for name, contact := range contacts {
+		if !slices.Contains(requestedAttributes, name) {
+			continue
+		}
+
+		delete(attributes, name)
+
+		released, ok := attributes[contact].(string)
+		if !ok {
+			continue
+		}
+
+		verified := false
+		if attrResp != nil {
+			if fetched := attrResp.Attributes[contact]; fetched != nil && fetched.Value == released {
+				verified = fetched.AssuranceMetadataResponse != nil && fetched.AssuranceMetadataResponse.IsVerified
+			}
+		}
+
+		attributes[name] = verified
+	}
+
+	return nil
+}
+
 // appendComputedAttributes appends computed/derived attributes (groups, roles, userType, OU details) to the claims.
 func (a *authAssertExecutor) appendComputedAttributes(
 	ctx *providers.NodeContext,
@@ -661,6 +762,9 @@ func (a *authAssertExecutor) appendComputedAttributes(
 	ouAttributesConfigured := slices.Contains(requestedAttributes, oauth2const.ClaimOUID) ||
 		slices.Contains(requestedAttributes, oauth2const.ClaimOUName) ||
 		slices.Contains(requestedAttributes, oauth2const.ClaimOUHandle)
+	if boundary, bounded := authnprovidercm.SignInBoundaryFrom(ctx.Context); bounded && boundary.OUID != "" {
+		ouID = boundary.OUID
+	}
 	if ouAttributesConfigured && ouID != "" {
 		if err := a.appendOUDetailsToClaims(
 			ctx.Context, ouID, attributes, requestedAttributes); err != nil {
@@ -762,7 +866,7 @@ func (a *authAssertExecutor) fetchAllUserGroups(
 		return nil, nil
 	}
 
-	groups, err := a.entityProvider.GetTransitiveEntityGroups(userID)
+	groups, err := a.entityProvider.GetTransitiveEntityGroups(ctx, userID)
 	if err != nil {
 		a.logger.Error(ctx, "Failed to fetch transitive user groups",
 			log.MaskedString(log.LoggerKeyUserID, userID), log.Any("error", err))
@@ -810,39 +914,55 @@ func (a *authAssertExecutor) appendRolesToClaims(
 	return nil
 }
 
-// resolvePermissionsForClaim returns the permission set to embed in the assertion. When the
-// consent step ran, the result is the consented set intersected with the currently authorized
-// set (defense against stale consent records containing permissions the user no longer holds).
-// If consent ran in a flow without an authz step, the consented set is returned as-is (no
-// authz decision is available to intersect against). Otherwise the authorized set is returned
-// directly. Raw requested permissions are intentionally not used — the authz executor must
-// validate them first.
-func (a *authAssertExecutor) resolvePermissionsForClaim(ctx *providers.NodeContext) string {
-	if v, ok := ctx.RuntimeData[common.RuntimeKeyConsentedPermissions]; ok {
-		if authorized, hasAuthorized := ctx.RuntimeData["authorized_permissions"]; hasAuthorized {
-			return intersectPermissionSpaceList(v, authorized)
-		}
-		return v
+// resolvePermissionsForClaim returns the permission set to embed in the assertion. When consented
+// permissions are set, the result is the authorized permissions the consented set covers, which is
+// empty when the authz executor did not run. Otherwise the authorized set is returned directly. Raw
+// requested permissions are intentionally not used — the authz executor must validate them first.
+func (a *authAssertExecutor) resolvePermissionsForClaim(ctx *providers.NodeContext) (string, error) {
+	authorized := ctx.RuntimeData[authorizedPermissionsKey]
+	consented, hasConsented := ctx.RuntimeData[common.RuntimeKeyConsentedPermissions]
+	if !hasConsented {
+		return authorized, nil
 	}
-	return ctx.RuntimeData["authorized_permissions"]
+	if authorized == "" || consented == "" {
+		return "", nil
+	}
+	delimiter := ""
+	if resourceServerID := ctx.RuntimeData[common.RuntimeKeyResourceServerID]; resourceServerID != "" {
+		if a.resourceService == nil {
+			return "", errors.New("resource server provider is not configured")
+		}
+		server, svcErr := a.resourceService.GetResourceServer(
+			security.WithRuntimeContext(ctx.Context), resourceServerID)
+		if svcErr != nil {
+			return "", fmt.Errorf("failed to resolve permission resource server: %s", svcErr.Code)
+		}
+		if server == nil {
+			return "", errors.New("permission resource server resolved to nothing")
+		}
+		if server.HierarchicalPermissions {
+			delimiter = server.Delimiter
+		}
+	}
+	return consentedSubset(authorized, consented, delimiter), nil
 }
 
-// intersectPermissionSpaceList returns the space-separated set of permissions present in both
-// inputs, preserving the order of `a`. Empty inputs are handled as empty sets.
-func intersectPermissionSpaceList(a, b string) string {
-	if a == "" || b == "" {
+// consentedSubset returns the authorized permissions that a consented permission covers, so an
+// approved resource answers for the authorized permissions beneath it. An empty delimiter preserves
+// exact matching.
+func consentedSubset(authorized, consented, delimiter string) string {
+	if authorized == "" || consented == "" {
 		return ""
 	}
-	allowed := make(map[string]bool)
-	for _, p := range strings.Fields(b) {
-		allowed[p] = true
-	}
-	out := make([]string, 0, len(allowed))
-	for _, p := range strings.Fields(a) {
-		if allowed[p] {
-			out = append(out, p)
-			delete(allowed, p)
+	approved := strings.Fields(consented)
+
+	authorizedPermissions := strings.Fields(authorized)
+	out := make([]string, 0, len(authorizedPermissions))
+	for _, permission := range authorizedPermissions {
+		if slices.Contains(out, permission) || !security.AnyPermissionCovers(approved, permission, delimiter) {
+			continue
 		}
+		out = append(out, permission)
 	}
 	return strings.Join(out, " ")
 }

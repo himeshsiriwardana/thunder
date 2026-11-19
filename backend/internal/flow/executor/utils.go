@@ -4,17 +4,21 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	authncm "github.com/thunder-id/thunderid/internal/authn/common"
 	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
+	"github.com/thunder-id/thunderid/internal/entitytype"
 	entitytypemodel "github.com/thunder-id/thunderid/internal/entitytype/model"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
@@ -22,6 +26,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/revocation"
 	"github.com/thunder-id/thunderid/internal/role"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	systemutils "github.com/thunder-id/thunderid/internal/system/utils"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -49,12 +54,16 @@ func setExternalIdentity(execResp *providers.ExecutorResponse, idpID, sub string
 		execResp.RuntimeData = make(map[string]string)
 	}
 	execResp.RuntimeData[common.RuntimeKeyExternalIdentity] = string(encoded)
+	if idpID != "" && sub != "" {
+		execResp.SharedRuntimeData = map[string]string{common.RuntimeKeyFederatedLoginCompleted: dataValueTrue}
+	}
 	return nil
 }
 
 // revocationPlan is the trusted intent a flow's pre-processing node produces and the executors that
 // follow act on. It is never built from request input, so the criteria, breadth and reason recorded
-// here are authoritative for the rest of the flow.
+// here are authoritative for the rest of the flow. A system post flow reads the plan its pre flow
+// produced, which the service hands back unchanged.
 type revocationPlan struct {
 	Criteria []revocation.Criterion `json:"criteria"`
 	Mode     revocation.Mode        `json:"mode"`
@@ -72,6 +81,10 @@ type revocationPlan struct {
 	// TTLSeconds is how long the deny-list row must live to outlast the artifacts the criteria match.
 	// Zero leaves the revocation service on its configured default.
 	TTLSeconds int64 `json:"ttlSeconds,omitempty"`
+	// HolderScopes are the scopes every holder of the target loses. A plan records them when holders can
+	// be added between the plan and the change, so the post flow can extend the plan to the holders the
+	// change removed that the plan did not see.
+	HolderScopes []revocation.AudienceScope `json:"holderScopes,omitempty"`
 	// NothingToRevoke records that the preparatory node established there is no artifact to revoke, which
 	// is how an empty criteria list is distinguished from a missing one. Only a node that verified the
 	// absence sets it; without it an empty list stays an error, so a plan can never be silently skipped.
@@ -122,15 +135,6 @@ func revocationPlanFor(data map[string]string, want revocation.Reason) (revocati
 	return plan, nil
 }
 
-// applicationTargetFromPlan returns the application the trusted plan acts on.
-func applicationTargetFromPlan(data map[string]string, want revocation.Reason) (string, error) {
-	plan, err := revocationPlanFor(data, want)
-	if err != nil {
-		return "", err
-	}
-	return plan.TargetID, nil
-}
-
 // getAuthnServiceName returns the authn service name for an executor.
 // Returns empty string if executor doesn't map to an authn service.
 func getAuthnServiceName(executorName string) string {
@@ -173,6 +177,16 @@ func resolveInputIdentifierByType(ctx *providers.NodeContext, inputType string, 
 		return input.Identifier
 	}
 	return fallback
+}
+
+// isConstantNodeInput reports whether the running node holds the input constant.
+func isConstantNodeInput(ctx *providers.NodeContext, identifier string) bool {
+	for _, input := range ctx.NodeInputs {
+		if input.Identifier == identifier {
+			return input.Constant
+		}
+	}
+	return false
 }
 
 // findInputByType returns the first input in the given slice whose Type matches inputType.
@@ -330,7 +344,7 @@ func resolveAndSetMappedAuthorizationTargets(
 	directTargets, svcErr := idpService.GetDirectAuthorizationTargets(ctx, idpDTO, federatedAttributes)
 	if svcErr != nil {
 		logger.Warn(ctx, "Failed to resolve direct authorization targets, continuing with rule-based targets only",
-			log.String("idpId", idpDTO.ID), log.String("error", svcErr.Error.DefaultValue))
+			log.String(log.LoggerKeyIDPID, idpDTO.ID), log.String("error", svcErr.Error.DefaultValue))
 	} else {
 		targets = append(targets, directTargets...)
 	}
@@ -502,6 +516,24 @@ func governanceFault(svcErr *tidcommon.ServiceError) error {
 	return fmt.Errorf("identity governance check failed: %s", svcErr.Error.DefaultValue)
 }
 
+// verificationClaimContacts returns the verification claims the server issues for a user type, mapped to
+// their contact attribute. Another category, or no entity type service, has none.
+func verificationClaimContacts(ctx context.Context, entityTypeService entitytype.EntityTypeServiceInterface,
+	entityCategory, userType string) (map[string]string, error) {
+	if entityTypeService == nil || userType == "" ||
+		providers.EntityCategory(entityCategory) != providers.EntityCategoryUser {
+		return nil, nil
+	}
+
+	attributes, svcErr := entityTypeService.GetAttributes(ctx, entitytype.TypeCategoryUser, userType,
+		entitytype.AttributeFilter{AllowNonCredential: true})
+	if svcErr != nil {
+		return nil, fmt.Errorf("failed to fetch attributes of user type %s: code: %s", userType, svcErr.Code)
+	}
+
+	return entitytypemodel.VerificationClaims(attributes), nil
+}
+
 // dispatchPlaneFor maps the flow a challenge belongs to onto the plane it is checked at. A lock gives
 // way at the recovery plane, so recovery and registration challenges still go out; every other flow
 // is checked at the dispatch plane.
@@ -525,4 +557,140 @@ func requestedAuthorizationDetails(ctx *providers.NodeContext) ([]providers.Auth
 		return nil, fmt.Errorf("authorization details are malformed: %w", err)
 	}
 	return details, nil
+}
+
+// runtimeProperty resolves a node property against the runtime data alone, so no user input, external
+// claim or request value can set it. An unresolved placeholder is an error.
+func runtimeProperty(ctx *providers.NodeContext, key string) (string, error) {
+	value, _ := ctx.NodeProperties[key].(string)
+	resolved := core.ResolvePlaceholder(&providers.NodeContext{RuntimeData: ctx.RuntimeData},
+		value, nil, nil, false, log.GetLogger())
+	if strings.Contains(resolved, "{{") {
+		return "", fmt.Errorf("property %q did not resolve from the runtime data", key)
+	}
+	return resolved, nil
+}
+
+// isInviter reports whether the caller is the one who started the invitation flow,
+// presenting their own token.
+func isInviter(ctx *providers.NodeContext) bool {
+	subject := security.GetSubject(ctx.Context)
+	return !security.IsRuntimeContext(ctx.Context) && !security.IsRecordedCaller(ctx.Context) && subject != "" &&
+		subject == ctx.RuntimeData[common.RuntimeKeyInviter]
+}
+
+// deliveredRecipients returns the distinct recipients senders sent to since an earlier node cleared
+// the list. A list that does not decode is an error.
+func deliveredRecipients(ctx *providers.NodeContext) ([]string, error) {
+	raw := ctx.SharedRuntimeData[common.RuntimeKeyDeliveredRecipients]
+	if raw == "" {
+		return nil, nil
+	}
+
+	var recipients []string
+	if err := json.Unmarshal([]byte(raw), &recipients); err != nil {
+		return nil, errors.New("invalid delivered recipients")
+	}
+
+	return recipients, nil
+}
+
+// withDeliveredRecipient returns shared runtime data that adds the recipient to the delivered recipients.
+func withDeliveredRecipient(ctx *providers.NodeContext, recipient string) (map[string]string, error) {
+	recipients, err := deliveredRecipients(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if !slices.Contains(recipients, recipient) {
+		recipients = append(recipients, recipient)
+	}
+
+	encoded, err := json.Marshal(recipients)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode delivered recipients: %w", err)
+	}
+
+	return map[string]string{common.RuntimeKeyDeliveredRecipients: string(encoded)}, nil
+}
+
+// sharedVerificationEvidence returns shared runtime data carrying the evidence. The evidence holds only
+// strings and booleans, so it always encodes.
+func sharedVerificationEvidence(proof verificationEvidence) (map[string]string, error) {
+	encoded, err := json.Marshal(proof)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode attribute verification evidence: %w", err)
+	}
+
+	return map[string]string{common.RuntimeKeyAttributeVerificationEvidence: string(encoded)}, nil
+}
+
+// pinnedVerificationEvidence returns the attribute verification evidence an earlier node recorded on
+// shared runtime data, or nil when no contact is pinned. Evidence that does not decode, or names no pin,
+// is an error.
+func pinnedVerificationEvidence(ctx *providers.NodeContext) (*verificationEvidence, error) {
+	raw := ctx.SharedRuntimeData[common.RuntimeKeyAttributeVerificationEvidence]
+	if raw == "" {
+		return nil, nil
+	}
+
+	var proof verificationEvidence
+	if err := json.Unmarshal([]byte(raw), &proof); err != nil {
+		return nil, errors.New("invalid verification evidence")
+	}
+
+	if proof.Pin == nil {
+		return nil, errors.New("missing verification pin")
+	}
+
+	return &proof, nil
+}
+
+// entityScopeCriterion revokes, for one entity, what a scope grants: the scope itself, or, for a scope of
+// a hierarchical resource server, the subtree of permissions below it.
+func entityScopeCriterion(entityID string, scope revocation.AudienceScope) revocation.Criterion {
+	if scope.SubtreeDelimiter != "" {
+		return revocation.Criterion{Type: revocation.CriterionTypeEntityScopeSubtree,
+			Value: revocation.EntityScopeSubtreeCriterionValue(entityID, scope.Audience, scope.Scope,
+				scope.SubtreeDelimiter)}
+	}
+	return revocation.Criterion{Type: revocation.CriterionTypeEntityScope,
+		Value: revocation.EntityScopeCriterionValue(entityID, scope.Audience, scope.Scope)}
+}
+
+// isClientDeletionPlan reports whether the plan removes a client, the only case that detaches session
+// participation: an inbound client's deletion, or an application deletion an administration flow plans. A secret
+// rotation does not: the session is still legitimately the user's.
+func isClientDeletionPlan(plan revocationPlan) bool {
+	return plan.TargetID != "" &&
+		(plan.Reason == revocation.ReasonClientRemoved || plan.Reason == revocation.ReasonApplicationRemoved)
+}
+
+// orderByDisplayOrder moves the inputs whose attribute sets a display order to the front, lowest
+// first and by attribute name for the same order, and keeps the others after them in their order.
+func orderByDisplayOrder(inputs []providers.Input, attrs []entitytype.AttributeInfo) {
+	order := make(map[string]int, len(attrs))
+	for _, attr := range attrs {
+		if attr.DisplayOrder != nil {
+			order[attr.Attribute] = *attr.DisplayOrder
+		}
+	}
+	if len(order) == 0 {
+		return
+	}
+
+	slices.SortStableFunc(inputs, func(a, b providers.Input) int {
+		orderA, hasA := order[a.Identifier]
+		orderB, hasB := order[b.Identifier]
+		switch {
+		case hasA && hasB:
+			return cmp.Or(cmp.Compare(orderA, orderB), cmp.Compare(a.Identifier, b.Identifier))
+		case hasA:
+			return -1
+		case hasB:
+			return 1
+		default:
+			return 0
+		}
+	})
 }

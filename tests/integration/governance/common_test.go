@@ -25,7 +25,6 @@ import (
 )
 
 const (
-	testServerURL          = testutils.TestServerURL
 	administrationFlowType = "ADMINISTRATION"
 
 	// subjectInput is the input an administration flow names its target with.
@@ -42,6 +41,8 @@ const (
 	// shippedUserLockThreshold is the user lock threshold in default.json's account_access section.
 	shippedUserLockThreshold = 5
 )
+
+var testServerURL = testutils.TestServerURL
 
 // The shipped administration flows, addressed by handle so the tests do not depend on a seeded id.
 // Applications have no unlock flow because an application never locks.
@@ -65,13 +66,13 @@ const (
 	shippedSignInAction = "action_001"
 )
 
-// The console the root operator signs in to, and the bootstrap organization unit and system resource
-// server the root permission lives in.
+// The bootstrap organization unit and system resource server the root permission lives in.
 const (
-	boundaryConsoleURI     = "https://localhost:8095/console"
 	bootstrapOUID          = "01900000-0000-7000-8000-000000000001"
 	systemResourceServerID = "01900000-0000-7000-8000-000000000020"
 )
+
+var boundaryConsoleURI = testutils.TestServerURL + "/console"
 
 // suspensionCutoffLeeway is jwt.leeway as every suite in this package runs it, shorter than the shipped
 // 30 seconds so the waits past a suspension's cutoff stay short, yet long enough for a release and a
@@ -239,6 +240,33 @@ func failAuthentication(t *testing.T, identifierKey, identifierValue string, cou
 	return refusals
 }
 
+// failAuthenticationConcurrently starts a burst together and checks its responses on the test goroutine.
+func failAuthenticationConcurrently(t *testing.T, identifierKey, identifierValue string, count int) {
+	t.Helper()
+	type result struct {
+		status int
+		body   []byte
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan result, count)
+	for i := range count {
+		go func() {
+			<-start
+			status, body, err := testutils.AuthenticateWithCredentialRaw(identifierKey, identifierValue, "password",
+				"DefinitelyNotTheSecret!"+strconv.Itoa(i))
+			results <- result{status: status, body: body, err: err}
+		}()
+	}
+	close(start)
+	for range count {
+		answer := <-results
+		require.NoError(t, answer.err, "concurrent authentication request failed")
+		require.Equal(t, http.StatusUnauthorized, answer.status,
+			"a wrong secret must produce an authentication refusal: %s", answer.body)
+	}
+}
+
 // failHeldAuthentication presents a wrong secret count times to a held account and requires every
 // attempt to state the hold by code, as the correct secret's refusal does.
 func failHeldAuthentication(t *testing.T, identifierKey, identifierValue string, count int, code string) {
@@ -299,31 +327,53 @@ func runtimeRevision(t *testing.T, entityID string) string {
 }
 
 // servedRung returns the duration of the lock the runtime row holds for a method ("account" for the
-// account-wide entry): its unlock time less the failure that formed it, both written from one clock
-// reading, so the answer does not depend on how long the test took to read it.
+// account-wide entry): its unlock time less the row's last write. Read it right after formation, before
+// any other runtime write.
 func servedRung(t *testing.T, entityID, method string) time.Duration {
 	t.Helper()
-	unlockAt, failedAt := storedLock(t, entityID, method)
-	return unlockAt.Sub(failedAt)
+	unlockAt := storedLock(t, entityID, method).UnlockAt
+	updatedAt := runtimeColumn(t, entityID, "UPDATED_AT")
+	for _, layout := range []string{
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999999Z07",
+		time.RFC3339Nano,
+	} {
+		formedAt, err := time.Parse(layout, updatedAt)
+		if err == nil {
+			return unlockAt.Sub(formedAt.UTC().Truncate(time.Second))
+		}
+	}
+	require.FailNow(t, "unreadable runtime write timestamp", "%q", updatedAt)
+	return 0
 }
 
 // storedExpiry returns the unlock time the runtime row holds for a method. Unlike the status read, it
 // is still there once the lock has lapsed, so a slow read cannot miss it.
 func storedExpiry(t *testing.T, entityID, method string) time.Time {
 	t.Helper()
-	unlockAt, _ := storedLock(t, entityID, method)
-	return unlockAt
+	return storedLock(t, entityID, method).UnlockAt
 }
 
-// storedLock returns the unlock time of the lock the runtime row holds for a method ("account" for the
-// account-wide entry), and the time of the failure that formed it.
-func storedLock(t *testing.T, entityID, method string) (time.Time, time.Time) {
+// storedLockEntry is a method's lock entry as the runtime row holds it.
+type storedLockEntry struct {
+	UnlockAt            time.Time
+	FailureCount        int
+	ConsecutiveFailures int
+	LockCount           int
+}
+
+// storedLock returns the lock entry the runtime row holds for a method ("account" for the account-wide
+// entry). It requires a finite unlock time.
+func storedLock(t *testing.T, entityID, method string) storedLockEntry {
 	t.Helper()
 	raw := runtimeColumn(t, entityID, "RUNTIME_ATTRIBUTES")
 
 	type lockEntry struct {
-		UnlockAt     string `json:"unlockAt"`
-		LastFailedAt string `json:"lastFailedAt"`
+		UnlockAt            string `json:"unlockAt"`
+		FailureCount        int    `json:"failureCount"`
+		ConsecutiveFailures int    `json:"consecutiveFailures"`
+		LockCount           int    `json:"lockCount"`
 	}
 	var row struct {
 		AccessState struct {
@@ -342,9 +392,12 @@ func storedLock(t *testing.T, entityID, method string) (time.Time, time.Time) {
 	require.True(t, recorded, "the runtime row must hold a %s lock: %s", method, raw)
 	unlockAt, err := time.Parse(time.RFC3339, entry.UnlockAt)
 	require.NoError(t, err, "the %s lock must have a finite unlock time: %s", method, raw)
-	failedAt, err := time.Parse(time.RFC3339, entry.LastFailedAt)
-	require.NoError(t, err, "the %s lock must record the failure that formed it: %s", method, raw)
-	return unlockAt, failedAt
+	return storedLockEntry{
+		UnlockAt:            unlockAt,
+		FailureCount:        entry.FailureCount,
+		ConsecutiveFailures: entry.ConsecutiveFailures,
+		LockCount:           entry.LockCount,
+	}
 }
 
 // getManagement reads one management resource as the administrator, requires it to be answered and
@@ -583,9 +636,9 @@ func runAdministrationFlowAs(t *testing.T, token, handle string, inputs map[stri
 	require.Equal(t, "COMPLETE", answer.flowStatus, "%s did not complete: %+v", handle, answer)
 }
 
-// newRootOperator creates a user in the fixture holding the system permission and signs it in to the
-// Console, so a test that regresses into governing its own operator holds a throwaway account rather
-// than the administrator every other suite runs as. The role is deleted when t ends. It is created in
+// newRootOperator creates a user in the fixture holding the system permission and signs it in through the
+// fixture's sign-in application, so a test that regresses into governing its own operator holds a throwaway
+// account rather than the administrator every other suite runs as. The role is deleted when t ends. It is created in
 // the fixture's organization unit, since a role is assigned only to users that unit owns or is shared.
 func newRootOperator(t *testing.T, users *userFixture) (userID, username, password, accessToken string) {
 	t.Helper()
@@ -600,9 +653,9 @@ func newRootOperator(t *testing.T, users *userFixture) (userID, username, passwo
 	})
 	require.NoError(t, err, "failed to grant the root permission")
 	cleanupRole(t, roleID)
-	token, err := testutils.ObtainAccessTokenWithPassword("CONSOLE", boundaryConsoleURI, "system",
-		username, password, true)
-	require.NoError(t, err, "the root operator must sign in to the console")
+	token, err := testutils.ObtainAccessTokenWithPassword(users.signInClientID, testutils.OUSignInRedirectURI,
+		"system", username, password, true, "", testutils.SystemResourceIdentifier)
+	require.NoError(t, err, "the root operator must sign in")
 	return userID, username, password, token.AccessToken
 }
 
@@ -787,11 +840,51 @@ type userFixture struct {
 	userType string
 	typeIDs  []string
 	userIDs  []string
+	// signInClientID is the fixture's own sign-in application, since a sign-in is bounded to its
+	// application's OU and the Console signs in only the default OU's users.
+	signInClientID string
+	signInAppID    string
 }
 
 // newUserFixture creates the organization unit governance_<name>_ou and, in it, the user type
 // governance_<name>_user as userType describes it.
 func newUserFixture(t *testing.T, name string, userType testutils.UserType) *userFixture {
+	t.Helper()
+	return newUserFixtureUnder(t, name, userType, nil)
+}
+
+// newOperatorFixture creates a user fixture whose organization unit sits under the default one and is shared the
+// shipped user governance flows, so an operator without the root permission signed in there can start them: for
+// such a caller an administration flow starts only in a unit that owns it or was shared it.
+func newOperatorFixture(t *testing.T, name string, userType testutils.UserType) *userFixture {
+	t.Helper()
+
+	defaultOUID, err := testutils.DefaultOUID()
+	require.NoError(t, err, "failed to find the default organization unit")
+	f := newUserFixtureUnder(t, name, userType, &defaultOUID)
+	for _, handle := range []string{unlockFlowHandle, suspendFlowHandle, unsuspendFlowHandle} {
+		flowID, err := testutils.GetFlowIDByHandle(handle, administrationFlowType)
+		require.NoError(t, err, "the %s flow must ship", handle)
+		status, body := sendManagement(t, http.MethodPost, "/flows/"+flowID+"/sharing-policies",
+			map[string]interface{}{"childUnits": map[string]interface{}{"mode": "selected",
+				"units": []map[string]interface{}{{"ouId": f.ouID, "reach": "unit"}}}})
+		require.Equal(t, http.StatusCreated, status, "failed to share %s with the fixture: %s", handle, body)
+		var policy struct {
+			ID string `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &policy))
+		// Registered after the fixture's, so the share goes before the organization unit.
+		t.Cleanup(func() {
+			if status, body := sendManagement(t, http.MethodDelete,
+				"/flows/"+flowID+"/sharing-policies/"+policy.ID, nil); status != http.StatusNoContent {
+				t.Logf("cleanup: failed to remove the share of %s: %d %s", handle, status, body)
+			}
+		})
+	}
+	return f
+}
+
+func newUserFixtureUnder(t *testing.T, name string, userType testutils.UserType, parent *string) *userFixture {
 	t.Helper()
 
 	f := &userFixture{name: name, suffix: uniqueSuffix(), userType: "governance_" + name + "_user"}
@@ -800,9 +893,14 @@ func newUserFixture(t *testing.T, name string, userType testutils.UserType) *use
 		Handle:      "governance_" + name + "_ou",
 		Name:        "Governance " + name + " OU",
 		Description: "Organization unit for the " + name + " governance tests",
+		Parent:      parent,
 	})
 	require.NoError(t, err, "failed to create the test organization unit")
 	f.ouID = ouID
+
+	f.signInClientID = "governance_" + name + "_sign_in_" + f.suffix
+	f.signInAppID, err = testutils.CreateOUSignInApplication(ouID, f.signInClientID)
+	require.NoError(t, err, "failed to create the fixture's sign-in application")
 
 	userType.Handle = f.userType
 	f.addUserType(t, userType)
@@ -856,6 +954,11 @@ func (f *userFixture) usernameFor(label string) string {
 // tearDown deletes what the fixture created, logging rather than failing.
 func (f *userFixture) tearDown(t *testing.T) {
 	t.Helper()
+	if f.signInAppID != "" {
+		if err := testutils.DeleteApplication(f.signInAppID); err != nil {
+			t.Logf("teardown: failed to delete the sign-in application: %v", err)
+		}
+	}
 	for _, userID := range f.userIDs {
 		if err := testutils.DeleteUser(userID); err != nil {
 			t.Logf("teardown: failed to delete user %s: %v", userID, err)
@@ -1064,47 +1167,44 @@ func tokenActive(t *testing.T, token, clientID, clientSecret string) bool {
 	return active
 }
 
-// copyShippedFlowWithSender creates a copy of a shipped flow under its own handle, with senderID named
-// on one of its email nodes as an operator must name one, since a flow email node has no default
-// sender. calls maps a CALL node's ID to the flow the copy calls there instead, so the copy can serve
-// an application whose flows must reference one another. The shipped flow is left as it is, and the
-// copy is deleted when t ends. It returns the copy's ID and handle.
-func copyShippedFlowWithSender(t *testing.T, handle, flowType, nodeID, senderID string,
-	calls map[string]string) (flowID, copyHandle string) {
+// copyShippedFlowWithSenders creates a copy of a shipped flow under its own handle, with each sender
+// named on its node, and calls mapping a CALL node's ID to the flow the copy calls there instead, as
+// testutils.CopyFlowWithSenders does. The copy is deleted when t ends. It returns the copy's ID and
+// handle.
+func copyShippedFlowWithSenders(t *testing.T, handle, flowType string, senders, calls map[string]string) (
+	flowID, copyHandle string) {
 	t.Helper()
 
-	shippedID, err := testutils.GetFlowIDByHandle(handle, flowType)
-	require.NoError(t, err, "the %s %s flow must ship", handle, flowType)
-	var flow testutils.Flow
-	require.NoError(t, json.Unmarshal(getManagement(t, "/flows/"+shippedID), &flow))
-	require.NoError(t, testutils.SetFlowNodeProperty(&flow, nodeID, "senderId", senderID),
-		"flow %s must carry a %s node", handle, nodeID)
-	for callNodeID, calledFlowID := range calls {
-		require.NoError(t, testutils.ModifyFlowNode(&flow, callNodeID, func(node map[string]interface{}) {
-			node["flow"] = map[string]interface{}{"ref": calledFlowID}
-		}), "flow %s must carry a %s node", handle, callNodeID)
-	}
-
-	flow.Name += " with a sender"
-	flow.Handle = handle + "-with-sender"
-	flowID, err = testutils.CreateFlow(flow)
+	copyHandle = handle + "-with-sender"
+	flowID, err := testutils.CopyFlowWithSenders(handle, flowType, copyHandle, senders, calls)
 	require.NoError(t, err, "failed to copy the %s flow", handle)
 	t.Cleanup(func() {
 		if err := testutils.DeleteFlow(flowID); err != nil {
 			t.Logf("teardown: failed to delete the copy of %s: %v", handle, err)
 		}
 	})
-	return flowID, flow.Handle
+	return flowID, copyHandle
 }
 
 // putManagement writes one management resource as the administrator and returns the status and the
 // body, whatever they are.
 func putManagement(t *testing.T, path string, body interface{}) (int, string) {
 	t.Helper()
+	return sendManagement(t, http.MethodPut, path, body)
+}
 
-	payload, err := json.Marshal(body)
-	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPut, testServerURL+path, bytes.NewReader(payload))
+// sendManagement sends one management request as the administrator and returns the status and the body, whatever
+// they are. A nil body sends none.
+func sendManagement(t *testing.T, method, path string, body interface{}) (int, string) {
+	t.Helper()
+
+	var payload []byte
+	if body != nil {
+		var err error
+		payload, err = json.Marshal(body)
+		require.NoError(t, err)
+	}
+	req, err := http.NewRequest(method, testServerURL+path, bytes.NewReader(payload))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := testutils.GetHTTPClient().Do(req)

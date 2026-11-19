@@ -167,7 +167,7 @@ The following table lists the configurable parameters of the ThunderID chart and
 | `deployment.strategy.rollingUpdate.maxSurge` | Maximum number of pods that can be created over the desired number during an update | `1`                           |
 | `deployment.strategy.rollingUpdate.maxUnavailable` | Maximum number of pods that can be unavailable during an update              | `0`                           |
 | `deployment.image.registry`             | ThunderID image registry                                                                  | `ghcr.io/thunder-id`             |
-| `deployment.image.repository`           | ThunderID image repository                                                                | `thunderid`                      |
+| `deployment.image.repository`           | ThunderID image repository                                                                | `thunderid-gateway`                      |
 | `deployment.image.tag`                  | ThunderID image tag                                                                       | `latest`                       |
 | `deployment.image.digest`               | ThunderID image digest (use either tag or digest)                                         | `""`                           |
 | `deployment.image.pullPolicy`           | ThunderID image pull policy                                                               | `Always`                       |
@@ -363,6 +363,32 @@ file references by Helm. Environment variable placeholders (`{{.VAR}}`) and `fil
 when ThunderID reads configuration directly via its application config loader (e.g., from a ConfigMap or file).
 They are not resolved when the value is first converted into a Kubernetes Secret by this chart.
 
+#### Redis TLS
+
+To connect to a TLS-only Redis, create a Secret with the CA certificate (and a client pair for mutual TLS) and reference it from `tls.secretName`:
+
+```bash
+kubectl create secret generic redis-tls \
+  --from-file=ca.crt=./ca.crt \
+  --from-file=tls.crt=./client.crt \
+  --from-file=tls.key=./client.key
+```
+
+```yaml
+configuration:
+  database:
+    runtime_transient:
+      type: "redis"
+      redis:
+        address: "redis.example.com:6380"
+        tls:
+          enabled: true
+          secretName: "redis-tls"
+          clientAuth: true   # only when Redis requires client certificates
+```
+
+`configuration.cache.redis.tls` takes the same fields. The Secret is mounted into both the server and the setup job. Omit `secretName` to trust the system CA pool.
+
 #### Password Field Options
 Password fields are available in `configuration.database.config.postgres`, `configuration.database.runtime_transient.postgres`, `configuration.database.runtime_transient.redis`, `configuration.database.entity.postgres`, and `configuration.database.runtime_persistent.postgres`:
 
@@ -379,12 +405,15 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.server.port`                       | ThunderID server port                                                                                                                                     | `8090`                       |
 | `configuration.server.httpOnly`                   | Whether the server should run in HTTP-only mode                                                                                                         | `false`                      |
 | `configuration.server.identifier`                 | Logical deployment identifier that scopes every stored record. Give each deployment sharing a database its own value. Empty keeps the server default.    | `""` (`default-deployment`)  |
+| `configuration.server.productName`                | Product name the server presents to clients. Empty keeps the server default. | `""` (`ThunderID`) |
+| `configuration.server.systemOuId`                 | The organization unit that resources in a project are placed in when they name none, and that applications and agents created without one go to. Don't change it once resources are placed in it. | `01900000-0000-7000-8000-000000000001` |
 | `configuration.server.publicURL`                  | Public URL of the ThunderID server                                                                                                                        | `https://thunderid.local`      |
 | `configuration.server.timeouts.readHeaderSeconds` | Seconds the server waits for a request's headers | `10` |
 | `configuration.server.timeouts.writeSeconds`      | Seconds a request may take from the end of its headers until its response is written. A slow API has its own timeout instead, such as `configuration.import.timeoutSeconds` | `10` |
 | `configuration.server.timeouts.idleSeconds`       | Seconds a kept-alive connection waits for its next request | `120` |
 | `configuration.gateway.applyTimeoutSeconds`       | Seconds a request to apply a configuration version to a gateway, or to revert one, may take to answer, in place of `server.timeouts.writeSeconds`. Keep it above the gateway's `import.timeoutSeconds` | `300` |
 | `configuration.import.timeoutSeconds`             | Seconds an import request may take to answer, in place of `server.timeouts.writeSeconds`. A control plane applies a configuration version through this API, so raise it when large applies time out | `120` |
+| `configuration.server.trustedProxies`             | Reverse proxies allowed to report the client IP recorded on SSO sessions and in the access log. Each entry has a `cidr` and an optional `header` (default `x-forwarded-for`). Keep the ranges narrow, since any caller inside one can report any client IP. | `[]`                         |
 | `configuration.server.security.directAuthSecret`  | Secret that gates the Direct API endpoints (`/auth/**`, `/register/passkey/**`). Leave unset to let the setup job generate one per deployment onto the secrets PVC (referenced from `deployment.yaml` as `file://config/secrets/direct_auth_secret`); set an explicit value to override generation. When unset and `setup.enabled=false`, the Direct API stays blocked. See [Direct API Secret](#direct-api-secret). | `""` (generated) |
 | `configuration.server.security.rest.audience`     | Audience (RFC 8707 resource indicator) required of tokens presented to the REST API gate. Set the `rest` block to enable the check, leaving `audience` empty to use `configuration.consoleClient.resourceIdentifier` (which itself defaults to `<server.publicUrl>/mcp`). Omit the block entirely to leave the audience unchecked — REST authorizes by scope. | `""` (block omitted)        |
 | `configuration.server.security.mcp.audience`      | Overrides the MCP resource identifier: both the audience MCP tokens must carry and the RFC 9728 `resource` the server advertises. Omit the block to let the server derive it from `server.publicUrl`. The check is mandatory per the MCP specification and cannot be disabled. | `""` (derived)              |
@@ -392,6 +421,7 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.gateClient.port`                   | Gate client port                                                                                                                                        | `443`                       |
 | `configuration.gateClient.scheme`                 | Gate client scheme                                                                                                                                      | `https`                      |
 | `configuration.gateClient.path`                   | Gate client base path                                                                                                                                   | `/gate`                      |
+| `configuration.brand.slogan`                      | Content for the Gate sign-in hero panel: a string (a single title), a map (a single item) or a list of items, each with `title` and optional `description` and `icon`. Empty keeps the built-in items. | `[]` |
 | `configuration.consoleClient.path`                | Console client base path                                                                                                                                | `/console`                   |
 | `configuration.consoleClient.clientId`            | Console client ID                                                                                                                                       | `CONSOLE`                    |
 | `configuration.consoleClient.scopes`              | Console client scopes                                                                                                                                   | `['openid', 'profile', 'email', 'system']` |
@@ -456,6 +486,11 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.database.runtime_transient.redis.passwordRef.key` | Kubernetes Secret key for runtime-transient Redis password                                                                                                      | `""`                         |
 | `configuration.database.runtime_transient.redis.db`          | Redis logical database index (0–15) (for Redis only)                                                                                                   | `0`                          |
 | `configuration.database.runtime_transient.redis.key_prefix`   | Prefix applied to all Redis keys written by ThunderID (for Redis only)                                                                                   | `""`                         |
+| `configuration.database.runtime_transient.redis.tls.enabled` | Connect to Redis over TLS | `false` |
+| `configuration.database.runtime_transient.redis.tls.secretName` | Existing Secret with `ca.crt` (and `tls.crt` / `tls.key` when `clientAuth` is true), mounted into the server and setup pods. Leave empty to trust the system CA pool | `""` |
+| `configuration.database.runtime_transient.redis.tls.clientAuth` | Present `tls.crt` / `tls.key` from the Secret (mutual TLS) | `false` |
+| `configuration.database.runtime_transient.redis.tls.serverName` | Expected Redis server name. Defaults to the host in `address` | `""` |
+| `configuration.database.runtime_transient.redis.tls.insecureSkipVerify` | Skip server certificate verification (not for production) | `false` |
 | `configuration.database.entity.type`                | Entity database type (postgres or sqlite)                                                                                                                 | `postgres`                   |
 | `configuration.database.entity.sqlite.path`          | SQLite database path (for SQLite only)                                                                                                                  | `database/entitydb.db` |
 | `configuration.database.entity.sqlite.options`       | SQLite options (for SQLite only)                                                                                                                        | `_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)` |
@@ -503,6 +538,11 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.cache.redis.passwordRef.key`       | Kubernetes Secret key for Redis password. When set, overrides `password` field and uses external Secret                                                | `""`                        |
 | `configuration.cache.redis.db`                    | Redis database number                                                                                                                                   | `0`                          |
 | `configuration.cache.redis.keyPrefix`             | Prefix for all Redis cache keys                                                                                                                         | `thunderid`                  |
+| `configuration.cache.redis.tls.enabled` | Connect to Redis over TLS | `false` |
+| `configuration.cache.redis.tls.secretName` | Existing Secret with `ca.crt` (and `tls.crt` / `tls.key` when `clientAuth` is true), mounted into the server and setup pods. Leave empty to trust the system CA pool | `""` |
+| `configuration.cache.redis.tls.clientAuth` | Present `tls.crt` / `tls.key` from the Secret (mutual TLS) | `false` |
+| `configuration.cache.redis.tls.serverName` | Expected Redis server name. Defaults to the host in `address` | `""` |
+| `configuration.cache.redis.tls.insecureSkipVerify` | Skip server certificate verification (not for production) | `false` |
 | `configuration.jwt.issuer`                        | JWT issuer (derived from server.publicUrl if not set)                                                                                                   | derived                      |
 | `configuration.jwt.validityPeriod`                | JWT validity period in seconds                                                                                                                          | `3600`                       |
 | `configuration.jwt.audience`                      | Default audience for auth assertions                                                                                                                    | `application`                |
@@ -527,7 +567,6 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.flow.autoInferRegistration`        | Enable auto-infer registration flow                                                                                                                     | `true`                       |
 | `configuration.directApi.enabled`                 | Register the Direct API authentication endpoints (`/auth/**`, `/register/passkey/**`). When `false`, they return `404` and the Console hides them. AuthZEN access endpoints are not affected. | `true` |
 | `configuration.passkey.allowedOrigins`            | Passkey allowed origins                                                                                                                                 | `[]`                         |
-| `configuration.scim.urnPrefix`                    | URN prefix of the per-user-type SCIM extension schemas. A trailing colon is added if missing.                                                            | `urn:thunderid:params:scim:schemas:` |
 | `configuration.accountAccess.<category>.lockGranularity` | Account access (automatic lock) policy for `<category>` `user` or `agent`. `authentication_method` locks only the sign-in method that failed; `account` locks every method. A key removed from `values.yaml` keeps the product default | `authentication_method` |
 | `configuration.accountAccess.<category>.recordLastLogin` | Record when the identity last signed in                                                                                                       | `false`                      |
 | `configuration.accountAccess.<category>.lastLoginResolutionSeconds` | Skip the last sign-in write while the recorded time is newer than this; `0` writes every time                                      | `3600`                       |
@@ -547,10 +586,14 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.log.output.file.format`            | Log line format (`text` or `json`). Applies to every output, including the console, so set it alone to emit JSON to stdout without enabling file output.  | unset (`text`)               |
 | `configuration.log.output.file.rotation`          | Rotation and retention settings (`size.enabled`, `size.maxSizeMb`, `time.enabled`, `time.intervalDays`, `maxBackups`, `maxAgeDays`, `compress`)          | unset, see `values.yaml`     |
 | `configuration.log.access.excludePaths`           | Optional. Extra path prefixes served without an access log line. The Gate and Console prefixes are always excluded.                                       | unset (`[]`)                 |
+| `configuration.audit.enabled`                     | Write audit events to stdout, one JSON line each that starts with `"log_type":"AUDIT"`. `false` drops them. Commented out in `values.yaml`.             | unset (`true`)               |
 | `configuration.stores.<resource>`                 | Storage mode per resource type: `mutable`, `declarative`, or `composite`. Keys: `user`, `group`, `role`, `theme`, `layout`, `translation`, `agent`, `user_type`, `organization_unit`, `identity_provider`, `application`, `server_config`, `resource`, `authorization_detail_type`, `http_connection`, `notification_template`. Unset inherits `declarativeResources.enabled`. | `{}` |
 | `configuration.flow.store`                        | Storage mode for flows (`mutable`, `declarative`, `composite`)                                                                                           | `""`                         |
 | `configuration.openid4vp.store`                   | Storage mode for presentation definitions (`mutable`, `declarative`, `composite`)                                                                        | `""`                         |
 | `configuration.openid4vci.store`                  | Storage mode for credential configurations (`mutable`, `declarative`, `composite`)                                                                       | `""`                         |
+| `configuration.notification.template.maxSubjectLength`   | Maximum email template subject length, in characters. Unset uses the server default.                                                              | unset (`1000`)               |
+| `configuration.notification.template.maxEmailBodyLength` | Maximum email template body length, in characters. Unset uses the server default.                                                                 | unset (`50000`)              |
+| `configuration.notification.template.maxSmsBodyLength`   | Maximum SMS template body length, in characters. Unset uses the server default.                                                                   | unset (`4096`)               |
 
 > CORS allowed origins are configured through the server-config `cors` section — by creating the declarative resource `config/resources/server_configs/cors.yaml` (with `server_config.store: composite` set so it loads at boot) or at runtime with `PUT /server-config/cors` — not through Helm values.
 

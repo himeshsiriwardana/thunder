@@ -843,10 +843,10 @@ func (suite *InboundClientStoreTestSuite) TestGetEntityIDsByReference_Flow() {
 	suite.Run("uses flow queries and repeats the id across slots", func() {
 		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
 		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByFlowIDCount,
-			"flow-1", "flow-1", "flow-1", "flow-1", testServerID).
+			"flow-1", "flow-1", "flow-1", "flow-1", "flow-1", testServerID).
 			Return([]map[string]interface{}{{"total": int64(2)}}, nil).Once()
 		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByFlowID,
-			"flow-1", "flow-1", "flow-1", "flow-1", testServerID, 10, 0).
+			"flow-1", "flow-1", "flow-1", "flow-1", "flow-1", testServerID, 10, 0).
 			Return([]map[string]interface{}{
 				{"entity_id": "app-1"},
 				{"entity_id": "app-2"},
@@ -858,6 +858,22 @@ func (suite *InboundClientStoreTestSuite) TestGetEntityIDsByReference_Flow() {
 		suite.Equal(2, total)
 		suite.Equal([]string{"app-1", "app-2"}, ids)
 	})
+}
+
+func (suite *InboundClientStoreTestSuite) TestGetEntityIDsByReference_AllowedAgentType() {
+	suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+	suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByAllowedAgentTypeCount,
+		"support-agents", testServerID).
+		Return([]map[string]interface{}{{"total": int64(1)}}, nil).Once()
+	suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByAllowedAgentType,
+		"support-agents", testServerID, 10, 0).
+		Return([]map[string]interface{}{{"entity_id": "app-1"}}, nil).Once()
+
+	ids, total, err := suite.store.GetEntityIDsByReference(
+		context.Background(), resourcedependency.ResourceTypeAgentType, "support-agents", 10, 0)
+	suite.NoError(err)
+	suite.Equal(1, total)
+	suite.Equal([]string{"app-1"}, ids)
 }
 
 func (suite *InboundClientStoreTestSuite) TestGetEntityIDsByReference_UnknownTypeSkipsDB() {
@@ -872,7 +888,7 @@ func (suite *InboundClientStoreTestSuite) TestGetEntityIDsByReference_UnknownTyp
 func (suite *InboundClientStoreTestSuite) TestSubjectAttribute_RoundTrip() {
 	mapping := map[string]string{"employee": "email", "customer": "username"}
 
-	propertiesBytes, _, _, _, _, _, _, _, err := marshalInboundClient(inboundmodel.InboundClient{
+	propertiesBytes, _, _, _, _, _, _, _, _, err := marshalInboundClient(inboundmodel.InboundClient{
 		SubjectAttribute: mapping,
 	})
 	suite.Require().NoError(err)

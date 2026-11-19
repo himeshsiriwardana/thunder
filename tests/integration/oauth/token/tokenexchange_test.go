@@ -27,14 +27,7 @@ const (
 	tokenExchangeTestUser     = "te_test_user"
 	tokenExchangeTestPassword = "TePassword123!"
 	tokenExchangeTestEmail    = "te_test@example.com"
-	tokenExchangeMockOIDCPort = 8094
 	tokenExchangeRedirectURI  = "https://localhost:3000"
-	// The server caches an issuer's JWKS by URL, so a second mock in the same run, which signs with a
-	// new key, needs its own port.
-	tokenExchangeActMockOIDCPort = 8104
-	// tokenExchangeSecondMockOIDCPort is a further external IdP address, for a test that must not reuse
-	// the first one's cached keys. No other suite binds it.
-	tokenExchangeSecondMockOIDCPort = 8105
 )
 
 type TokenExchangeTestSuite struct {
@@ -148,24 +141,8 @@ func (ts *TokenExchangeTestSuite) createTestOrganizationUnit() string {
 		"parent":      nil,
 	}
 
-	ouJSON, err := json.Marshal(ouData)
-	ts.Require().NoError(err, "Failed to marshal OU data")
-
-	ouReq, err := http.NewRequest("POST", testutils.TestServerURL+"/organization-units", bytes.NewReader(ouJSON))
-	ts.Require().NoError(err, "Failed to create OU request")
-	ouReq.Header.Set("Content-Type", "application/json")
-
-	ouResp, err := ts.client.Do(ouReq)
-	ts.Require().NoError(err, "Failed to send OU request")
-	defer ouResp.Body.Close()
-
-	ts.Require().Equal(http.StatusCreated, ouResp.StatusCode, "Failed to create OU")
-
-	var ouRespData map[string]interface{}
-	err = json.NewDecoder(ouResp.Body).Decode(&ouRespData)
-	ts.Require().NoError(err, "Failed to parse OU response")
-
-	ouID := ouRespData["id"].(string)
+	ouID, err := testutils.ImportRootOrganizationUnit(ouData)
+	ts.Require().NoError(err, "Failed to create OU")
 	ts.T().Logf("Created test organization unit with ID: %s", ouID)
 
 	return ouID
@@ -579,7 +556,7 @@ func (ts *TokenExchangeTestSuite) TestTokenExchange_SpentAssertionCannotComplete
 func (ts *TokenExchangeTestSuite) TestTokenExchange_ExternalIDP_WithTrustedTokenAudience() {
 	const externalSubject = "external-oidc-subject"
 
-	resp, statusCode := ts.exchangeExternalToken(tokenExchangeMockOIDCPort, externalSubject)
+	resp, statusCode := ts.exchangeExternalToken(externalSubject)
 	ts.Equal(http.StatusOK, statusCode)
 	ts.NotEmpty(resp.AccessToken, "Access token should be present")
 	ts.Equal("urn:ietf:params:oauth:token-type:access_token", resp.IssuedTokenType)
@@ -615,21 +592,22 @@ func (ts *TokenExchangeTestSuite) TestTokenExchange_ExternalSubjectIsNotALocalAc
 	ts.Require().Equal("COMPLETE", flowResult.Step.FlowStatus, "the local user must be suspended")
 
 	// Its own IdP address: the server caches an issuer's keys, and the mock mints new ones per start.
-	resp, statusCode := ts.exchangeExternalToken(tokenExchangeSecondMockOIDCPort, localID)
+	resp, statusCode := ts.exchangeExternalToken(localID)
 	ts.Require().Equal(http.StatusOK, statusCode, "local governance must not judge an external subject: %+v", resp)
 	ts.Require().NotEmpty(resp.AccessToken)
 }
 
-// exchangeExternalToken obtains an ID token for subject from a mock external IdP on port that this
-// server trusts for token exchange, and exchanges it.
-func (ts *TokenExchangeTestSuite) exchangeExternalToken(port int, subject string) (*TokenExchangeResponse, int) {
+// exchangeExternalToken obtains an ID token for subject from a new mock external IdP that this
+// server trusts for token exchange, and exchanges it. Each IdP has its own issuer URL, so no test
+// reuses another's cached keys.
+func (ts *TokenExchangeTestSuite) exchangeExternalToken(subject string) (*TokenExchangeResponse, int) {
 	const (
 		externalClientID     = "external-oidc-client-id"
 		externalClientSecret = "mock-oidc-secret"
 		redirectURI          = "https://localhost:3000/callback"
 	)
 
-	mockOIDCServer, err := testutils.NewMockOIDCServer(port, externalClientID, externalClientSecret)
+	mockOIDCServer, err := testutils.NewMockOIDCServer(externalClientID, externalClientSecret)
 	ts.Require().NoError(err, "Failed to create mock OIDC server")
 
 	mockOIDCServer.AddUser(&testutils.OIDCUserInfo{
@@ -639,7 +617,6 @@ func (ts *TokenExchangeTestSuite) exchangeExternalToken(port int, subject string
 		Name:          "External User",
 	})
 
-	err = mockOIDCServer.Start()
 	ts.Require().NoError(err, "Failed to start mock OIDC server")
 	defer func() {
 		if stopErr := mockOIDCServer.Stop(); stopErr != nil {
@@ -694,8 +671,7 @@ func (ts *TokenExchangeTestSuite) TestTokenExchange_ExternalSubjectActNotCarried
 		redirectURI          = "https://localhost:3000/callback"
 	)
 
-	mockOIDCServer, err := testutils.NewMockOIDCServer(
-		tokenExchangeActMockOIDCPort, externalClientID, externalClientSecret)
+	mockOIDCServer, err := testutils.NewMockOIDCServer(externalClientID, externalClientSecret)
 	ts.Require().NoError(err, "Failed to create mock OIDC server")
 
 	mockOIDCServer.AddUser(&testutils.OIDCUserInfo{
@@ -704,7 +680,6 @@ func (ts *TokenExchangeTestSuite) TestTokenExchange_ExternalSubjectActNotCarried
 		Custom: map[string]interface{}{"act": map[string]interface{}{"sub": "external-agent"}},
 	})
 
-	err = mockOIDCServer.Start()
 	ts.Require().NoError(err, "Failed to start mock OIDC server")
 	defer func() {
 		if stopErr := mockOIDCServer.Stop(); stopErr != nil {

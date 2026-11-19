@@ -386,7 +386,7 @@ func (suite *FlowVariablesSharingTestSuite) TestTheFlowReadsNeedNoOrganizationUn
 	status, body := suite.send(http.MethodGet, flowsEndpoint+"/"+flowID, nil)
 	suite.Require().Equal(http.StatusOK, status, string(body))
 	flow := suite.decode(body)
-	suite.NotContains(flow, "isOwnedByOU", "the whole definition, as it is read without an organization unit")
+	suite.Equal(true, flow["isOwnedByOU"], "the whole definition, read in the unit that owns it")
 	suite.Len(flow["nodes"], 7)
 
 	status, body = suite.send(http.MethodGet, flowsEndpoint+"?limit=100", nil)
@@ -486,7 +486,7 @@ func (suite *FlowVariablesSharingTestSuite) TestAUnitSeesWhatWasSharedWithItAndN
 	suite.Require().NotNil(found, "the shared flow is listed for the child")
 	suite.Equal(false, found["isOwnedByOU"])
 	suite.Equal(true, found["isReadOnly"])
-	suite.Equal(suite.parentOU, found["ouId"], "the owner's, not the requested one")
+	suite.Equal(suite.childOU, found["ouId"], "the requested unit's, not the owner's")
 	suite.Contains(found, "activeVersion")
 	suite.Contains(found, "createdAt")
 
@@ -495,6 +495,7 @@ func (suite *FlowVariablesSharingTestSuite) TestAUnitSeesWhatWasSharedWithItAndN
 	suite.Require().Equal(http.StatusOK, status, string(body))
 	flow := suite.decode(body)
 	suite.Equal(false, flow["isOwnedByOU"])
+	suite.Equal(suite.childOU, flow["ouId"], "the requested unit's, not the owner's")
 	suite.NotContains(flow, "nodes")
 	byID := map[string]map[string]interface{}{}
 	for _, v := range flow["variables"].([]interface{}) {

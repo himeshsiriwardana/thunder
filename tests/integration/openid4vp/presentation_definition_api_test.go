@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
@@ -36,6 +38,12 @@ const (
 	codeDefinitionEmptyClaimName    = "VP-2008"
 	codeDefinitionDuplicateClaim    = "VP-2009"
 
+	codeDefinitionEmptyTrustedAuthorityName          = "VP-2011"
+	codeDefinitionDuplicateTrustedAuthority          = "VP-2012"
+	codeDefinitionInvalidTrustedAuthorityCertificate = "VP-2013"
+	codeDefinitionExpiredTrustedAuthorityCertificate = "VP-2014"
+	codeDefinitionTrustedIssuerWithoutAuthorities    = "VP-2016"
+
 	// Declarative (file-backed) definitions seeded from
 	// resources/declarative_resources/presentation_definitions. They are
 	// immutable: the management API must reject updates and deletes.
@@ -58,6 +66,10 @@ type PresentationDefinitionAPITestSuite struct {
 	suite.Suite
 	ouID      string
 	createdID []string
+	// certA, certB and certExpired are PEM certificates used as trusted authorities.
+	certA       string
+	certB       string
+	certExpired string
 }
 
 // TestPresentationDefinitionAPITestSuite is the single entrypoint that runs every Test* method.
@@ -69,6 +81,14 @@ func (ts *PresentationDefinitionAPITestSuite) SetupSuite() {
 	ouID, err := testutils.CreateOrganizationUnit(crudDefinitionOU)
 	ts.Require().NoError(err, "create test OU")
 	ts.ouID = ouID
+
+	validUntil := time.Now().Add(24 * time.Hour)
+	ts.certA, err = testutils.NewSelfSignedCertificatePEM("Integration Root A", validUntil)
+	ts.Require().NoError(err)
+	ts.certB, err = testutils.NewSelfSignedCertificatePEM("Integration Root B", validUntil)
+	ts.Require().NoError(err)
+	ts.certExpired, err = testutils.NewSelfSignedCertificatePEM("Integration Expired Root", time.Now().Add(-time.Hour))
+	ts.Require().NoError(err)
 }
 
 func (ts *PresentationDefinitionAPITestSuite) TearDownSuite() {
@@ -161,7 +181,9 @@ func (ts *PresentationDefinitionAPITestSuite) baseDefinition(handle string) test
 		OptionalClaims:       []string{"email"},
 		ClaimValues:          map[string][]string{"country": {"LK", "US"}},
 		EnforceTrustedIssuer: &enforceTrustedIssuer,
-		TrustedAuthorities:   []string{"integration-test-anchor"},
+		TrustedAuthorities: []testutils.TrustedAuthority{
+			{Name: "integration-test-anchor", Certificate: ts.certA},
+		},
 	}
 }
 
@@ -170,6 +192,8 @@ func (ts *PresentationDefinitionAPITestSuite) baseDefinition(handle string) test
 func (ts *PresentationDefinitionAPITestSuite) TestCreateAndGet() {
 	res, created := ts.createDefinition(ts.baseDefinition(crudDefinitionHandle))
 	ts.Require().Equalf(http.StatusCreated, res.StatusCode, "create: %s", string(res.Body))
+	// Trusted authority certificates are write-only: neither the create nor the read returns them.
+	ts.NotContains(string(res.Body), "BEGIN CERTIFICATE")
 
 	id, _ := created["id"].(string)
 	ts.Require().NotEmpty(id, "created id missing")
@@ -199,6 +223,7 @@ func (ts *PresentationDefinitionAPITestSuite) TestCreateAndGet() {
 	authorities, ok := fetched["trustedAuthorities"].([]any)
 	ts.Require().Truef(ok, "trustedAuthorities missing: %s", string(getRes.Body))
 	ts.Equal([]any{"integration-test-anchor"}, authorities)
+	ts.NotContains(string(getRes.Body), "BEGIN CERTIFICATE")
 
 	claimValues, ok := fetched["claimValues"].(map[string]any)
 	ts.Require().Truef(ok, "claimValues missing: %s", string(getRes.Body))
@@ -254,8 +279,8 @@ vct: https://credentials.thunderid.local/DeclarativeInvalidOU
 		ts.Assert().NoError(testutils.ObtainAdminAccessToken())
 	}()
 
-	err := testutils.RestartServerWithResourcesFile(resourcesPath)
-	ts.Require().Error(err)
+	ts.Require().NoError(testutils.StartServerExpectingExit(30*time.Second, "-resources="+resourcesPath),
+		"the server must refuse the invalid resources file and exit")
 }
 
 // TestStoreModesLoadDeclarativeDefinitions verifies each supported startup
@@ -333,7 +358,9 @@ func (ts *PresentationDefinitionAPITestSuite) TestUpdate() {
 	updated.MandatoryClaims = []string{"email"}
 	updated.OptionalClaims = nil
 	updated.EnforceTrustedIssuer = &enforceTrustedIssuer
-	updated.TrustedAuthorities = []string{"anchor-one", "anchor-two"}
+	updated.TrustedAuthorities = []testutils.TrustedAuthority{
+		{Name: "integration-test-anchor"}, {Name: "anchor-two", Certificate: ts.certB},
+	}
 
 	updateRes := ts.definitionRequest(http.MethodPut, definitionAPIBasePath+"/"+id, updated)
 	ts.Require().Equalf(http.StatusOK, updateRes.StatusCode, "update: %s", string(updateRes.Body))
@@ -358,7 +385,40 @@ func (ts *PresentationDefinitionAPITestSuite) TestUpdate() {
 
 	authorities, ok := fetched["trustedAuthorities"].([]any)
 	ts.Require().True(ok, "trustedAuthorities missing after update")
-	ts.Equal([]any{"anchor-one", "anchor-two"}, authorities)
+	ts.Equal([]any{"integration-test-anchor", "anchor-two"}, authorities)
+}
+
+// TestUpdate_TrustedAuthorities verifies a trusted authority named without a certificate keeps the
+// stored one, an omitted one is removed, and a name with no stored certificate is rejected.
+func (ts *PresentationDefinitionAPITestSuite) TestUpdate_TrustedAuthorities() {
+	def := ts.baseDefinition("pd_crud_trusted_authorities")
+	def.TrustedAuthorities = []testutils.TrustedAuthority{
+		{Name: "root-a", Certificate: ts.certA}, {Name: "root-b", Certificate: ts.certB},
+	}
+	res, created := ts.createDefinition(def)
+	ts.Require().Equalf(http.StatusCreated, res.StatusCode, "create: %s", string(res.Body))
+	path := definitionAPIBasePath + "/" + created["id"].(string)
+
+	def.TrustedAuthorities = []testutils.TrustedAuthority{{Name: "root-a"}}
+	updateRes := ts.definitionRequest(http.MethodPut, path, def)
+	ts.Require().Equalf(http.StatusOK, updateRes.StatusCode, "update: %s", string(updateRes.Body))
+	ts.Equal([]any{"root-a"}, ts.decode(updateRes.Body)["trustedAuthorities"])
+
+	getRes := ts.definitionRequest(http.MethodGet, path, nil)
+	ts.Require().Equal(http.StatusOK, getRes.StatusCode)
+	ts.Equal([]any{"root-a"}, ts.decode(getRes.Body)["trustedAuthorities"])
+
+	// root-b was removed, so naming it without a certificate has nothing to keep.
+	def.TrustedAuthorities = []testutils.TrustedAuthority{{Name: "root-a"}, {Name: "root-b"}}
+	rejected := ts.definitionRequest(http.MethodPut, path, def)
+	ts.Equalf(http.StatusBadRequest, rejected.StatusCode, "body: %s", string(rejected.Body))
+	ts.Equal(codeDefinitionInvalidTrustedAuthorityCertificate, ts.errorCodeOf(rejected.Body))
+
+	// Removing every trusted authority while enforcing issuer trust is rejected.
+	def.TrustedAuthorities = nil
+	rejected = ts.definitionRequest(http.MethodPut, path, def)
+	ts.Equalf(http.StatusBadRequest, rejected.StatusCode, "body: %s", string(rejected.Body))
+	ts.Equal(codeDefinitionTrustedIssuerWithoutAuthorities, ts.errorCodeOf(rejected.Body))
 }
 
 // TestUpdateCanChangeOUID verifies updates continue to validate and persist a
@@ -370,13 +430,19 @@ func (ts *PresentationDefinitionAPITestSuite) TestUpdateCanChangeOUID() {
 	}
 	secondOUID, err := testutils.CreateOrganizationUnit(secondOU)
 	ts.Require().NoError(err, "create second test OU")
+	// The resource is deleted before the organization unit it moved to, which cannot be deleted while it
+	// holds the resource.
+	var id string
 	defer func() {
+		if id != "" {
+			ts.Require().NoError(testutils.DeletePresentationDefinition(id))
+		}
 		ts.Require().NoError(testutils.DeleteOrganizationUnit(secondOUID))
 	}()
 
 	res, created := ts.createDefinition(ts.baseDefinition("pd_crud_change_ou"))
 	ts.Require().Equalf(http.StatusCreated, res.StatusCode, "create: %s", string(res.Body))
-	id, _ := created["id"].(string)
+	id, _ = created["id"].(string)
 
 	updated := ts.baseDefinition("pd_crud_change_ou")
 	updated.OUID = secondOUID
@@ -426,7 +492,7 @@ func (ts *PresentationDefinitionAPITestSuite) TestCreate_RequiresOUID() {
 	})
 
 	ts.Equalf(http.StatusBadRequest, res.StatusCode, "create: %s", string(res.Body))
-	ts.Equal(codeDefinitionInvalidRequest, ts.errorCodeOf(res.Body))
+	ts.Equal(codeDefinitionInvalidOU, ts.errorCodeOf(res.Body))
 }
 
 // TestUpdate_RequiresOUID verifies that an output-only OU handle cannot select
@@ -443,7 +509,7 @@ func (ts *PresentationDefinitionAPITestSuite) TestUpdate_RequiresOUID() {
 	})
 
 	ts.Equalf(http.StatusBadRequest, updateRes.StatusCode, "update: %s", string(updateRes.Body))
-	ts.Equal(codeDefinitionInvalidRequest, ts.errorCodeOf(updateRes.Body))
+	ts.Equal(codeDefinitionInvalidOU, ts.errorCodeOf(updateRes.Body))
 }
 
 // TestDelete verifies a deleted definition is no longer readable, and that
@@ -528,7 +594,7 @@ func (ts *PresentationDefinitionAPITestSuite) TestCreate_ValidationErrors() {
 			mutate: func(d *testutils.PresentationDefinition) {
 				d.OUID = ""
 			},
-			wantCode: codeDefinitionInvalidRequest,
+			wantCode: codeDefinitionInvalidOU,
 		},
 		{
 			name: "empty claim name",
@@ -565,6 +631,50 @@ func (ts *PresentationDefinitionAPITestSuite) TestCreate_ValidationErrors() {
 				d.RequestedClaims = []string{"given_name", "given_name"}
 			},
 			wantCode: codeDefinitionDuplicateClaim,
+		},
+		{
+			name: "trusted authority without certificate",
+			mutate: func(d *testutils.PresentationDefinition) {
+				d.TrustedAuthorities = []testutils.TrustedAuthority{{Name: "root-a"}}
+			},
+			wantCode: codeDefinitionInvalidTrustedAuthorityCertificate,
+		},
+		{
+			name: "trusted authority with invalid certificate",
+			mutate: func(d *testutils.PresentationDefinition) {
+				d.TrustedAuthorities = []testutils.TrustedAuthority{{Name: "root-a", Certificate: "not a pem"}}
+			},
+			wantCode: codeDefinitionInvalidTrustedAuthorityCertificate,
+		},
+		{
+			name: "trusted authority with expired certificate",
+			mutate: func(d *testutils.PresentationDefinition) {
+				d.TrustedAuthorities = []testutils.TrustedAuthority{{Name: "old", Certificate: ts.certExpired}}
+			},
+			wantCode: codeDefinitionExpiredTrustedAuthorityCertificate,
+		},
+		{
+			name: "trusted authority without name",
+			mutate: func(d *testutils.PresentationDefinition) {
+				d.TrustedAuthorities = []testutils.TrustedAuthority{{Name: " ", Certificate: ts.certA}}
+			},
+			wantCode: codeDefinitionEmptyTrustedAuthorityName,
+		},
+		{
+			name: "duplicate trusted authority name",
+			mutate: func(d *testutils.PresentationDefinition) {
+				d.TrustedAuthorities = []testutils.TrustedAuthority{
+					{Name: "root", Certificate: ts.certA}, {Name: "root", Certificate: ts.certB},
+				}
+			},
+			wantCode: codeDefinitionDuplicateTrustedAuthority,
+		},
+		{
+			name: "enforced issuer trust without trusted authorities",
+			mutate: func(d *testutils.PresentationDefinition) {
+				d.TrustedAuthorities = nil
+			},
+			wantCode: codeDefinitionTrustedIssuerWithoutAuthorities,
 		},
 	}
 
@@ -625,6 +735,10 @@ func (ts *PresentationDefinitionAPITestSuite) TestDeclarativeVisibility() {
 	claimValues, ok := fetched["claimValues"].(map[string]any)
 	ts.Require().Truef(ok, "claimValues missing: %s", string(res.Body))
 	ts.Equal([]any{"LK", "US"}, claimValues["country"])
+
+	// The declared trusted authority loads, and its certificate is not returned.
+	ts.Equal([]any{"decl-issuer-ca"}, fetched["trustedAuthorities"])
+	ts.NotContains(string(res.Body), "BEGIN CERTIFICATE")
 }
 
 // TestDeclarativeOUHandleResolvesToOUID verifies startup resolves the declarative
@@ -718,4 +832,59 @@ func (ts *PresentationDefinitionAPITestSuite) TestUnauthenticated() {
 	defer resp.Body.Close()
 
 	ts.Equal(http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestProjectScope covers presentation definitions in projects on a server without projects: the server keeps
+// the project unchecked and places a definition without an organization unit in the system one, lists a
+// project's definitions, keeps or moves the project on update, and refuses a project ID longer than the column.
+func (ts *PresentationDefinitionAPITestSuite) TestProjectScope() {
+	const (
+		projectA = "019a0000-0000-7000-8000-0000000000a1"
+		projectB = "019a0000-0000-7000-8000-0000000000b2"
+	)
+	systemOUID, err := testutils.FindBootstrapOUID()
+	ts.Require().NoError(err)
+
+	def := testutils.PresentationDefinition{Handle: "it-vp-project-scoped", VCT: crudDefinitionVCT, ProjectID: projectA}
+	res, created := ts.createDefinition(def)
+	ts.Require().Equalf(http.StatusCreated, res.StatusCode, "create: %s", string(res.Body))
+	id, _ := created["id"].(string)
+	ts.Equal(systemOUID, created["ouId"], "a definition in a project without an organization unit is in the system one")
+	ts.Equal(projectA, created["projectId"])
+
+	ts.Equal([]string{id}, ts.listIDs("?projectId="+projectA))
+	ts.Empty(ts.listIDs("?projectId=" + projectB))
+	ts.Empty(ts.listIDs("?projectId="), "an empty project lists no definition")
+
+	def.ProjectID = ""
+	res = ts.definitionRequest(http.MethodPut, definitionAPIBasePath+"/"+id, def)
+	ts.Require().Equalf(http.StatusOK, res.StatusCode, "update: %s", string(res.Body))
+	ts.Equal(projectA, ts.decode(res.Body)["projectId"], "an update without a project keeps it")
+
+	def.ProjectID = projectB
+	res = ts.definitionRequest(http.MethodPut, definitionAPIBasePath+"/"+id, def)
+	ts.Require().Equalf(http.StatusOK, res.StatusCode, "update: %s", string(res.Body))
+	ts.Equal(projectB, ts.decode(res.Body)["projectId"])
+	ts.Equal([]string{id}, ts.listIDs("?projectId="+projectB))
+
+	overlong := testutils.PresentationDefinition{Handle: "it-vp-project-overlong", VCT: crudDefinitionVCT,
+		ProjectID: strings.Repeat("p", 37)}
+	res, _ = ts.createDefinition(overlong)
+	ts.Equal(http.StatusBadRequest, res.StatusCode)
+	ts.Equal("VP-2018", ts.errorCodeOf(res.Body))
+}
+
+// listIDs lists presentation definitions with the given query and returns their IDs.
+func (ts *PresentationDefinitionAPITestSuite) listIDs(query string) []string {
+	res := ts.definitionRequest(http.MethodGet, definitionAPIBasePath+query, nil)
+	ts.Require().Equalf(http.StatusOK, res.StatusCode, "list: %s", string(res.Body))
+	var summaries []struct {
+		ID string `json:"id"`
+	}
+	ts.Require().NoError(json.Unmarshal(res.Body, &summaries))
+	ids := []string{}
+	for _, summary := range summaries {
+		ids = append(ids, summary.ID)
+	}
+	return ids
 }

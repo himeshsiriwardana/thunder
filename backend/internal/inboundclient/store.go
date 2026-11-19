@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	dbmodel "github.com/thunder-id/thunderid/internal/system/database/model"
@@ -94,7 +95,7 @@ func marshalInboundClient(c inboundmodel.InboundClient) (
 	propertiesBytes interface{},
 	isRegistrationEnabledStr string,
 	isRecoveryEnabledStr string,
-	recoveryFlowID, signOutFlowID, registrationFlowID, themeID, layoutID interface{},
+	deviceGrantFlowID, recoveryFlowID, signOutFlowID, registrationFlowID, themeID, layoutID interface{},
 	err error,
 ) {
 	blob := inboundClientJSONBlob{
@@ -109,12 +110,15 @@ func marshalInboundClient(c inboundmodel.InboundClient) (
 	}
 	propertiesBytes, err = marshalNullableJSON(blob)
 	if err != nil {
-		return nil, "", "", nil, nil, nil, nil, nil, fmt.Errorf("failed to marshal properties: %w", err)
+		return nil, "", "", nil, nil, nil, nil, nil, nil, fmt.Errorf("failed to marshal properties: %w", err)
 	}
 
 	isRegistrationEnabledStr = utils.BoolToNumString(c.IsRegistrationFlowEnabled)
 	isRecoveryEnabledStr = utils.BoolToNumString(c.IsRecoveryFlowEnabled)
 
+	if c.DeviceGrantFlowID != "" {
+		deviceGrantFlowID = c.DeviceGrantFlowID
+	}
 	if c.RecoveryFlowID != "" {
 		recoveryFlowID = c.RecoveryFlowID
 	}
@@ -132,7 +136,7 @@ func marshalInboundClient(c inboundmodel.InboundClient) (
 	}
 
 	return propertiesBytes, isRegistrationEnabledStr, isRecoveryEnabledStr,
-		recoveryFlowID, signOutFlowID, registrationFlowID, themeID, layoutID, nil
+		deviceGrantFlowID, recoveryFlowID, signOutFlowID, registrationFlowID, themeID, layoutID, nil
 }
 
 // scope returns the deployment id this request acts for, falling back to the configured
@@ -148,14 +152,15 @@ func (st *store) CreateInboundClient(ctx context.Context, client inboundmodel.In
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
 
-	propsBytes, isRegEnabledStr, isRecoveryEnabledStr, recoveryFlowID,
-		signOutFlowID, registrationFlowID, themeID, layoutID, marshalErr := marshalInboundClient(client)
+	propsBytes, isRegEnabledStr, isRecoveryEnabledStr, deviceGrantFlowID, recoveryFlowID,
+		signOutFlowID, registrationFlowID, themeID, layoutID, marshalErr :=
+		marshalInboundClient(client)
 	if marshalErr != nil {
 		return marshalErr
 	}
 
 	_, err = dbClient.ExecuteContext(ctx, queryCreateInboundClient,
-		client.ID, client.AuthFlowID, registrationFlowID, isRegEnabledStr,
+		client.ID, client.AuthFlowID, deviceGrantFlowID, registrationFlowID, isRegEnabledStr,
 		recoveryFlowID, isRecoveryEnabledStr, signOutFlowID,
 		themeID, layoutID, propsBytes, st.scope(ctx))
 	if err != nil {
@@ -298,7 +303,10 @@ func referenceQueries(refType, refID, deploymentID string) (
 			[]interface{}{refID, deploymentID}, true
 	case resourcedependency.ResourceTypeFlow:
 		return queryGetEntityIDsByFlowIDCount, queryGetEntityIDsByFlowID,
-			[]interface{}{refID, refID, refID, refID, deploymentID}, true
+			[]interface{}{refID, refID, refID, refID, refID, deploymentID}, true
+	case resourcedependency.ResourceTypeAgentType:
+		return queryGetEntityIDsByAllowedAgentTypeCount, queryGetEntityIDsByAllowedAgentType,
+			[]interface{}{refID, deploymentID}, true
 	default:
 		return dbmodel.DBQuery{}, dbmodel.DBQuery{}, nil, false
 	}
@@ -313,8 +321,10 @@ func clientReferences(c *inboundmodel.InboundClient, refType, refID string) bool
 	case resourcedependency.ResourceTypeLayout:
 		return c.LayoutID == refID
 	case resourcedependency.ResourceTypeFlow:
-		return c.AuthFlowID == refID || c.RegistrationFlowID == refID || c.RecoveryFlowID == refID ||
-			c.SignOutFlowID == refID
+		return c.AuthFlowID == refID || c.DeviceGrantFlowID == refID || c.RegistrationFlowID == refID ||
+			c.RecoveryFlowID == refID || c.SignOutFlowID == refID
+	case resourcedependency.ResourceTypeAgentType:
+		return slices.Contains(c.AllowedAgentTypes, refID)
 	default:
 		return false
 	}
@@ -348,14 +358,15 @@ func (st *store) UpdateInboundClient(ctx context.Context, client inboundmodel.In
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
 
-	propsBytes, isRegEnabledStr, isRecoveryEnabledStr, recoveryFlowID,
-		signOutFlowID, registrationFlowID, themeID, layoutID, marshalErr := marshalInboundClient(client)
+	propsBytes, isRegEnabledStr, isRecoveryEnabledStr, deviceGrantFlowID, recoveryFlowID,
+		signOutFlowID, registrationFlowID, themeID, layoutID, marshalErr :=
+		marshalInboundClient(client)
 	if marshalErr != nil {
 		return marshalErr
 	}
 
 	rowsAffected, err := dbClient.ExecuteContext(ctx, queryUpdateInboundClientByEntityID,
-		client.ID, client.AuthFlowID, registrationFlowID, isRegEnabledStr,
+		client.ID, client.AuthFlowID, deviceGrantFlowID, registrationFlowID, isRegEnabledStr,
 		recoveryFlowID, isRecoveryEnabledStr, signOutFlowID,
 		themeID, layoutID, propsBytes, st.scope(ctx))
 	if err != nil {
@@ -463,6 +474,7 @@ func buildInboundClientFromRow(ctx context.Context, row map[string]interface{}) 
 	}
 
 	authFlowID := parseStringColumn(row, "auth_flow_id")
+	deviceGrantFlowID := parseStringColumn(row, "device_grant_flow_id")
 	regFlowID := parseStringColumn(row, "registration_flow_id")
 	recoveryFlowID := parseStringColumn(row, "recovery_flow_id")
 	signOutFlowID := parseStringColumn(row, "signout_flow_id")
@@ -482,6 +494,7 @@ func buildInboundClientFromRow(ctx context.Context, row map[string]interface{}) 
 	client := &inboundmodel.InboundClient{
 		ID:                        entityID,
 		AuthFlowID:                authFlowID,
+		DeviceGrantFlowID:         deviceGrantFlowID,
 		RegistrationFlowID:        regFlowID,
 		IsRegistrationFlowEnabled: isRegistrationFlowEnabled,
 		RecoveryFlowID:            recoveryFlowID,

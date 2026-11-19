@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {Chip, DataGrid, IconButton, ListingTable, Tooltip} from '@wso2/oxygen-ui';
-import {Eye, Pencil, Trash2, Workflow} from '@wso2/oxygen-ui-icons-react';
+import {Eye, Pencil, Trash2} from '@wso2/oxygen-ui-icons-react';
 import {useMemo, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
+import {useDeployStatusSource} from '../ResourceDeployStatus/DeployStatusContext';
+import ResourceDeployStatus from '../ResourceDeployStatus/ResourceDeployStatus';
 
 /**
  * The fields of a flow a flow list shows.
@@ -13,7 +15,6 @@ import {useTranslation} from 'react-i18next';
  */
 export interface FlowListRow {
   id: string;
-  handle: string;
   name: string;
   flowType: string;
   updatedAt: string;
@@ -44,6 +45,8 @@ export default function useFlowListColumns<T extends FlowListRow>({
   onDelete = undefined,
 }: FlowListColumnsOptions<T>): DataGrid.GridColDef<T>[] {
   const {t} = useTranslation();
+  // Where flows are along the deploy path is shown only where the app says so.
+  const deploys = useDeployStatusSource() !== null;
 
   return useMemo(
     (): DataGrid.GridColDef<T>[] => [
@@ -52,21 +55,21 @@ export default function useFlowListColumns<T extends FlowListRow>({
         headerName: t('flows:listing.columns.name', 'Name'),
         flex: 1,
         minWidth: 220,
-        renderCell: (params: DataGrid.GridRenderCellParams<T>): JSX.Element => (
-          <ListingTable.CellIcon
-            icon={<Workflow size={20} />}
-            primary={params.row.name}
-            secondary={params.row.handle}
-            sx={{width: '100%'}}
-          />
-        ),
       },
       {
         field: 'flowType',
         headerName: t('flows:listing.columns.flowType', 'Type'),
         width: 180,
         renderCell: (params: DataGrid.GridRenderCellParams<T>): JSX.Element => (
-          <Chip label={params.row.flowType} size="small" variant="outlined" />
+          <Chip
+            label={params.row.flowType}
+            size="small"
+            color="primary"
+            variant="outlined"
+            sx={{
+              fontSize: '0.7rem',
+            }}
+          />
         ),
       },
       {
@@ -84,6 +87,19 @@ export default function useFlowListColumns<T extends FlowListRow>({
           });
         },
       },
+      ...(deploys
+        ? [
+            {
+              field: 'deployment',
+              headerName: t('flows:listing.columns.deployment', 'Deployment'),
+              width: 170,
+              sortable: false,
+              renderCell: (params: DataGrid.GridRenderCellParams<T>): JSX.Element => (
+                <ResourceDeployStatus resourceType="flow" id={params.row.id} tabIndex={params.tabIndex} />
+              ),
+            } satisfies DataGrid.GridColDef<T>,
+          ]
+        : []),
       {
         field: 'actions',
         headerName: t('flows:listing.columns.actions', 'Actions'),
@@ -98,8 +114,8 @@ export default function useFlowListColumns<T extends FlowListRow>({
             {params.row.isReadOnly ? (
               <Tooltip title={t('common:actions.view', 'View')}>
                 <IconButton
-                  size="small"
                   aria-label={t('common:actions.view', 'View')}
+                  size="small"
                   onClick={(e) => {
                     e.stopPropagation();
                     onOpen(params.row);
@@ -112,8 +128,8 @@ export default function useFlowListColumns<T extends FlowListRow>({
               <>
                 <Tooltip title={t('common:actions.edit', 'Edit')}>
                   <IconButton
-                    size="small"
                     aria-label={t('common:actions.edit', 'Edit')}
+                    size="small"
                     onClick={(e) => {
                       e.stopPropagation();
                       onOpen(params.row);
@@ -125,9 +141,9 @@ export default function useFlowListColumns<T extends FlowListRow>({
                 {onDelete && (
                   <Tooltip title={t('common:actions.delete', 'Delete')}>
                     <IconButton
+                      aria-label={t('common:actions.delete', 'Delete')}
                       size="small"
                       color="error"
-                      aria-label={t('common:actions.delete', 'Delete')}
                       onClick={(e) => {
                         e.stopPropagation();
                         onDelete(params.row);
@@ -143,6 +159,6 @@ export default function useFlowListColumns<T extends FlowListRow>({
         ),
       },
     ],
-    [onDelete, onOpen, t],
+    [deploys, onDelete, onOpen, t],
   );
 }

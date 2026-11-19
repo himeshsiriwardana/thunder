@@ -70,7 +70,8 @@ func (suite *CIBAServiceTestSuite) SetupTest() {
 	suite.mockEntityProvider = entityprovidermock.NewEntityProviderInterfaceMock(suite.T())
 	suite.mockResourceSvc = resourcemock.NewResourceServiceInterfaceMock(suite.T())
 	suite.mockAuthzDetails = authzdetailprovidermock.NewAuthorizationDetailProviderMock(suite.T())
-	actorProv := actorprovider.Initialize(suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil, nil)
+	actorProv := actorprovider.Initialize(
+		suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil, nil, nil)
 	suite.service = newCIBAService(suite.mockStore, suite.mockFlowExec,
 		suite.mockJWTService, actorProv, suite.mockResourceSvc, nil, suite.mockAuthzDetails,
 		testhelpers.OAuthConfig())
@@ -715,7 +716,7 @@ func (suite *CIBAServiceTestSuite) TestResolveExpectedAudience_NilApp() {
 	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "", "").Return(nil)
 	suite.mockStore.EXPECT().MarkAuthenticated(
-		mock.Anything, "auth-req-1", testUserID,
+		mock.Anything, "auth-req-1", testUserID, mock.Anything, mock.Anything,
 		mock.AnythingOfType("string"), "", "", "", mock.AnythingOfType("time.Time"),
 		mock.Anything).Return(nil)
 
@@ -869,7 +870,7 @@ func (suite *CIBAServiceTestSuite) TestCallback_Success() {
 	suite.expectAudienceResolution()
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
 	suite.mockStore.EXPECT().MarkAuthenticated(
-		mock.Anything, "auth-req-1", testUserID, mock.AnythingOfType("string"),
+		mock.Anything, "auth-req-1", testUserID, mock.Anything, mock.Anything, mock.AnythingOfType("string"),
 		"cache-1", "urn:acr:pwd", "",
 		mock.MatchedBy(func(authTime time.Time) bool { return authTime.Unix() == iat }),
 		mock.Anything).Return(nil)
@@ -890,9 +891,30 @@ func (suite *CIBAServiceTestSuite) TestCallback_RecordsSessionID() {
 	suite.expectAudienceResolution()
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
 	suite.mockStore.EXPECT().MarkAuthenticated(
-		mock.Anything, "auth-req-1", testUserID, mock.AnythingOfType("string"),
+		mock.Anything, "auth-req-1", testUserID, mock.Anything, mock.Anything, mock.AnythingOfType("string"),
 		"cache-1", "", "sess-1", mock.AnythingOfType("time.Time"),
 		mock.Anything).Return(nil)
+
+	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
+	suite.Nil(cibaErr)
+}
+
+// The authenticated entity's resource ID and category are recorded, so the token issued for the
+// request names its subject without resolving it again.
+func (suite *CIBAServiceTestSuite) TestCallback_RecordsSubjectIdentity() {
+	assertion := buildTestAssertion(map[string]interface{}{
+		"sub":                      testUserID,
+		"sub_id":                   "entity-1",
+		"sub_type":                 "user",
+		"aci":                      "cache-1",
+		"authorization_request_id": "auth-req-1",
+	})
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+	suite.expectAudienceResolution()
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+	suite.mockStore.EXPECT().MarkAuthenticated(
+		mock.Anything, "auth-req-1", testUserID, "entity-1", "user", mock.AnythingOfType("string"),
+		"cache-1", "", "", mock.AnythingOfType("time.Time"), mock.Anything).Return(nil)
 
 	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
 	suite.Nil(cibaErr)
@@ -963,7 +985,8 @@ func (suite *CIBAServiceTestSuite) TestCallback_AudienceResolutionFailureIsAServ
 	suite.mockJWTService.AssertNotCalled(suite.T(), "VerifyJWT", mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything)
 	suite.mockStore.AssertNotCalled(suite.T(), "MarkAuthenticated", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything)
 }
 
 // With server errors reported, a failed client lookup also fails the request, so the polling client
@@ -1101,7 +1124,7 @@ func (suite *CIBAServiceTestSuite) TestCallback_MarkAuthenticatedError() {
 	suite.expectAudienceResolution()
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
 	suite.mockStore.EXPECT().MarkAuthenticated(
-		mock.Anything, "auth-req-1", testUserID, mock.AnythingOfType("string"),
+		mock.Anything, "auth-req-1", testUserID, mock.Anything, mock.Anything, mock.AnythingOfType("string"),
 		"cache-1", "", "", mock.AnythingOfType("time.Time"),
 		mock.Anything).Return(errors.New("db error"))
 
@@ -1125,7 +1148,8 @@ const testEntityID = "entity-abc-123"
 func (suite *CIBAServiceTestSuite) withIssuer() {
 	cfg := testhelpers.OAuthConfig()
 	cfg.JWT.Issuer = testIssuer
-	actorProv := actorprovider.Initialize(suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil, nil)
+	actorProv := actorprovider.Initialize(
+		suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil, nil, nil)
 	suite.service = newCIBAService(suite.mockStore, suite.mockFlowExec,
 		suite.mockJWTService, actorProv, suite.mockResourceSvc, nil, suite.mockAuthzDetails, cfg)
 }
@@ -1377,7 +1401,7 @@ func (suite *CIBAServiceTestSuite) TestHandleCallback_ClassifiesByFlowErrorTypeC
 		suite.expectAudienceResolution()
 		suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
 		suite.mockStore.EXPECT().MarkAuthenticated(
-			mock.Anything, "auth-req-1", testUserID,
+			mock.Anything, "auth-req-1", testUserID, mock.Anything, mock.Anything,
 			mock.AnythingOfType("string"), "", "", "", mock.AnythingOfType("time.Time"),
 			mock.Anything).Return(nil)
 
@@ -1425,7 +1449,8 @@ func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_TransitionsStateBy
 func (suite *CIBAServiceTestSuite) serviceWithServerErrorReporting(enabled bool) CIBAServiceInterface {
 	cfg := testhelpers.OAuthConfig()
 	cfg.OAuth.SendServerErrorsToClient = &enabled
-	actorProv := actorprovider.Initialize(suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil, nil)
+	actorProv := actorprovider.Initialize(
+		suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil, nil, nil)
 	return newCIBAService(suite.mockStore, suite.mockFlowExec,
 		suite.mockJWTService, actorProv, suite.mockResourceSvc, nil, suite.mockAuthzDetails, cfg)
 }
@@ -1770,7 +1795,8 @@ func (suite *CIBAServiceTestSuite) TestCallback_RecordsTheGrantedAuthorizationDe
 	approved[0].Value = json.RawMessage(value)
 	approved[0].Admitted = true
 	suite.mockStore.EXPECT().MarkAuthenticated(mock.Anything, "auth-req-1", testUserID, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything, approved).Return(nil).Once()
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		approved).Return(nil).Once()
 
 	suite.Nil(suite.detailsCallback(map[string]interface{}{
 		oauth2const.ClaimGrantedAuthorizationDetails: approved,
@@ -1779,7 +1805,7 @@ func (suite *CIBAServiceTestSuite) TestCallback_RecordsTheGrantedAuthorizationDe
 
 func (suite *CIBAServiceTestSuite) TestCallback_NoApprovedDetailsGrantsNone() {
 	suite.mockStore.EXPECT().MarkAuthenticated(mock.Anything, "auth-req-1", testUserID, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.MatchedBy(func(d []providers.AuthorizationDetail) bool { return len(d) == 0 })).Return(nil).Once()
 
 	suite.Nil(suite.detailsCallback(map[string]interface{}{
@@ -1806,7 +1832,8 @@ func (suite *CIBAServiceTestSuite) TestCallback_UndecidedDetailsDenyTheRequestWh
 	suite.Require().NotNil(cibaErr)
 	suite.Equal(oauth2const.ErrorAccessDenied, cibaErr.Code)
 	suite.mockStore.AssertNotCalled(suite.T(), "MarkAuthenticated", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything)
 }
 
 // A denial of a request carrying authorization details does not pass the flow's reason to the client.

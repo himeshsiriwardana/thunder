@@ -55,7 +55,7 @@ prepare:
 clean:
 	./build.sh clean $(OS) $(ARCH)
 
-build: build_frontend build_backend build_cp_backend package_samples build_quickstart
+build: build_frontend build_backend package_samples build_quickstart
 
 build_backend:
 	./build.sh build_backend $(OS) $(ARCH)
@@ -95,6 +95,12 @@ test_integration:
 test_integration_cp:
 	INTEGRATION_PLANE=control ./build.sh test_integration "$(OS)" "$(ARCH)" "$(RUN)" "$(PACKAGE)"
 
+# Runs tests/integration/pack against the quickstart pack (build_quickstart): auth-dp, the Data
+# Plane and the Control Plane, as shipped. Needs ports 8090, 8091 and 8095, so it does not run
+# beside test_integration_cp.
+test_integration_pack:
+	INTEGRATION_PLANE=pack ./build.sh test_integration "$(OS)" "$(ARCH)" "$(RUN)" "$(PACKAGE)"
+
 build_with_coverage:
 	@echo "================================================================"
 	@echo "Building with coverage for unit and integration tests..."
@@ -117,6 +123,12 @@ build_with_coverage_only:
 run:
 	./build.sh run $(OS) $(ARCH)
 
+run_dp:
+	./build.sh run_dp $(OS) $(ARCH)
+
+run_cp:
+	./build.sh run_cp $(OS) $(ARCH)
+
 run_backend:
 	./build.sh run_backend $(OS) $(ARCH)
 
@@ -134,6 +146,12 @@ docker-build:
 
 docker-build-latest:
 	docker build -t $(BINARY_NAME):latest .
+
+docker-build-cp:
+	docker build -f Dockerfile.cp -t $(BINARY_NAME)-cp:$(VERSION) .
+
+docker-build-cp-latest:
+	docker build -f Dockerfile.cp -t $(BINARY_NAME)-cp:latest .
 
 docker-build-multiarch:
 	docker buildx build --platform linux/amd64,linux/arm64 -t $(BINARY_NAME):$(VERSION) .
@@ -240,7 +258,7 @@ help:
 	@echo "  all                           - Clean, build, and test the project."
 	@echo "  backend                       - Clean, build, and test only the backend."
 	@echo "  clean                         - Remove build artifacts."
-	@echo "  build                         - Build $(PRODUCT_NAME) (backend + frontend + samples)."
+	@echo "  build                         - Build the Data Plane and quickstart packs, plus the sample apps."
 	@echo "  build_backend                 - Build the backend Go application."
 	@echo "  build_cp_backend              - Build and package the Control Plane server (backend/cmd/cpserver)."
 	@echo "  build_quickstart              - Build and package a combined Control Plane + Data Plane quickstart, pre-wired together."
@@ -252,16 +270,21 @@ help:
 	@echo "  test_unit                     - Run unit tests."
 	@echo "  test_integration              - Run integration tests. Use RUN= for test filter, PACKAGE= for package filter."
 	@echo "  test_integration_cp           - Run the Control Plane integration tests. Needs build_backend and build_cp_backend first."
+	@echo "  test_integration_pack         - Run the quickstart pack integration tests. Needs the quickstart pack (build_quickstart) first."
 	@echo "  build_with_coverage  		   - Build with coverage flags, run unit and integration tests, and generate combined coverage report."
 	@echo "  build_with_coverage_only      - Build with coverage instrumentation (unit tests only, no integration tests)."
 	@echo "  test                          - Run all tests (unit and integration)."
-	@echo "  run                           - Build and run the $(PRODUCT_NAME) server locally."
+	@echo "  run                           - Build and run the quickstart (auth-dp, Data Plane and Control Plane) locally."
+	@echo "  run_dp                        - Build and run the Data Plane and its Admin Console locally."
+	@echo "  run_cp                        - Build and run the Control Plane, its console and auth-dp locally."
 	@echo "  run_backend                   - Build and run the $(PRODUCT_NAME) backend locally."
 	@echo "  debug_backend                 - Build and run the $(PRODUCT_NAME) backend locally in debug mode."
 	@echo "  run_frontend                  - Build and run the frontend applications locally."
 	@echo "  run_docs                      - Run the documentation development server with live reload."
 	@echo "  docker-build                  - Build single-arch Docker image with version tag."
 	@echo "  docker-build-latest           - Build single-arch Docker image with latest tag."
+	@echo "  docker-build-cp               - Build the single-arch Control Plane Docker image with version tag."
+	@echo "  docker-build-cp-latest        - Build the single-arch Control Plane Docker image with latest tag."
 	@echo "  docker-build-multiarch        - Build multi-arch Docker image with version tag."
 	@echo "  docker-build-multiarch-latest - Build multi-arch Docker image with latest tag."
 	@echo "  docker-build-multiarch-push   - Build and push multi-arch images to registry."
@@ -292,16 +315,16 @@ help:
 	@echo "  help                          - Show this help message."
 
 .PHONY: all prepare clean build build_backend build_cp_backend build_quickstart build_frontend build_docs package_samples package_cp package_quickstart run
-.PHONY: docker-build docker-build-latest docker-build-multiarch
+.PHONY: docker-build docker-build-latest docker-build-cp docker-build-cp-latest docker-build-multiarch
 .PHONY: docker-build-multiarch-latest docker-build-multiarch-push
-.PHONY: test_unit test_integration test_integration_cp build_with_coverage build_with_coverage_only test
+.PHONY: test_unit test_integration test_integration_cp test_integration_pack build_with_coverage build_with_coverage_only test
 .PHONY: help go_install_tool
 .PHONY: lint lint_backend lint_frontend lint_docs golangci-lint mockery install-mockery
 .PHONY: tools_build tools_test tools_lint tools_build_cli tools_test_cli tools_lint_cli
 .PHONY: tools_build_i18n_extractor tools_test_i18n_extractor tools_lint_i18n_extractor
 .PHONY: tools_test_cli_e2e tools_checks_cli tools_checks
 .PHONY: verify_mocks format_check test_frontend security_audit test_e2e pr_checks
-.PHONY: run_backend debug_backend run_frontend run_docs
+.PHONY: run_dp run_cp run_backend debug_backend run_frontend run_docs
 
 define go_install_tool
 	cd /tmp && \

@@ -34,15 +34,15 @@ import (
 )
 
 const (
-	idjagAuthzMockIssuerPort = 8103
-	idjagAuthzClientID       = "idjag_authz_mapping_client"
-	idjagAuthzClientSecret   = "idjag_authz_mapping_secret"
-	idjagAuthzAppName        = "IDJAGAuthorizationRuleMappingApp"
-	idjagAuthzAudience       = "https://localhost:8095"
+	idjagAuthzClientID     = "idjag_authz_mapping_client"
+	idjagAuthzClientSecret = "idjag_authz_mapping_secret"
+	idjagAuthzAppName      = "IDJAGAuthorizationRuleMappingApp"
 
 	idjagAuthzRSIdentifier      = "https://idjag-authz-mapping.example.com"
 	idjagAuthzOtherRSIdentifier = "https://idjag-authz-mapping-other.example.com"
 )
+
+var idjagAuthzAudience = testutils.TestServerURL
 
 // IDJAGAuthorizationRuleMappingTestSuite exercises the ID-JAG consumption leg's AuthorizationRuleMapping
 // resolution: the assertion's issuing connection resolves mapped roles/groups/permissions from the
@@ -128,15 +128,14 @@ func (ts *IDJAGAuthorizationRuleMappingTestSuite) SetupSuite() {
 	ts.Require().NoError(err)
 	ts.groupRoleID = groupRoleID
 
-	mockIssuer, err := testutils.NewMockOIDCServer(
-		idjagAuthzMockIssuerPort, "idjag-authz-mapping-client", "idjag-authz-mapping-secret")
+	mockIssuer, err := testutils.NewMockOIDCServer("idjag-authz-mapping-client", "idjag-authz-mapping-secret")
 	ts.Require().NoError(err)
 	ts.mockIssuer = mockIssuer
-	ts.Require().NoError(ts.mockIssuer.Start())
 
 	idpID, err := testutils.CreateIDP(testutils.IDP{
 		Name:        "ID-JAG Authorization Mapping IdP",
 		Description: "Mock external issuer for ID-JAG authorization mapping tests",
+		OUID:        ts.ouID,
 		Type:        "OIDC",
 		Properties: []testutils.IDPProperty{
 			{Name: "issuer", Value: ts.mockIssuer.GetURL()},

@@ -21,7 +21,7 @@ import {
 } from '@thunderid/configure-organization-units';
 import {isRowEmpty, useGetCorsConfig, useUpdateCorsConfig} from '@thunderid/configure-settings';
 import {useGetUserTypes} from '@thunderid/configure-user-types';
-import {useToast} from '@thunderid/contexts';
+import {useProjectScope, useToast} from '@thunderid/contexts';
 import {DefaultTheme, useGetTheme, type Theme} from '@thunderid/design';
 import {useTemplateLiteralResolver} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
@@ -32,7 +32,7 @@ import {ChevronLeft, ChevronRight, Home} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
 import {useState, useCallback, useEffect, useMemo, useRef} from 'react';
 import {useTranslation} from 'react-i18next';
-import {useLocation, useNavigate} from 'react-router';
+import {useNavigate} from 'react-router';
 import useCreateApplication from '../api/useCreateApplication';
 import useGetApplications from '../api/useGetApplications';
 import ConfigureMetadataDocument from '../components/create-application/cimd/ConfigureMetadataDocument';
@@ -66,6 +66,7 @@ import isRedirectCapableTemplate from '../utils/isRedirectCapableTemplate';
 import mergeCorsOrigins from '../utils/mergeCorsOrigins';
 import resolveApplicationType from '../utils/resolveApplicationType';
 import resolveCreationFlow from '../utils/resolveCreationFlow';
+import resolveRedirectUris from '../utils/resolveRedirectUris';
 
 export default function ApplicationCreatePage(): JSX.Element {
   const routes = useApplicationRoutes();
@@ -162,23 +163,38 @@ export default function ApplicationCreatePage(): JSX.Element {
     [t],
   );
   const navigate = useNavigate();
-  const {pathname} = useLocation();
-  const isWelcomeFlow = pathname.startsWith('/welcome');
   const logger = useLogger('ApplicationCreatePage');
   const createApplication = useCreateApplication();
   const {data: userTypesData} = useGetUserTypes();
   const {data: applicationsData} = useGetApplications({limit: 100});
   const {data: corsConfigData} = useGetCorsConfig();
   const updateCorsConfig = useUpdateCorsConfig();
-  const {hasMultipleOUs, isLoading: isOuLoading, ouList} = useHasMultipleOUs();
+  const {projectId} = useProjectScope();
+  // Inside a project the application goes to the system organization unit or one of the project's
+  // own, picked on the organization unit step. The step is offered only when the project has
+  // organization units; without any, the API places the application in the system organization
+  // unit.
+  const isInProject = Boolean(projectId);
+  const ouLookup = useHasMultipleOUs(projectId);
+  const {hasMultipleOUs, isLoading: isOuLoading} = ouLookup;
+  const defaultOuId: string | undefined = isInProject
+    ? ApplicationConstants.SYSTEM_ORGANIZATION_UNIT_ID
+    : ouLookup.ouList[0]?.id;
+  // The organization unit picked for the application inside a project, if any.
+  const pickedProjectOuId: string | undefined = isInProject && hasMultipleOUs ? ouId || undefined : undefined;
 
   const handleBackToTemplates = (): void => {
-    void navigate(isWelcomeFlow ? '/welcome/get-started/applications/types' : '/applications/types');
+    void navigate(routes.applications.types());
   };
 
   // The organization unit whose defaults are offered on the Details step: the picked one when
-  // there are multiple, or the deployment's sole one otherwise.
-  const resolvedOuId: string | undefined = hasMultipleOUs ? ouId || undefined : ouList[0]?.id;
+  // there are multiple, or the deployment's sole one otherwise. Inside a project, the picked organization
+  // unit, or the system one when the project has none to pick from.
+  const resolvedOuId: string | undefined = isInProject
+    ? (pickedProjectOuId ?? defaultOuId)
+    : hasMultipleOUs
+      ? ouId || undefined
+      : defaultOuId;
   const {data: resolvedOrganizationUnit} = useGetOrganizationUnit(resolvedOuId, Boolean(resolvedOuId));
 
   // When the Details step snapshots the organization unit's theme, the preview should reflect
@@ -349,8 +365,8 @@ export default function ApplicationCreatePage(): JSX.Element {
   // wizard is reached directly (e.g. a bookmarked URL) with no template, send the user back to it.
   useEffect((): void => {
     if (selectedTemplateConfig) return;
-    void navigate(isWelcomeFlow ? '/welcome/get-started/applications/types' : '/applications/types');
-  }, [selectedTemplateConfig, isWelcomeFlow, navigate]);
+    void navigate(routes.applications.types());
+  }, [selectedTemplateConfig, navigate, routes]);
 
   // Derive the OAuth config from the selected template's defaults, mirroring what the removed
   // in-wizard template step used to seed on mount.
@@ -378,20 +394,12 @@ export default function ApplicationCreatePage(): JSX.Element {
 
   const effectiveOauthConfig = useMemo(() => {
     if (!oauthConfig) return oauthConfig;
-    let config: OAuth2Config = callbackUrlFromConfig
-      ? {...oauthConfig, redirectUris: [callbackUrlFromConfig]}
-      : oauthConfig;
+    let config: OAuth2Config = {
+      ...oauthConfig,
+      redirectUris: resolveRedirectUris(oauthConfig.redirectUris ?? [], callbackUrlFromConfig, redirectUris),
+    };
     if (walletClientId.trim()) {
       config = {...config, clientId: walletClientId.trim()};
-    }
-    // Merge in any additional redirect / post-logout redirect URIs entered on the Configuration
-    // step, on top of the template-derived defaults above.
-    const extraRedirectUris = redirectUris.map((uri) => uri.trim()).filter(Boolean);
-    if (extraRedirectUris.length > 0) {
-      config = {
-        ...config,
-        redirectUris: Array.from(new Set([...(config.redirectUris ?? []), ...extraRedirectUris])),
-      };
     }
     const validPostLogoutRedirectUris = postLogoutRedirectUris.map((uri) => uri.trim()).filter(Boolean);
     if (validPostLogoutRedirectUris.length > 0) {
@@ -549,7 +557,7 @@ export default function ApplicationCreatePage(): JSX.Element {
   ]);
 
   const handleClose = (): void => {
-    void navigate(isWelcomeFlow ? '/home' : '/applications');
+    void navigate(routes.applications.list());
   };
 
   const handleLogoSelect = (logoUrl: string): void => {
@@ -649,7 +657,7 @@ export default function ApplicationCreatePage(): JSX.Element {
       return undefined;
     })();
 
-    const effectiveOuId = hasMultipleOUs ? ouId : ouList[0]?.id;
+    const effectiveOuId = isInProject ? pickedProjectOuId : hasMultipleOUs ? ouId : defaultOuId;
 
     const templateId = selectedTemplateConfig?.id;
     const finalTemplateId =
@@ -710,6 +718,7 @@ export default function ApplicationCreatePage(): JSX.Element {
           ...(approvedCimd.contacts.length > 0 && {contacts: approvedCimd.contacts}),
         }),
       ...(finalAuthFlowId && {authFlowId: finalAuthFlowId}),
+      ...(isInProject && {projectId}),
       ...(effectiveOuId && {ouId: effectiveOuId}),
       ...(applicationType && {type: applicationType}),
       ...(finalTemplateId && {template: finalTemplateId}),
@@ -860,17 +869,18 @@ export default function ApplicationCreatePage(): JSX.Element {
         smsOtpSenderId,
       };
 
-      // The generated flow belongs to the organization unit of the application.
-      const flowOuId = hasMultipleOUs ? ouId : ouList[0]?.id;
-      if (!flowOuId) {
+      // The generated flow belongs to the same project or organization unit as the application.
+      const flowOuId = isInProject ? pickedProjectOuId : hasMultipleOUs ? ouId : defaultOuId;
+      if (!isInProject && !flowOuId) {
         setError(t('flows:create.organizationUnit.required', 'Organization unit is required'));
         return;
       }
+      const flowScope = isInProject ? {projectId, ...(flowOuId && {ouId: flowOuId})} : {ouId: flowOuId};
 
       // Generation randomizes the flow handle so retries never collide, which also means a retry
-      // always mints a duplicate. Keying the generated flow on its inputs and owning OU is what
-      // makes the retry reuse it: same inputs, same OU, same flow.
-      const inputsKey = JSON.stringify({...flowInputs, flowOuId});
+      // always mints a duplicate. Keying the generated flow on its inputs and owning scope is what
+      // makes the retry reuse it: same inputs, same scope, same flow.
+      const inputsKey = JSON.stringify({...flowInputs, ...flowScope});
       const memoizedFlow = generatedFlowRef.current;
 
       if (memoizedFlow?.inputsKey === inputsKey) {
@@ -884,7 +894,7 @@ export default function ApplicationCreatePage(): JSX.Element {
         rollbackGeneratedFlow(memoizedFlow);
       }
 
-      const generatedFlowRequest = {...generateFlowGraph(flowInputs), ouId: flowOuId};
+      const generatedFlowRequest = {...generateFlowGraph(flowInputs), ...flowScope};
 
       createFlow.mutate(generatedFlowRequest, {
         onSuccess: (savedFlow) => {
@@ -1129,27 +1139,13 @@ export default function ApplicationCreatePage(): JSX.Element {
     return visibleSteps.slice(0, idx + 1);
   };
 
-  const prefixCrumbs = isWelcomeFlow
-    ? [
-        {key: 'welcome', label: t('common:welcome.header'), onClick: () => void navigate(routes.welcome.root())},
-        {
-          key: 'new',
-          label: t('common:welcome.createProject.breadcrumb'),
-          onClick: () => void navigate(routes.welcome.createProject()),
-        },
-        {
-          key: 'get-started',
-          label: t('common:welcome.getStarted.breadcrumb'),
-          onClick: () => void navigate(routes.welcome.getStarted()),
-        },
-      ]
-    : [
-        {
-          key: 'applications',
-          label: t('navigation:pages.applications'),
-          onClick: () => void navigate(routes.applications.list()),
-        },
-      ];
+  const prefixCrumbs = [
+    {
+      key: 'applications',
+      label: t('navigation:pages.applications'),
+      onClick: () => void navigate(routes.applications.list()),
+    },
+  ];
 
   // Which steps render the live sign-in preview panel is declared by the template itself
   // (`creationFlow.previewSteps`), not guessed here from the current step or platform — e.g. the
@@ -1205,6 +1201,7 @@ export default function ApplicationCreatePage(): JSX.Element {
           title={t('applications:onboarding.organizationUnit.title')}
           subtitle={t('applications:onboarding.organizationUnit.subtitle')}
           value={ouId}
+          projectId={projectId}
           onChange={handleOuIdChange}
           onBack={ouId ? () => setCurrentStep(ApplicationCreateFlowStep.DETAILS) : handleBackToTemplates}
           onContinue={handleNextStep}

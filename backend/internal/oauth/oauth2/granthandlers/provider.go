@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/thunder-id/thunderid/internal/attributecache"
+	"github.com/thunder-id/thunderid/internal/flow/session"
 	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/authz"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/ciba"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/deviceauth"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/revocation"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/tokenservice"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
@@ -30,6 +32,7 @@ type GrantHandlerProvider struct {
 	refreshTokenGrantHandler      GrantHandlerInterface
 	tokenExchangeGrantHandler     GrantHandlerInterface
 	cibaGrantHandler              GrantHandlerInterface
+	deviceCodeGrantHandler        GrantHandlerInterface
 	jwtBearerGrantHandler         GrantHandlerInterface
 }
 
@@ -45,12 +48,14 @@ func newGrantHandlerProvider(
 	actorProvider providers.ActorProvider,
 	resourceService providers.ResourceServerProvider,
 	cibaService ciba.CIBAServiceInterface,
+	deviceService deviceauth.DeviceAuthServiceInterface,
 	refreshTokenRevoker revocation.RefreshTokenRevokerInterface,
 	criteriaRevoker revocation.CriteriaRevokerInterface,
 	enforcementService revocation.EnforcementServiceInterface,
 	governance providers.IdentityGovernanceProvider,
 	authzDetails providers.AuthorizationDetailProvider,
 	deviceSecretValidity time.Duration,
+	ssoSession session.Service,
 	cfg oauthconfig.Config,
 ) GrantHandlerProviderInterface {
 	allowedGrantTypes := cfg.OAuth.AllowedGrantTypes
@@ -69,18 +74,23 @@ func newGrantHandlerProvider(
 	if isGrantTypeAllowed(allowedGrantTypes, providers.GrantTypeRefreshToken) {
 		grantProvider.refreshTokenGrantHandler = newRefreshTokenGrantHandler(
 			jwtService, tokenBuilder, tokenValidator, attrCacheService, resourceService,
-			rbacAuthzService, actorProvider, refreshTokenRevoker, criteriaRevoker, governance, authzDetails, cfg)
+			rbacAuthzService, actorProvider, refreshTokenRevoker, criteriaRevoker, authzDetails, ouService, ssoSession,
+			cfg)
 	}
 	if isGrantTypeAllowed(allowedGrantTypes, providers.GrantTypeTokenExchange) {
 		grantProvider.tokenExchangeGrantHandler = newTokenExchangeGrantHandler(
 			tokenBuilder, tokenValidator, resourceService, rbacAuthzService, actorProvider, authzService, codeGrant,
-			cfg)
+			attrCacheService, cfg)
 	}
 	if isGrantTypeAllowed(allowedGrantTypes, providers.GrantTypeCIBA) {
 		grantProvider.cibaGrantHandler = newCIBAGrantHandler(cibaService, tokenBuilder, attrCacheService,
 			resourceService, enforcementService, authzDetails)
 	}
-	// The jwt-bearer grant accepts only ID-JAGs, so it is not served while ID-JAG acceptance is off.
+	if isGrantTypeAllowed(allowedGrantTypes, providers.GrantTypeDeviceCode) {
+		grantProvider.deviceCodeGrantHandler = newDeviceCodeGrantHandler(
+			deviceService, tokenBuilder, attrCacheService, resourceService, enforcementService, deviceSecretValidity)
+	}
+	// The jwt-bearer grant accepts only ID-JAGs, so do not serve it while ID-JAG acceptance is off.
 	if isGrantTypeAllowed(allowedGrantTypes, providers.GrantTypeJWTBearer) && cfg.OAuth.IDJAG.Acceptance.IsEnabled() {
 		grantProvider.jwtBearerGrantHandler = newJWTBearerGrantHandler(
 			tokenBuilder, tokenValidator, resourceService, rbacAuthzService, actorProvider)
@@ -111,6 +121,8 @@ func (p *GrantHandlerProvider) GetGrantHandler(grantType providers.GrantType) (G
 		handler = p.tokenExchangeGrantHandler
 	case providers.GrantTypeCIBA:
 		handler = p.cibaGrantHandler
+	case providers.GrantTypeDeviceCode:
+		handler = p.deviceCodeGrantHandler
 	case providers.GrantTypeJWTBearer:
 		handler = p.jwtBearerGrantHandler
 	}

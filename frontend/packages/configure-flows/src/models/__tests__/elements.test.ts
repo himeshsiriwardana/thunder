@@ -49,9 +49,11 @@ describe('elements models', () => {
       expect(ElementTypes.PhoneInput).toBe('PHONE_INPUT');
       expect(ElementTypes.NumberInput).toBe('NUMBER_INPUT');
       expect(ElementTypes.DateInput).toBe('DATE_INPUT');
+      expect(ElementTypes.DateTimeInput).toBe('DATE_TIME_INPUT');
       expect(ElementTypes.OtpInput).toBe('OTP_INPUT');
       expect(ElementTypes.Checkbox).toBe('CHECKBOX');
       expect(ElementTypes.Dropdown).toBe('DROPDOWN');
+      expect(ElementTypes.UserSelect).toBe('USER_SELECT');
     });
 
     it('should have display types', () => {
@@ -80,8 +82,8 @@ describe('elements models', () => {
       expect(ElementTypes.Custom).toBe('CUSTOM');
     });
 
-    it('should have exactly 27 element types', () => {
-      expect(Object.keys(ElementTypes)).toHaveLength(27);
+    it('should have exactly 29 element types', () => {
+      expect(Object.keys(ElementTypes)).toHaveLength(29);
     });
   });
 

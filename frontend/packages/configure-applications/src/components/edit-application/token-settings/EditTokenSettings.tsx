@@ -243,8 +243,11 @@ export default function EditTokenSettings({
     Record<TokenAttributeScope, Set<string>>
   >(() => createEmptyAttributeSetState());
 
-  // Stabilize allowedUserTypes array reference
-  const allowedUserTypes = useMemo(() => application.allowedUserTypes ?? [], [application.allowedUserTypes]);
+  // Allowed user types picked on another tab but not saved yet already decide the attributes offered here.
+  const allowedUserTypes = useMemo(
+    () => editedApp.allowedUserTypes ?? application.allowedUserTypes ?? [],
+    [editedApp.allowedUserTypes, application.allowedUserTypes],
+  );
 
   // Get schema IDs for allowed user types. None with 'allUserTypes', so that mode leaves the
   // default source's state alone.
@@ -426,7 +429,10 @@ export default function EditTokenSettings({
    * Fetch the schemas of the allowed user types (the default attribute source)
    */
   useEffect(() => {
-    if (schemaIds.length === 0) return undefined;
+    if (schemaIds.length === 0) {
+      setUserTypes([]);
+      return undefined;
+    }
 
     // A newer list of user types replaces this one, so a response that lands after it is dropped.
     let cancelled = false;
@@ -528,6 +534,10 @@ export default function EditTokenSettings({
         } else if (value.type !== 'array') {
           // Add primitive types (string, number, boolean)
           attributes.push(fullKey);
+          // A top-level contact can release its verification status
+          if (prefix === '' && (value.type === 'email' || value.type === 'mobile')) {
+            attributes.push(`${fullKey}_verified`);
+          }
         }
       });
 
@@ -998,6 +1008,7 @@ export default function EditTokenSettings({
             accessTokenOnly={isAccessTokenOnly}
             showAccessTokenAttributes={showAccessTokenAttributes}
             accessTokenNote={accessTokenNote}
+            idJagEnabled={Boolean(oauth2Config?.token?.idJag?.enabled)}
             userAttributeSource={userAttributeSource}
             userAttributesError={userAttributesError}
             onRetryUserAttributes={refetchAllUserTypeAttributes}

@@ -10,6 +10,7 @@ import type {LifecycleCategory} from './lifecycleAction';
  */
 export const AccessStatuses = {
   ACTIVE: 'ACTIVE',
+  EXPIRED: 'EXPIRED',
   LOCKED: 'LOCKED',
   SUSPENDED: 'SUSPENDED',
 } as const satisfies Record<AccessStatus, AccessStatus>;
@@ -28,13 +29,49 @@ function activeHint(category: LifecycleCategory, t: TFunction): string {
   }
 }
 
-function suspendedHint(category: LifecycleCategory, t: TFunction): string {
+/**
+ * Whether the organization holds a suspension, so an administrator can lift it. A read that names no
+ * party is the organization's, as it is for users and applications.
+ */
+export function isSuspendedByOrganization(status: AccessStatusReport | undefined): boolean {
+  const appliedBy = status?.details?.appliedBy;
+
+  return !appliedBy || appliedBy.length === 0 || appliedBy.includes('organization');
+}
+
+function suspendedHint(category: LifecycleCategory, status: AccessStatusReport | undefined, t: TFunction): string {
   switch (category) {
-    case 'agent':
-      return t(
-        'common:accountStatus.suspended.hint.agent',
-        'The agent is suspended and cannot authenticate until an administrator unsuspends it.',
-      );
+    case 'agent': {
+      const appliedBy = status?.details?.appliedBy ?? [];
+      const lines: string[] = [
+        isSuspendedByOrganization(status)
+          ? t(
+              'common:accountStatus.suspended.hint.agent',
+              'The agent is suspended and cannot authenticate until an administrator unsuspends it.',
+            )
+          : t(
+              'common:accountStatus.suspended.hint.agentNotByOrganization',
+              'The agent is suspended and cannot authenticate.',
+            ),
+      ];
+      if (appliedBy.includes('owner')) {
+        lines.push(
+          t(
+            'common:accountStatus.suspended.hint.agentOwner',
+            'Its owner suspended it, and only the owner can lift that suspension.',
+          ),
+        );
+      }
+      if (appliedBy.includes('cascade')) {
+        lines.push(
+          t(
+            'common:accountStatus.suspended.hint.agentCascade',
+            "Its owner's account is suspended, and the agent stays suspended until that account is unsuspended.",
+          ),
+        );
+      }
+      return lines.join(' ');
+    }
     case 'application':
       return t(
         'common:accountStatus.suspended.hint.application',
@@ -46,6 +83,27 @@ function suspendedHint(category: LifecycleCategory, t: TFunction): string {
         'The account is suspended and cannot sign in until an administrator unsuspends it.',
       );
   }
+}
+
+// Only agents have a lifespan today, so the expiry wording is the agent's or a general one.
+
+function expiredHint(category: LifecycleCategory, since: string | undefined, t: TFunction): string {
+  if (category === 'agent') {
+    return since
+      ? t(
+          'common:accountStatus.expired.hint.agentSince',
+          "The agent's lifespan ended on {{since}}, so it cannot authenticate. Set a later end date to restore access.",
+          {since: new Date(since).toLocaleString()},
+        )
+      : t(
+          'common:accountStatus.expired.hint.agent',
+          "The agent's lifespan has ended, so it cannot authenticate. Set a later end date to restore access.",
+        );
+  }
+  return t(
+    'common:accountStatus.expired.hint.other',
+    'The lifespan has ended, so access is refused. Set a later end date to restore access.',
+  );
 }
 
 // Applications are never locked, so the lock wording is the agent's or the user's.
@@ -172,7 +230,7 @@ export default function describeAccessStatus(
     const label = t('common:accountStatus.suspended.label', 'Suspended');
 
     return {
-      hint: suspendedHint(category, t),
+      hint: suspendedHint(category, status, t),
       label,
       title: label,
       operatorNote: details?.operatorNote
@@ -182,6 +240,12 @@ export default function describeAccessStatus(
         : undefined,
       value,
     };
+  }
+
+  if (value === AccessStatuses.EXPIRED) {
+    const label = t('common:accountStatus.expired.label', 'Expired');
+
+    return {hint: expiredHint(category, details?.since, t), label, title: label, value};
   }
 
   if (value === AccessStatuses.LOCKED) {

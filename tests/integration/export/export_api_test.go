@@ -22,8 +22,6 @@ import (
 )
 
 const (
-	testServerURL = "https://localhost:8095"
-
 	vcExportConfigHandle     = "export_test_credential"
 	vcExportConfigVCT        = "https://credentials.thunderid.local/ExportTestCredential"
 	vcExportDefinitionHandle = "export_test_presentation"
@@ -33,6 +31,8 @@ const (
 	vcExportDeclarativeConfigID     = "decl-credential-config-1"
 	vcExportDeclarativeDefinitionID = "decl-presentation-def-1"
 )
+
+var testServerURL = testutils.TestServerURL
 
 // ExportAPITestSuite is a test suite for export API tests.
 type ExportAPITestSuite struct {
@@ -160,7 +160,8 @@ func (ts *ExportAPITestSuite) TestApplicationExportYAML() {
 	// Verify the exported YAML content
 	ts.Assert().Contains(yamlContent, "name: Export Test App")
 	ts.Assert().Contains(yamlContent, "description: Test application for export functionality")
-	ts.Assert().Contains(yamlContent, "clientId: {{.APPLICATION_EXPORT_TEST_APP_CLIENT_ID}}")
+	ts.Assert().Contains(yamlContent,
+		"clientId: {{."+testutils.ExportVariableName("APPLICATION", appID, "CLIENT_ID")+"}}")
 	ts.Assert().NotContains(yamlContent, "export_test_secret") // Client secret should not be exported
 	ts.Assert().Contains(yamlContent, "# File: Export_Test_App.yaml")
 
@@ -257,7 +258,8 @@ func (ts *ExportAPITestSuite) TestIdentityProviderExportYAML() {
 	ts.Assert().Contains(yamlContent, "description: Test identity provider for export functionality")
 	ts.Assert().Contains(yamlContent, "type: oauth")
 	ts.Assert().Contains(yamlContent, "clientId: export_test_oauth_client")
-	ts.Assert().Contains(yamlContent, "clientSecret: {{.CONNECTION_EXPORT_TEST_IDP_CLIENT_SECRET}}")
+	ts.Assert().Contains(yamlContent,
+		"clientSecret: {{."+testutils.ExportVariableName("CONNECTION", idpID, "CLIENT_SECRET")+"}}")
 	ts.Assert().Contains(yamlContent, "# File: Export_Test_IDP.yaml")
 }
 
@@ -565,7 +567,9 @@ func (ts *ExportAPITestSuite) TestIdentityProviderExportWithProperties() {
 
 	// Verify typed fields: only the secret field (clientSecret) is parameterized.
 	ts.Assert().Contains(yamlContent, "clientId: props_test_client")
-	ts.Assert().Contains(yamlContent, "clientSecret: {{.CONNECTION_PROPERTIES_TEST_IDP_CLIENT_SECRET}}")
+	ts.Assert().Contains(yamlContent,
+		"clientSecret: {{."+testutils.ExportVariableName("CONNECTION", idpID,
+			"CLIENT_SECRET")+"}}")
 	ts.Assert().Contains(yamlContent, "redirectUri: https://localhost:3000/callback")
 	ts.Assert().Contains(yamlContent, "- openid")
 	ts.Assert().Contains(yamlContent, "- email")

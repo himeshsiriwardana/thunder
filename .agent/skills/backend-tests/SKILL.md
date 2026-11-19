@@ -50,13 +50,21 @@ func TestExampleServiceTestSuite(t *testing.T) {
 
 ## Integration Tests
 
-Testify suites in `tests/integration/<area>/`, run with `make test_integration`. Also add:
+Testify suites in `tests/integration/<area>/`, run with `make test_integration`.
+
+- A new suite runs in the default group. List it in a group in `tests/integration/groups.yaml` only to balance run time. Each group runs its own server.
+- Build server URLs from `testutils.TestServerURL`. Never hardcode the server port.
+- Stand in for an external service with a `testutils` mock (Ex: `NewMockOIDCServer`, `NewMockNotificationServer`). Never start a server on a fixed port.
+- A Google or GitHub mock needs a client ID no other suite uses.
+
+Also add:
 
 | Change | Add |
 |---|---|
 | Declarative or composite store mode | a fixture under `tests/integration/resources/declarative_resources/<type>/` and a declarative test in the area (Ex: `tests/integration/group/group_declarative_test.go`) |
 | An exportable resource | coverage in `tests/integration/importexport` |
 | Control Plane only code | tests in `tests/integration/controlplane`, run with `make test_integration_cp` |
+| A new resource that can belong to a project | `tests/integration/controlplane/project/project_<resource>_test.go` for the Control Plane, and `tests/integration/<area>/<resource>_project_test.go` for the Data Plane (`backend` skill, `resource.md` Projects) |
 
 ## E2E Tests
 

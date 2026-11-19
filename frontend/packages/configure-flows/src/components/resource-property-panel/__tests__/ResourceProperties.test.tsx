@@ -3,10 +3,9 @@
 
 import {render, screen, fireEvent} from '@testing-library/react';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
-import {ElementCategories, ElementTypes} from '../../../models/elements';
-import type {Element} from '../../../models/elements';
+import {ElementCategories, ElementTypes, type Element} from '../../../models/elements';
 import type {Resource} from '../../../models/resources';
-import {StepCategories, StepTypes} from '../../../models/steps';
+import {StaticStepTypes, StepCategories, StepTypes} from '../../../models/steps';
 import ResourceProperties from '../ResourceProperties';
 
 // Mock dependencies
@@ -53,6 +52,10 @@ vi.mock('../extended-properties/FieldExtendedProperties', () => ({
   ),
 }));
 
+vi.mock('../extended-properties/UserSelectExtendedProperties', () => ({
+  default: () => <div data-testid="user-select-extended">User Select Extended Properties</div>,
+}));
+
 vi.mock('../extended-properties/ButtonExtendedProperties', () => ({
   default: ({resource}: {resource: Resource}) => (
     <div data-testid="button-extended-properties" data-resource-id={resource.id}>
@@ -60,6 +63,29 @@ vi.mock('../extended-properties/ButtonExtendedProperties', () => ({
     </div>
   ),
 }));
+
+const variablesMounts = vi.hoisted(() => ({count: 0}));
+
+vi.mock('../nodes/VariablesProperties', async () => {
+  const {useState} = await import('react');
+
+  function VariablesPropertiesMock({resource}: {resource: Resource}) {
+    // Which mount of the panel this is, which changes only when the panel is mounted again.
+    const [mount] = useState(() => {
+      variablesMounts.count += 1;
+
+      return variablesMounts.count;
+    });
+
+    return (
+      <div data-testid="variables-properties" data-resource-id={resource.id} data-mount={mount}>
+        Variables Properties
+      </div>
+    );
+  }
+
+  return {default: VariablesPropertiesMock};
+});
 
 vi.mock('../extended-properties/CallProperties', () => ({
   default: ({resource}: {resource: Resource}) => (
@@ -159,6 +185,40 @@ describe('ResourceProperties', () => {
 
       expect(screen.getByTestId('resource-property-factory-label')).toBeInTheDocument();
       expect(screen.getByTestId('resource-property-factory-placeholder')).toBeInTheDocument();
+    });
+  });
+
+  describe('User Select', () => {
+    it('should render the read-only data source and submit value for a USER_SELECT field', () => {
+      const resource = createMockResource({category: ElementCategories.Field, type: ElementTypes.UserSelect});
+
+      render(
+        <ResourceProperties
+          resource={resource}
+          properties={{label: 'Owner', placeholder: 'Select a user'}}
+          onChange={mockOnChange}
+          onVariantChange={mockOnVariantChange}
+        />,
+      );
+
+      expect(screen.getByTestId('user-select-extended')).toBeInTheDocument();
+      expect(screen.getByTestId('field-extended-properties')).toBeInTheDocument();
+      expect(screen.getByTestId('resource-property-factory-label')).toBeInTheDocument();
+    });
+
+    it('should not render the data source or submit value for a SELECT field', () => {
+      const resource = createMockResource({category: ElementCategories.Field, type: ElementTypes.Select});
+
+      render(
+        <ResourceProperties
+          resource={resource}
+          properties={{label: 'Country'}}
+          onChange={mockOnChange}
+          onVariantChange={mockOnVariantChange}
+        />,
+      );
+
+      expect(screen.queryByTestId('user-select-extended')).not.toBeInTheDocument();
     });
   });
 
@@ -354,6 +414,60 @@ describe('ResourceProperties', () => {
       );
 
       expect(screen.getByTestId('resource-property-factory-id')).toHaveAttribute('data-property-value', 'call-42');
+    });
+  });
+
+  describe('Workflow Category - Variables Type', () => {
+    it('should render VariablesProperties and not the executor properties for the Variables node', () => {
+      const resource = createMockResource({
+        id: 'resolve_variables',
+        category: StepCategories.Workflow,
+        type: StaticStepTypes.Variables,
+      } as Partial<Resource>);
+
+      render(
+        <ResourceProperties
+          resource={resource}
+          properties={{}}
+          onChange={mockOnChange}
+          onVariantChange={mockOnVariantChange}
+        />,
+      );
+
+      expect(screen.getByTestId('variables-properties')).toHaveAttribute('data-resource-id', 'resolve_variables');
+      expect(screen.queryByTestId('execution-extended-properties')).not.toBeInTheDocument();
+      expect(screen.getByTestId('resource-property-factory-id')).toHaveAttribute(
+        'data-property-value',
+        'resolve_variables',
+      );
+    });
+
+    it('should start the panel afresh for another Variables node, so an open row or pending confirm does not carry over', () => {
+      const variablesNode = (id: string) =>
+        createMockResource({
+          id,
+          category: StepCategories.Workflow,
+          type: StaticStepTypes.Variables,
+        } as Partial<Resource>);
+      const renderFor = (id: string) => (
+        <ResourceProperties
+          resource={variablesNode(id)}
+          properties={{}}
+          onChange={mockOnChange}
+          onVariantChange={mockOnVariantChange}
+        />
+      );
+
+      const {rerender} = render(renderFor('variables_1'));
+      const first = screen.getByTestId('variables-properties').getAttribute('data-mount');
+
+      rerender(renderFor('variables_1'));
+
+      expect(screen.getByTestId('variables-properties').getAttribute('data-mount')).toBe(first);
+
+      rerender(renderFor('variables_2'));
+
+      expect(screen.getByTestId('variables-properties').getAttribute('data-mount')).not.toBe(first);
     });
   });
 

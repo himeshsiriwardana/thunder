@@ -5,9 +5,11 @@ package flowexec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,10 +21,12 @@ import (
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/flow/executor"
+	"github.com/thunder-id/thunderid/internal/flow/executormeta"
 	"github.com/thunder-id/thunderid/internal/flow/graphbuilder"
 	"github.com/thunder-id/thunderid/internal/flow/session"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/observability/event"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
 
@@ -167,9 +171,21 @@ func (fe *flowEngine) executeNodePackage(ctx *EngineContext,
 	currentNode core.NodeInterface, flowStep *FlowStep, flowStartTime int64) (
 	core.NodeInterface, bool, *tidcommon.ServiceError) {
 	logger := fe.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID),
-		log.String("nodeID", currentNode.GetID()), log.String("nodeType", string(currentNode.GetType())))
+		log.String(log.LoggerKeyNodeID, currentNode.GetID()), log.String("nodeType", string(currentNode.GetType())))
 
 	logger.Debug(ctx.Context, "Executing node")
+
+	if ctx.nodeVisits == nil {
+		ctx.nodeVisits = make(map[core.NodeInterface]int)
+	}
+	ctx.nodeVisits[currentNode]++
+	if ctx.nodeVisits[currentNode] > maxNodeVisitsPerRequest {
+		logger.Error(ctx.Context, "Node exceeded the visit limit within a request, the flow is cycling "+
+			"without pausing for user input", log.Int("limit", maxNodeVisitsPerRequest))
+		publishFlowFailedEvent(ctx, &tidcommon.InternalServerError, flowStartTime, time.Now().UnixMilli(),
+			fe.observabilitySvc)
+		return nil, false, &tidcommon.InternalServerError
+	}
 
 	// SSO inputs ride on the context (transient, never persisted, and off the engine contract);
 	// only the SSO-Check and Session nodes read them.
@@ -187,11 +203,17 @@ func (fe *flowEngine) executeNodePackage(ctx *EngineContext,
 		nodeCtxContext = authnprovidercm.WithSubjectTypeConstraints(ssoCtx, authnprovidercm.SubjectTypeConstraints{
 			AllowedUserTypes:  ctx.Application.AllowedUserTypes,
 			AllowedAgentTypes: ctx.Application.AllowedAgentTypes,
+			RequiredSubjectID: ctx.RequiredSubjectID,
 		})
 	}
 	// A recovery flow is marked too, so the default provider checks its proofs at the recovery plane.
 	if ctx.FlowType == providers.FlowTypeRecovery {
-		nodeCtxContext = authnprovidercm.WithRecoveryFlow(nodeCtxContext)
+		nodeCtxContext = authnprovidercm.WithRecoveryProof(nodeCtxContext)
+	}
+	// A bounded flow carries its sign-in boundary the same way. It is read now so an ouId or a subject an
+	// earlier step set is picked up.
+	if ctx.SignInBounded {
+		nodeCtxContext = authnprovidercm.WithSignInBoundary(nodeCtxContext, signInBoundary(ctx))
 	}
 	fe.replayPromptInputs(ctx)
 
@@ -213,6 +235,7 @@ func (fe *flowEngine) executeNodePackage(ctx *EngineContext,
 		ExecutionHistory:  ctx.ExecutionHistory,
 	}
 	nodeCtx.SetInitiatorRequest(ctx.GetInitiatorRequest())
+	nodeCtx.SetBoundSubject(ctx.boundSubject)
 	if nodeCtx.NodeInputs == nil {
 		nodeCtx.NodeInputs = make([]providers.Input, 0)
 	}
@@ -232,8 +255,7 @@ func (fe *flowEngine) executeNodePackage(ctx *EngineContext,
 
 	// Check if the node should be executed based on its condition
 	if !currentNode.ShouldExecute(nodeCtx) {
-		logger.Debug(ctx.Context, "Skipping node due to unmet condition",
-			log.String("nodeID", currentNode.GetID()))
+		logger.Debug(ctx.Context, "Skipping node due to unmet condition")
 		nextNode, svcErr := fe.skipToNextNode(ctx, currentNode, logger)
 		if svcErr != nil {
 			return nil, false, svcErr
@@ -456,7 +478,8 @@ func (fe *flowEngine) runPostRequestInterceptorsOnExit(
 // applyVariableValues makes a VARIABLES node resolve to the values its flow holds for the organization unit a prompt
 // picked, when the flow was shared with that unit. A flow resolves for no other unit: not the one that owns the flow
 // nor the one that owns the application. A flow the unit owns, or does not hold, runs on its own defaults. A connection
-// variable that is still without a connection then stops the flow.
+// variable that is still without a connection then goes on to the onFailure node of the VARIABLES node, a prompt that
+// shows the failure, or stops the flow when the node has none.
 func (fe *flowEngine) applyVariableValues(
 	ctx *EngineContext, node core.NodeInterface, nodeResp *common.NodeResponse, logger *log.Logger,
 ) *tidcommon.ServiceError {
@@ -473,9 +496,47 @@ func (fe *flowEngine) applyVariableValues(
 		logger.Warn(ctx.Context, "The flow needs a connection that is not set for the organization unit",
 			log.String("flowID", ctx.Graph.GetID()), log.String("ouID", ctx.RuntimeData[common.RuntimeKeyOUID]),
 			log.String("variables", strings.Join(unset, ",")))
-		return &ErrorFlowConnectionNotSet
+		onFailure := ""
+		if variablesNode, ok := node.(core.VariablesNodeInterface); ok {
+			onFailure = variablesNode.GetOnFailure()
+		}
+		if onFailure == "" {
+			return &ErrorFlowConnectionNotSet
+		}
+		fe.forgetOUSelection(ctx)
+		nodeResp.Status = common.NodeStatusForward
+		nodeResp.NextNodeID = onFailure
+		nodeResp.Error = &ErrorFlowConnectionNotSet
+		if jsonBytes, err := json.Marshal(&ErrorFlowConnectionNotSet); err == nil {
+			nodeResp.RuntimeData["failureReasonJSON"] = string(jsonBytes)
+		}
 	}
 	return nil
+}
+
+// forgetOUSelection drops the organization unit a step of the flow picked, and the selection the user submitted for it,
+// so that a flow that goes on to an onFailure node and then back to the OU resolver asks for the organization unit
+// again, instead of keeping the one that just failed. An organization unit fixed before the flow ran stays.
+func (fe *flowEngine) forgetOUSelection(ctx *EngineContext) {
+	if ctx.RuntimeData[common.RuntimeKeyOUFixed] != "true" {
+		delete(ctx.RuntimeData, common.RuntimeKeyOUID)
+	}
+	// TODO: The engine should not know the OU resolver executor or its input names. Have the node or executor layer
+	// expose the inputs to clear, instead of matching the executor name and the "ouHandle" literal here.
+	delete(ctx.UserInputs, common.RuntimeKeyOUID)
+	delete(ctx.UserInputs, "ouHandle")
+	if ctx.Graph == nil {
+		return
+	}
+	for _, n := range ctx.Graph.GetNodes() {
+		resolver, ok := n.(core.ExecutorBackedNodeInterface)
+		if !ok || resolver.GetExecutorName() != executormeta.ExecutorNameOUResolver {
+			continue
+		}
+		for _, input := range resolver.GetInputs() {
+			delete(ctx.UserInputs, input.Identifier)
+		}
+	}
 }
 
 // applyHeldValues puts the values the organization unit a prompt picked holds in place of the defaults.
@@ -585,8 +646,7 @@ func (fe *flowEngine) setNodeExecutor(
 	}
 	executableNode, ok := node.(core.ExecutorBackedNodeInterface)
 	if !ok {
-		logger.Error(ctx, "Task execution node does not implement ExecutorBackedNodeInterface",
-			log.String("nodeID", node.GetID()))
+		logger.Error(ctx, "Task execution node does not implement ExecutorBackedNodeInterface")
 		return &tidcommon.InternalServerError
 	}
 
@@ -595,20 +655,18 @@ func (fe *flowEngine) setNodeExecutor(
 		return nil
 	}
 
-	logger.Debug(ctx, "Executor not set for the node. Constructing executor.",
-		log.String("nodeID", node.GetID()))
+	logger.Debug(ctx, "Executor not set for the node. Constructing executor.")
 
 	executorName := executableNode.GetExecutorName()
 	if executorName == "" {
-		logger.Error(ctx, "Executor name not configured for executable node",
-			log.String("nodeID", node.GetID()))
+		logger.Error(ctx, "Executor name not configured for executable node")
 		return &tidcommon.InternalServerError
 	}
 
 	executor, err := fe.getExecutorByName(executorName)
 	if err != nil {
-		logger.Error(ctx, "Error constructing executor for node", log.String("nodeID", node.GetID()),
-			log.String("executorName", executorName), log.Error(err))
+		logger.Error(ctx, "Error constructing executor for node",
+			log.String(log.LoggerKeyExecutorName, executorName), log.Error(err))
 		return &tidcommon.InternalServerError
 	}
 
@@ -873,13 +931,22 @@ func (fe *flowEngine) processNodeResponse(ctx *EngineContext, nodeResp *common.N
 		return nil, false, &tidcommon.InternalServerError
 	}
 
-	// Carry any SSO handle minted by this node onto the flow step so the transport layer can emit
-	// it. The Session node emits the handle on the engine-only EngineData channel (never returned to
-	// the client and off the engine contract). Stamped here (not only at completion) so it survives
-	// an immediately following prompt step that returns the flow as incomplete.
+	// Carry any SSO handle this node minted or reused onto the flow step, with its session's end. The
+	// Session node emits them on the engine-only EngineData channel (off the engine contract). Stamped
+	// here (not only at completion) so they survive an immediately following prompt step that returns the
+	// flow as incomplete. The handle the request presented is marked reused.
 	if handle := nodeResp.EngineData[common.RuntimeKeySSOSessionHandle]; handle != "" {
 		flowStep.SSOHandleOut = handle
 		flowStep.SSOFlowID = ssoFlowID(ctx)
+		flowStep.SSOHandleReused = handle == ctx.SSOHandleIn
+		flowStep.SSOHandleExpiresAt = time.Time{}
+		if raw := nodeResp.EngineData[common.RuntimeKeySSOSessionExpiresAt]; raw != "" {
+			if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				flowStep.SSOHandleExpiresAt = time.Unix(seconds, 0)
+			} else {
+				logger.Debug(ctx.Context, "Ignoring an unreadable SSO session end", log.String("value", raw))
+			}
+		}
 	}
 
 	// Carry a session-termination signal onto the flow step so the transport layer clears the
@@ -887,6 +954,10 @@ func (fe *flowEngine) processNodeResponse(ctx *EngineContext, nodeResp *common.N
 	// it has ended the session.
 	if cleared := nodeResp.EngineData[common.RuntimeKeySSOSessionCleared]; cleared != "" {
 		flowStep.SSOClearFlowID = ssoFlowID(ctx)
+	}
+
+	if isSignInBoundaryRefusal(nodeResp.Error) {
+		dropRefusedSignIn(ctx, flowStep)
 	}
 
 	switch nodeResp.Status {
@@ -930,6 +1001,23 @@ func (fe *flowEngine) processNodeResponse(ctx *EngineContext, nodeResp *common.N
 			log.String("status", string(nodeResp.Status)))
 		return nil, false, &tidcommon.InternalServerError
 	}
+}
+
+// isSignInBoundaryRefusal reports whether a node refused a sign-in for its organization unit boundary.
+func isSignInBoundaryRefusal(err *tidcommon.ServiceError) bool {
+	return err != nil &&
+		(err.Code == executor.ErrOrganizationNotResolved.Code || err.Code == executor.ErrNoAccessToApplication.Code)
+}
+
+// dropRefusedSignIn drops the user, assertion and session handle of a refused sign-in, so none of them
+// reaches the client or a calling flow.
+func dropRefusedSignIn(ctx *EngineContext, flowStep *FlowStep) {
+	ctx.AuthUser = providers.AuthUser{}
+	ctx.Assertion = ""
+	flowStep.SSOHandleOut = ""
+	flowStep.SSOFlowID = ""
+	flowStep.SSOHandleReused = false
+	flowStep.SSOHandleExpiresAt = time.Time{}
 }
 
 // isDisplayOnlyPromptNode checks if the current node is a display-only prompt node.
@@ -1072,37 +1160,56 @@ func (fe *flowEngine) handleCallResponse(ctx *EngineContext,
 		return nil, &ErrorMaxCallDepthExceeded
 	}
 
-	flow, svcErr := fe.flowProvider.GetFlow(ctx.Context, nodeResp.CallTargetFlowID)
+	targetFlowID := nodeResp.CallTargetFlowID
+	flow, svcErr := fe.flowProvider.GetFlow(security.WithRuntimeContext(ctx.Context), targetFlowID)
 	if svcErr != nil {
 		logger.Error(ctx.Context, "Failed to get call target flow",
-			log.String("targetFlowID", nodeResp.CallTargetFlowID))
+			log.String("targetFlowID", targetFlowID))
 		return nil, &tidcommon.InternalServerError
+	}
+	// A flow running with the system's authority would lend it to a callee that should act for its caller.
+	if !actsForCaller(ctx.rootFlowType()) && actsForCaller(flow.FlowType) {
+		logger.Debug(ctx.Context, "Call target acts for its caller", log.String("targetFlowID", targetFlowID),
+			log.String("targetFlowType", string(flow.FlowType)))
+		return nil, &ErrorCallTargetNotPermitted
 	}
 
 	calleeGraph, svcErr := fe.graphBuilder.GetGraph(ctx.Context, flow)
 	if svcErr != nil {
 		logger.Error(ctx.Context, "Failed to build call target graph",
-			log.String("targetFlowID", nodeResp.CallTargetFlowID))
+			log.String("targetFlowID", targetFlowID))
 		return nil, &tidcommon.InternalServerError
 	}
 
-	return fe.switchContextToCallee(ctx, nodeResp, calleeGraph, logger)
+	return fe.switchContextToCallee(ctx, nodeResp, calleeGraph, flow.FlowType, flow.ActiveVersion, logger)
 }
 
 // switchContextToCallee switches the engine context to the callee flow's graph and
 // sets the current node to the start node.
 func (fe *flowEngine) switchContextToCallee(ctx *EngineContext,
-	nodeResp *common.NodeResponse, calleeGraph core.GraphInterface, logger *log.Logger) (
+	nodeResp *common.NodeResponse, calleeGraph core.GraphInterface, calleeFlowType providers.FlowType,
+	calleeFlowVersion int,
+	logger *log.Logger) (
 	core.NodeInterface, *tidcommon.ServiceError) {
+	// The caller's boundedness and decided organization unit are read before the reset below.
+	callerBounded := ctx.SignInBounded
+	callerOUID := ctx.RuntimeData[common.RuntimeKeyOUID]
+	callerOUFixed := ctx.RuntimeData[common.RuntimeKeyOUFixed]
+
 	// Push the current frame before switching to the callee
 	resumeCallNodeID := ctx.CurrentNode.GetID()
 	ctx.pushFrame(resumeCallNodeID)
+	if calleeFlowType == providers.FlowTypeAuthentication {
+		ctx.SSOFlowVersion = calleeFlowVersion
+	}
 
 	// Switch context to the callee flow. Per-frame transient state is reset so the callee
 	// starts with a clean slate; shared identity/input state (UserInputs, AuthUser, etc.) is
 	// intentionally left in place
 	ctx.Graph = calleeGraph
 	ctx.FlowType = calleeGraph.GetType()
+	// Boundedness is per frame: a sign-in callee is bounded only inside a bounded caller.
+	ctx.SignInBounded = callerBounded && ctx.FlowType == providers.FlowTypeAuthentication
 	ctx.RuntimeData = make(map[string]string)
 	ctx.ForwardedData = nil
 	ctx.AdditionalData = make(map[string]string)
@@ -1110,6 +1217,14 @@ func (fe *flowEngine) switchContextToCallee(ctx *EngineContext,
 	ctx.CurrentSegmentID = ""
 	ctx.CurrentAction = ""
 	ctx.clearPausedPromptInputs()
+
+	// A bounded callee stays in the organization unit its caller decided, and keeps it fixed when the caller's was.
+	if ctx.SignInBounded && callerOUID != "" {
+		ctx.RuntimeData[common.RuntimeKeyOUID] = callerOUID
+		if callerOUFixed != "" {
+			ctx.RuntimeData[common.RuntimeKeyOUFixed] = callerOUFixed
+		}
+	}
 
 	// Set the current node to the start node of the callee graph
 	startNode, startErr := calleeGraph.GetStartNode()
@@ -1226,13 +1341,12 @@ func (fe *flowEngine) skipToNextNode(ctx *EngineContext, currentNode core.NodeIn
 
 	// Condition must specify where to skip to
 	if condition == nil || condition.OnSkip == "" {
-		logger.Error(ctx.Context, "Node has condition but onSkip is not specified",
-			log.String("nodeID", currentNode.GetID()))
+		logger.Error(ctx.Context, "Node has condition but onSkip is not specified")
 		return nil, &tidcommon.InternalServerError
 	}
 
 	logger.Debug(ctx.Context, "Using condition's onSkip for skipped node",
-		log.String("nodeID", currentNode.GetID()), log.String("onSkip", condition.OnSkip))
+		log.String("onSkip", condition.OnSkip))
 
 	nodeResp := &common.NodeResponse{NextNodeID: condition.OnSkip}
 
@@ -1407,7 +1521,8 @@ func (fe *flowEngine) isSegmentRestartAllowed(ctx *EngineContext, logger *log.Lo
 		return false
 	}
 
-	if svcErr := fe.setNodeExecutor(ctx.Context, segStartNode, logger); svcErr != nil {
+	nodeLogger := logger.With(log.String(log.LoggerKeyNodeID, seg.StartNodeID))
+	if svcErr := fe.setNodeExecutor(ctx.Context, segStartNode, nodeLogger); svcErr != nil {
 		return false
 	}
 
@@ -1511,7 +1626,7 @@ func publishNodeExecutionStartedEvent(
 	}
 
 	evt := event.NewEvent(
-		ctx.ExecutionID, // Use ExecutionID as TraceID
+		ctx.TraceID,
 		string(event.EventTypeFlowNodeExecutionStarted),
 		event.ComponentFlowEngine,
 	).
@@ -1582,7 +1697,7 @@ func publishNodeExecutionCompletedEvent(ctx *EngineContext, node core.NodeInterf
 	durationMs := executionEndTime - executionStartTime
 
 	evt := event.NewEvent(
-		ctx.ExecutionID, // Use ExecutionID as TraceID
+		ctx.TraceID,
 		string(eventType),
 		event.ComponentFlowEngine,
 	).
@@ -1619,7 +1734,7 @@ func publishFlowStartedEvent(ctx *EngineContext, obsSvc providers.ObservabilityP
 	}
 
 	evt := event.NewEvent(
-		ctx.ExecutionID, // Use ExecutionID as TraceID, so the whole flow shares one trace
+		ctx.TraceID,
 		string(event.EventTypeFlowStarted),
 		event.ComponentFlowEngine,
 	).
@@ -1646,7 +1761,7 @@ func publishFlowCompletedEvent(
 	durationMs := flowEndTime - flowStartTime
 
 	evt := event.NewEvent(
-		ctx.ExecutionID, // Use ExecutionID as TraceID
+		ctx.TraceID,
 		string(event.EventTypeFlowCompleted),
 		event.ComponentFlowEngine,
 	).
@@ -1670,7 +1785,7 @@ func publishFlowFailedEvent(ctx *EngineContext, svcErr *tidcommon.ServiceError,
 	durationMs := flowEndTime - flowStartTime
 
 	evt := event.NewEvent(
-		ctx.ExecutionID, // Use ExecutionID as TraceID, so the whole flow shares one trace
+		ctx.TraceID,
 		string(event.EventTypeFlowFailed),
 		event.ComponentFlowEngine,
 	).

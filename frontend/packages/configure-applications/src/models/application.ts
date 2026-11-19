@@ -152,6 +152,11 @@ export interface Application {
   id: string;
 
   /**
+   * The project the application belongs to, if it is in one.
+   */
+  projectId?: string;
+
+  /**
    * Application name
    * @example 'My Web Application'
    */
@@ -198,6 +203,9 @@ export interface Application {
    * @example 'edc013d0-e893-4dc0-990c-3e1d203e005b'
    */
   authFlowId?: string;
+
+  /** Device Grant flow used when this application accepts the OAuth Device Code grant. */
+  deviceGrantFlowId?: string;
 
   /**
    * Registration flow ID
@@ -346,7 +354,8 @@ export interface Application {
   isReadOnly?: boolean;
 
   /**
-   * Effective access status, derived by the server at read time. Read-only; never LOCKED.
+   * Effective access status, derived by the server at read time. Read-only; never LOCKED, and never
+   * EXPIRED, as applications have no lifespan.
    */
-  status?: {value: Exclude<AccessStatusReport['value'], 'LOCKED'>};
+  status?: {value: Exclude<AccessStatusReport['value'], 'LOCKED' | 'EXPIRED'>};
 }

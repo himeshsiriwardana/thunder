@@ -1,8 +1,9 @@
 // Copyright 2026 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
+import {CapabilitiesProvider, HiddenResourcesProvider} from '@thunderid/contexts';
 import * as thunderIdReactModule from '@thunderid/react';
-import {renderWithProviders, screen, fireEvent, within} from '@thunderid/test-utils';
+import {renderWithProviders, screen, fireEvent} from '@thunderid/test-utils';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
 import type {DefaultResourceServerConfigResponse, ResourceServerListResponse} from '../../models/resource-server';
 import ResourceServersList from '../ResourceServersList';
@@ -12,11 +13,14 @@ vi.mock('@thunderid/react', {spy: true});
 // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- vi.mock({spy:true}) type inference doesn't resolve for this package's conditional exports
 vi.mocked(thunderIdReactModule.useThunderID).mockImplementation(() => ({http: {request: vi.fn()}}) as never);
 
+const mockUseProjectScope = vi.fn<() => {projectId?: string}>(() => ({}));
+
 vi.mock('@thunderid/contexts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@thunderid/contexts')>();
   return {
     ...actual,
     useConfig: () => ({getServerUrl: () => 'http://localhost:8090'}),
+    useProjectScope: () => mockUseProjectScope(),
     useToast: () => ({showToast: vi.fn()}),
   };
 });
@@ -86,6 +90,11 @@ const twoRowsResponse: ResourceServerListResponse = {
   ],
 };
 
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
+
 describe('ResourceServersList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -100,12 +109,20 @@ describe('ResourceServersList', () => {
     });
   });
 
-  it('renders the grid inside a paper container as a plain data grid', () => {
+  it('lists the resource servers of the selected project', () => {
+    mockUseProjectScope.mockReturnValue({projectId: 'project-1'});
+
     renderWithProviders(<ResourceServersList />);
 
-    expect(screen.getByRole('grid').closest('.MuiPaper-root')).not.toBeNull();
-    // The card variant sizes rows to their content, while the plain grid keeps the fixed two-line height.
-    expect(screen.getAllByRole('row')[1]).toHaveStyle({minHeight: '64px', maxHeight: '64px'});
+    expect(mockUseGetResourceServers).toHaveBeenCalledWith(expect.objectContaining({projectId: 'project-1'}));
+  });
+
+  it('lists every resource server without a selected project', () => {
+    mockUseProjectScope.mockReturnValue({});
+
+    renderWithProviders(<ResourceServersList />);
+
+    expect(mockUseGetResourceServers).toHaveBeenCalledWith(expect.objectContaining({projectId: undefined}));
   });
 
   it('renders the type chip label for a normal row', () => {
@@ -127,6 +144,17 @@ describe('ResourceServersList', () => {
     expect(screen.getByRole('button', {name: 'Delete'})).toBeInTheDocument();
   });
 
+  it('hides the Edit and Delete buttons when the admin may only view resource servers', () => {
+    renderWithProviders(
+      <CapabilitiesProvider capabilities={viewOnly}>
+        <ResourceServersList />
+      </CapabilitiesProvider>,
+    );
+
+    expect(screen.queryByRole('button', {name: 'Edit'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Delete'})).not.toBeInTheDocument();
+  });
+
   it('shows a Read Only button for the read-only row', () => {
     renderWithProviders(<ResourceServersList />);
 
@@ -138,15 +166,6 @@ describe('ResourceServersList', () => {
 
     const deleteButtons = screen.queryAllByRole('button', {name: 'Delete'});
     expect(deleteButtons).toHaveLength(1);
-  });
-
-  it('marks only the read-only row as a system resource server', () => {
-    renderWithProviders(<ResourceServersList />);
-
-    const systemRow = screen.getByText('System MCP').closest<HTMLElement>('[role="row"]')!;
-    const normalRow = screen.getByText('Payments API').closest<HTMLElement>('[role="row"]')!;
-    expect(within(systemRow).getByText('System resource server')).toBeInTheDocument();
-    expect(within(normalRow).queryByText('System resource server')).not.toBeInTheDocument();
   });
 
   it('shows a Default badge on the current default row', () => {
@@ -191,6 +210,18 @@ describe('ResourceServersList', () => {
     fireEvent.click(screen.getByRole('button', {name: /Refresh/i}));
 
     expect(mockRefetch).toHaveBeenCalled();
+  });
+
+  it('leaves a hidden resource server out of the list and its total, matching its identifier', () => {
+    renderWithProviders(
+      <HiddenResourcesProvider hidden={{resourceServerIdentifiers: ['https://mcp.example.com']}}>
+        <ResourceServersList />
+      </HiddenResourcesProvider>,
+    );
+
+    expect(screen.getByText('Payments API')).toBeInTheDocument();
+    expect(screen.queryByText('System MCP')).not.toBeInTheDocument();
+    expect(screen.getByText(/1–1 of 1/)).toBeInTheDocument();
   });
 });
 

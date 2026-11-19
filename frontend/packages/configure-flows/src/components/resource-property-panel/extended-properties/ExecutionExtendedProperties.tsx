@@ -12,7 +12,6 @@ import EmailProperties from './execution-properties/EmailProperties';
 import ExecutorInputsEditor from './execution-properties/ExecutorInputsEditor';
 import ExtensionProperties from './execution-properties/ExtensionProperties';
 import FederationProperties from './execution-properties/FederationProperties';
-import GroupExecutorProperties from './execution-properties/GroupExecutorProperties';
 import HttpRequestProperties from './execution-properties/HttpRequestProperties';
 import IdentifyingProperties from './execution-properties/IdentifyingProperties';
 import IdentityGovernanceProperties from './execution-properties/IdentityGovernanceProperties';
@@ -25,16 +24,18 @@ import OUExecutorProperties from './execution-properties/OUExecutorProperties';
 import OUResolverProperties from './execution-properties/OUResolverProperties';
 import PasskeyProperties from './execution-properties/PasskeyProperties';
 import PermissionValidatorProperties from './execution-properties/PermissionValidatorProperties';
-import PreDeleteProperties from './execution-properties/PreDeleteProperties';
 import ProvisioningProperties from './execution-properties/ProvisioningProperties';
 import RoleExecutorProperties from './execution-properties/RoleExecutorProperties';
 import SessionSignOutProperties from './execution-properties/SessionSignOutProperties';
+import SharingExecutorProperties from './execution-properties/SharingExecutorProperties';
 import SmsProperties from './execution-properties/SmsProperties';
 import SsoCheckProperties from './execution-properties/SsoCheckProperties';
 import UserTypeResolverProperties from './execution-properties/UserTypeResolverProperties';
+import useResourceFieldError from '../../../hooks/useResourceFieldError';
 import type {FlowNodeInput} from '../../../models/responses';
 import {ExecutionTypes} from '../../../models/steps';
 import type {StepData} from '../../../models/steps';
+import {getExecutorInputs} from '../../../utils/executorInputs';
 import type {CommonResourcePropertiesPropsInterface} from '../CommonResourceProperties';
 
 /**
@@ -55,10 +56,7 @@ function ExecutionExtendedProperties({resource, onChange}: ExecutionExtendedProp
     return stepData?.action?.executor?.name;
   }, [resource]);
 
-  const currentInputs = useMemo((): FlowNodeInput[] => {
-    const stepData = resource?.data as StepData | undefined;
-    return (stepData?.action?.executor as {inputs?: FlowNodeInput[]} | undefined)?.inputs ?? [];
-  }, [resource]);
+  const currentInputs = useMemo((): FlowNodeInput[] => (resource ? getExecutorInputs(resource) : []), [resource]);
 
   const handleInputsChange = useCallback(
     (inputs: FlowNodeInput[]) => {
@@ -67,11 +65,17 @@ function ExecutionExtendedProperties({resource, onChange}: ExecutionExtendedProp
     [onChange, resource],
   );
 
+  const inputsError: string = useResourceFieldError(resource?.id, 'data.action.executor.inputs');
+
   if (!executorName) {
     return null;
   }
 
-  const showInputsEditor = !EXECUTORS_WITH_FIXED_INPUTS.has(executorName);
+  // Record Verification acts on the pin alone; Prepare Verification takes the attribute input.
+  const showInputsEditor =
+    executorName === ExecutionTypes.AttributeVerification
+      ? (resource?.data as StepData | undefined)?.action?.executor?.['mode'] === 'prepare'
+      : !EXECUTORS_WITH_FIXED_INPUTS.has(executorName);
 
   let executorSpecificProperties: ReactNode = null;
 
@@ -103,9 +107,6 @@ function ExecutionExtendedProperties({resource, onChange}: ExecutionExtendedProp
     case ExecutionTypes.PermissionValidator:
       executorSpecificProperties = <PermissionValidatorProperties resource={resource} onChange={onChange} />;
       break;
-    case ExecutionTypes.PreDelete:
-      executorSpecificProperties = <PreDeleteProperties resource={resource} onChange={onChange} />;
-      break;
     case ExecutionTypes.CriteriaRevocation:
       executorSpecificProperties = <CriteriaRevocationProperties resource={resource} onChange={onChange} />;
       break;
@@ -115,8 +116,8 @@ function ExecutionExtendedProperties({resource, onChange}: ExecutionExtendedProp
     case ExecutionTypes.RoleExecutor:
       executorSpecificProperties = <RoleExecutorProperties resource={resource} onChange={onChange} />;
       break;
-    case ExecutionTypes.GroupExecutor:
-      executorSpecificProperties = <GroupExecutorProperties resource={resource} onChange={onChange} />;
+    case ExecutionTypes.SharingExecutor:
+      executorSpecificProperties = <SharingExecutorProperties resource={resource} onChange={onChange} />;
       break;
     case ExecutionTypes.IdentityGovernance:
       executorSpecificProperties = <IdentityGovernanceProperties resource={resource} onChange={onChange} />;
@@ -157,6 +158,7 @@ function ExecutionExtendedProperties({resource, onChange}: ExecutionExtendedProp
     case ExecutionTypes.Session:
     case ExecutionTypes.OwnerResolver:
     case ExecutionTypes.AccountLinking:
+    case ExecutionTypes.AttributeVerification:
       executorSpecificProperties = <NoConfigProperties />;
       break;
     default:
@@ -170,7 +172,9 @@ function ExecutionExtendedProperties({resource, onChange}: ExecutionExtendedProp
   return (
     <Stack gap={2}>
       {executorSpecificProperties}
-      {showInputsEditor && <ExecutorInputsEditor inputs={currentInputs} onChange={handleInputsChange} />}
+      {showInputsEditor && (
+        <ExecutorInputsEditor inputs={currentInputs} onChange={handleInputsChange} errorMessage={inputsError} />
+      )}
     </Stack>
   );
 }

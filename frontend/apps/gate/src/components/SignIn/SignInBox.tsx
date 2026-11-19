@@ -3,129 +3,21 @@
 
 import {useDesign, FlowComponentRenderer, AuthCardLayout} from '@thunderid/design';
 import {useTemplateLiteralResolver} from '@thunderid/hooks';
-import {EmbeddedFlowComponentType, SignIn, type EmbeddedFlowComponent} from '@thunderid/react';
-import {EMAIL_REGEX, TemplateLiteralType} from '@thunderid/utils';
+import {SignIn, useThunderID, type EmbeddedFlowComponent} from '@thunderid/react';
+import {TemplateLiteralType} from '@thunderid/utils';
 import {Box, Alert, CircularProgress, Link, Typography} from '@wso2/oxygen-ui';
-import {useEffect, useRef, useState} from 'react';
 import type {JSX} from 'react';
 import {useTranslation} from 'react-i18next';
+import useFlowForm from '../../hooks/useFlowForm';
+import FlowExpired from '../FlowExpired/FlowExpired';
 
 export default function SignInBox(): JSX.Element {
   const {resolve, resolveAll} = useTemplateLiteralResolver();
   const {t} = useTranslation();
   const {isDesignEnabled} = useDesign();
-
-  const [formInputs, setFormInputs] = useState<Record<string, string>>({});
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const componentsRef = useRef<EmbeddedFlowComponent[]>([]);
-  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
-  useEffect(() => {
-    const timers = debounceTimers.current;
-    return () => {
-      Object.values(timers).forEach(clearTimeout);
-    };
-  }, []);
-
-  const collectInputComponents = (components: EmbeddedFlowComponent[]): void => {
-    const fields: EmbeddedFlowComponent[] = [];
-    const walk = (comps: EmbeddedFlowComponent[]) => {
-      comps.forEach((c: EmbeddedFlowComponent) => {
-        if (
-          ((c.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.TextInput ||
-            (c.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.PasswordInput ||
-            (c.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.EmailInput ||
-            (c.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.PhoneInput ||
-            (c.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.OtpInput) &&
-          c.ref &&
-          typeof c.ref === 'string'
-        ) {
-          fields.push(c);
-        }
-        if (c.components && Array.isArray(c.components)) walk(c.components);
-      });
-    };
-    walk(components);
-    componentsRef.current = fields;
-  };
-
-  const validateFieldFormat = (field: string, value: string): void => {
-    const component = componentsRef.current.find((c) => typeof c.ref === 'string' && c.ref === field);
-    if (!component) return;
-
-    let error = '';
-    if (
-      (component.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.EmailInput &&
-      value.trim() &&
-      !EMAIL_REGEX.test(value)
-    ) {
-      error = `${t('validations:field.email.invalid', 'Please enter a valid email address.')}`;
-    }
-
-    setFieldErrors((prev) => ({...prev, [field]: error}));
-    if (error) {
-      setTouched((prev) => ({...prev, [field]: true}));
-    } else {
-      setTouched((prev) => ({...prev, [field]: false}));
-    }
-  };
-
-  const validateForm = (components: EmbeddedFlowComponent[]): boolean => {
-    const errors: Record<string, string> = {};
-    const touchedFields: Record<string, boolean> = {};
-    let isValid = true;
-
-    const check = (comps: EmbeddedFlowComponent[]) => {
-      comps.forEach((component: EmbeddedFlowComponent) => {
-        if (
-          ((component.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.TextInput ||
-            (component.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.PasswordInput ||
-            (component.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.EmailInput ||
-            (component.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.PhoneInput ||
-            (component.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.OtpInput) &&
-          component.ref &&
-          typeof component.ref === 'string' &&
-          typeof component.label === 'string'
-        ) {
-          const value = formInputs[component.ref] ?? '';
-          if (component.required && !value.trim()) {
-            const fieldLabel = t(resolve(component.label)!, component.label);
-            errors[component.ref] =
-              `${t('validations:form.field.required', {defaultValue: '{{field}} is required.', field: fieldLabel})}`;
-            touchedFields[component.ref] = true;
-            isValid = false;
-          } else if (
-            (component.type as EmbeddedFlowComponentType) === EmbeddedFlowComponentType.EmailInput &&
-            value.trim() &&
-            !EMAIL_REGEX.test(value)
-          ) {
-            errors[component.ref] = `${t('validations:field.email.invalid', 'Please enter a valid email address.')}`;
-            touchedFields[component.ref] = true;
-            isValid = false;
-          }
-        }
-        if (component.components && Array.isArray(component.components)) check(component.components);
-      });
-    };
-    check(components);
-
-    setFieldErrors(errors);
-    setTouched((prev) => ({...prev, ...touchedFields}));
-    return isValid;
-  };
-
-  const updateInput = (field: string, value: string): void => {
-    setFormInputs((prev) => ({...prev, [field]: value}));
-
-    if (debounceTimers.current[field]) {
-      clearTimeout(debounceTimers.current[field]);
-    }
-
-    debounceTimers.current[field] = setTimeout(() => {
-      validateFieldFormat(field, value);
-    }, 600);
-  };
+  const {meta} = useThunderID();
+  const {formInputs, fieldErrors, touched, collectInputComponents, validateForm, updateInput, clearInputs} =
+    useFlowForm(resolve);
 
   return (
     <AuthCardLayout
@@ -140,9 +32,21 @@ export default function SignInBox(): JSX.Element {
       showLogo={!isDesignEnabled}
       logoDisplay={!isDesignEnabled ? {xs: 'flex', md: 'none'} : {display: 'none'}}
     >
-      <SignIn>
-        {({onSubmit, isLoading, components, error, meta: flowMeta, additionalData}) =>
-          isLoading && !components?.length ? (
+      <SignIn afterFlowExpiredUrl={meta?.application?.url}>
+        {({
+          onSubmit,
+          isLoading,
+          isFlowExpired,
+          isFlowRestarted,
+          flowExpiryRedirect,
+          components,
+          error,
+          meta: flowMeta,
+          additionalData,
+        }) =>
+          isFlowExpired ? (
+            <FlowExpired applicationName={flowMeta?.application?.name} redirect={flowExpiryRedirect} />
+          ) : isLoading && !components?.length ? (
             <Box sx={{display: 'flex', justifyContent: 'center', p: 3}}>
               <CircularProgress />
             </Box>
@@ -152,6 +56,11 @@ export default function SignInBox(): JSX.Element {
                   the SDK raises its expiry error against the request already on the wire, which would
                   otherwise flash an error the user cannot act on. Errors worth showing outlive the
                   request, since the flow clears them as each submission starts. */}
+              {isFlowRestarted && (
+                <Alert severity="info" sx={{mb: 2}}>
+                  {t('auth:flowExpired.restarted', 'Your session expired, so we started again.')}
+                </Alert>
+              )}
               {error && !isLoading && (
                 <Alert severity="error" sx={{mb: 2}}>
                   {error.message ??
@@ -197,8 +106,7 @@ export default function SignInBox(): JSX.Element {
                           onValidate={validateForm}
                           onSubmit={(action, inputs) => {
                             void onSubmit({inputs, action: action.id}).finally(() => {
-                              setFormInputs({});
-                              setFieldErrors({});
+                              clearInputs();
                             });
                           }}
                         />

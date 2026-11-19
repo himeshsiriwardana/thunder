@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {QueryErrorNotice, useFlowListColumns} from '@thunderid/components';
+import {useCapabilitiesContext, useProjectScope} from '@thunderid/contexts';
 import {useDataGridLocaleText} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
 import {ListingTable} from '@wso2/oxygen-ui';
@@ -19,7 +20,10 @@ export default function FlowsList(): JSX.Element {
   const {t} = useTranslation();
   const logger = useLogger('FlowsList');
   const dataGridLocaleText = useDataGridLocaleText();
-  const {data, isLoading, error, refetch} = useGetFlows();
+  const {projectId} = useProjectScope();
+  const {can} = useCapabilitiesContext();
+  const {data, isLoading, error, refetch} = useGetFlows({projectId});
+  const visibleFlows = data?.flows ?? [];
 
   // Resolves an error through the `flows` catalog. `t` defaults to the `common` namespace, so
   // this forwards explicit `ns:` prefixes unchanged and prefixes bare keys with `flows:`, per
@@ -53,7 +57,10 @@ export default function FlowsList(): JSX.Element {
     [flowRoutes, logger, navigate],
   );
 
-  const columns = useFlowListColumns<BasicFlowDefinition>({onOpen: handleOpenClick, onDelete: handleDeleteClick});
+  const columns = useFlowListColumns<BasicFlowDefinition>({
+    onOpen: handleOpenClick,
+    onDelete: can('flow', 'delete') ? handleDeleteClick : undefined,
+  });
 
   if (error) {
     return (
@@ -71,16 +78,15 @@ export default function FlowsList(): JSX.Element {
 
   return (
     <>
-      <ListingTable.Provider variant="data-grid" loading={isLoading}>
-        <ListingTable.Container>
+      <ListingTable.Provider variant="data-grid-card" loading={isLoading}>
+        <ListingTable.Container disablePaper>
           <ListingTable.DataGrid
-            rows={data?.flows ?? []}
+            rows={visibleFlows}
             columns={columns}
             getRowId={(row): string => (row as BasicFlowDefinition).id}
             onRowClick={(params) => {
               handleOpenClick(params.row as BasicFlowDefinition);
             }}
-            rowHeight={64}
             initialState={{
               pagination: {
                 paginationModel: {pageSize: 10},

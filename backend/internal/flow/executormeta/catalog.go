@@ -21,14 +21,14 @@ var catalog = map[string]providers.ExecutorMeta{
 		SupportedFlowTypes: []providers.FlowType{"AUTHENTICATION", "REGISTRATION"},
 	},
 	ExecutorNameApplicationActionValidator: {
-		SupportedModes:     []string{"revoke_all", "revoke_before_action"},
+		SupportedModes:     []string{ExecutorModeRevokeBeforeRemoval},
 		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION", "SYSTEM"},
-	},
-	ExecutorNameApplicationDelete: {
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
 	},
 	ExecutorNameAttributeCollect:             {},
 	ExecutorNameAttributeUniquenessValidator: {},
+	ExecutorNameAttributeVerification: {
+		SupportedModes: []string{ExecutorModePrepare, ExecutorModeRecord},
+	},
 	ExecutorNameAuthAssert: {
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "callbackType"},
@@ -38,9 +38,6 @@ var catalog = map[string]providers.ExecutorMeta{
 	ExecutorNameAuthorizationDetail: {
 		SupportedFlowTypes: []providers.FlowType{"AUTHENTICATION"},
 	},
-	ExecutorNameClientSecret: {
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
-	},
 	ExecutorNameConsent: {
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "timeout"},
@@ -49,6 +46,9 @@ var catalog = map[string]providers.ExecutorMeta{
 	},
 	ExecutorNameCredentialSetter: {},
 	ExecutorNameCredentialsAuth:  {},
+	ExecutorNameDeviceCode: {
+		SupportedFlowTypes: []providers.FlowType{providers.FlowTypeDeviceGrant},
+	},
 	ExecutorNameCriteriaRevocation: {
 		DefaultMode:        ExecutorModeRevoke,
 		SupportedModes:     []string{ExecutorModeAdvanceCutoff, ExecutorModeRevoke},
@@ -101,6 +101,8 @@ var catalog = map[string]providers.ExecutorMeta{
 		SupportedModes: []string{"identify", "resolve", "check_state"},
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "loginHintAttribute"},
+			{Property: "boundToUserType"},
+			{Property: "continueOnNoMatch"},
 		},
 	},
 	ExecutorNameIdentityGovernance: {
@@ -146,6 +148,7 @@ var catalog = map[string]providers.ExecutorMeta{
 	ExecutorNameOUCreation: {
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "parentOuId"},
+			{Property: "generateOuHandle"},
 		},
 	},
 	ExecutorNameOUResolver: {
@@ -175,17 +178,17 @@ var catalog = map[string]providers.ExecutorMeta{
 			{Property: "requiredScopes"},
 		},
 	},
-	ExecutorNamePreDelete: {
-		DefaultMode:        "revoke_all",
-		SupportedModes:     []string{"revoke_all"},
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+	ExecutorNamePreRevocation: {
+		SupportedModes: []string{ExecutorModeClientRemoval, ExecutorModeClientSecretRotation,
+			ExecutorModeCredentialUpdate, ExecutorModeIdentityDeletion},
+		SupportedFlowTypes: []providers.FlowType{"SYSTEM"},
 	},
 	ExecutorNamePreSuspend: {
 		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
 	},
 	ExecutorNameProvisioning: {
 		SupportedFlowTypes: []providers.FlowType{
-			"AUTHENTICATION", "REGISTRATION", "USER_ONBOARDING", "ADMINISTRATION",
+			"AUTHENTICATION", "REGISTRATION", "USER_ONBOARDING", "ADMINISTRATION", "INVITATION",
 		},
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "delegated"},
@@ -197,6 +200,7 @@ var catalog = map[string]providers.ExecutorMeta{
 			{Property: "seedGroupsFromMapping"},
 			{Property: "seedRolesFromMapping"},
 			{Property: "allowCrossOUProvisioning"},
+			{Property: "provisioningOU"},
 		},
 	},
 	ExecutorNameSMSExecutor: {
@@ -220,16 +224,13 @@ var catalog = map[string]providers.ExecutorMeta{
 	ExecutorNameSessionSignOut: {
 		SupportedFlowTypes: []providers.FlowType{"SIGNOUT"},
 	},
-	ExecutorNameUserDelete: {
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
-	},
 	ExecutorNameUserTypeResolver: {
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "allowedUserTypes"},
 		},
 	},
 	ExecutorNameAgentTypeResolver: {
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION", "AUTHENTICATION"},
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION", "AUTHENTICATION", "REGISTRATION"},
 		SupportedProperties: []providers.ExecutorSupportedProperties{
 			{Property: "allowedAgentTypes"},
 		},
@@ -246,20 +247,24 @@ var catalog = map[string]providers.ExecutorMeta{
 			ExecutorModeRoleDeletion,
 			ExecutorModeRolePermissionRemoval,
 		},
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION", "SYSTEM"},
 	},
 	ExecutorNameRole: {
-		SupportedModes: []string{
-			ExecutorModeRoleAssignmentRemoval, ExecutorModeRoleDeletion, ExecutorModeRolePermissionRemoval,
+		SupportedModes:     []string{ExecutorModeRoleAssignment, ExecutorModeRoleSelection},
+		SupportedFlowTypes: []providers.FlowType{"INVITATION", "REGISTRATION"},
+		SupportedProperties: []providers.ExecutorSupportedProperties{
+			{Property: "roles"},
 		},
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
 	},
-	ExecutorNameGroup: {
-		SupportedModes:     []string{ExecutorModeGroupDeletion, ExecutorModeGroupMembershipRemoval},
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
-	},
-	ExecutorNameActionDeletion: {
-		SupportedFlowTypes: []providers.FlowType{"ADMINISTRATION"},
+	ExecutorNameSharing: {
+		SupportedModes:     []string{ExecutorModeShare, ExecutorModeValidate},
+		SupportedFlowTypes: []providers.FlowType{"INVITATION", "AUTHENTICATION", "REGISTRATION"},
+		SupportedProperties: []providers.ExecutorSupportedProperties{
+			{Property: "resourceType", IsRequired: true},
+			{Property: "resourceId"},
+			{Property: "owningOuId"},
+			{Property: "targetOuId", IsRequired: true},
+		},
 	},
 }
 

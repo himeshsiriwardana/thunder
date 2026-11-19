@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {QueryErrorNotice, ResourceAvatar} from '@thunderid/components';
+import {useCapabilitiesContext} from '@thunderid/contexts';
 import {useDataGridLocaleText} from '@thunderid/hooks';
 import {getDisplayNameForCode, toFlagEmoji, useGetLanguages} from '@thunderid/i18n';
 import {useLogger} from '@thunderid/logger/react';
@@ -20,6 +21,7 @@ export default function TranslationsList(): JSX.Element {
   const logger = useLogger('TranslationsList');
   const dataGridLocaleText = useDataGridLocaleText();
   const routes = useTranslationRoutes();
+  const {can} = useCapabilitiesContext();
 
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<boolean>(false);
@@ -92,36 +94,40 @@ export default function TranslationsList(): JSX.Element {
         hideable: false,
         renderCell: (params: DataGrid.GridRenderCellParams<{id: string; code: string}>): JSX.Element => (
           <ListingTable.RowActions>
-            <Tooltip title={t('common:actions.edit', 'Edit')}>
-              <IconButton
-                size="small"
-                aria-label={t('common:actions.edit', 'Edit')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleEditClick(params.row.code);
-                }}
-              >
-                <Pencil size={16} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={t('common:actions.delete', 'Delete')}>
-              <IconButton
-                size="small"
-                color="error"
-                aria-label={t('common:actions.delete', 'Delete')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteClick(params.row.code);
-                }}
-              >
-                <Trash2 size={16} />
-              </IconButton>
-            </Tooltip>
+            {can('i18n', 'update') && (
+              <Tooltip title={t('common:actions.edit', 'Edit')}>
+                <IconButton
+                  size="small"
+                  aria-label={t('common:actions.edit', 'Edit')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleEditClick(params.row.code);
+                  }}
+                >
+                  <Pencil size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
+            {can('i18n', 'delete') && (
+              <Tooltip title={t('common:actions.delete', 'Delete')}>
+                <IconButton
+                  size="small"
+                  color="error"
+                  aria-label={t('common:actions.delete', 'Delete')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteClick(params.row.code);
+                  }}
+                >
+                  <Trash2 size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
           </ListingTable.RowActions>
         ),
       },
     ],
-    [handleDeleteClick, handleEditClick, t],
+    [can, handleDeleteClick, handleEditClick, t],
   );
 
   if (error) {
@@ -137,8 +143,8 @@ export default function TranslationsList(): JSX.Element {
 
   return (
     <>
-      <ListingTable.Provider variant="data-grid" loading={isLoading}>
-        <ListingTable.Container>
+      <ListingTable.Provider variant="data-grid-card" loading={isLoading}>
+        <ListingTable.Container disablePaper>
           <ListingTable.DataGrid
             rows={rows}
             columns={columns}
@@ -152,7 +158,7 @@ export default function TranslationsList(): JSX.Element {
               },
             }}
             pageSizeOptions={[5, 10, 25]}
-            rowHeight={64}
+            rowHeight={56}
             disableRowSelectionOnClick
             // Filtering is not wired end to end, so the column filter panel stays hidden.
             disableColumnFilter

@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -14,7 +15,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/thunder-id/thunderid/internal/inboundclient"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/tests/mocks/agentmock"
 
 	"gopkg.in/yaml.v3"
@@ -36,7 +39,10 @@ id: test-agent-001
 ouId: ou-123
 type: service-agent
 description: A test agent
-owner: owner-id-123
+owner:
+  id: owner-id-123
+  idType: uuid
+  isLocal: true
 authFlowId: flow-abc
 registrationFlowId: flow-reg-xyz
 themeId: theme-blue
@@ -57,7 +63,10 @@ attributes:
 	assert.Equal(s.T(), "service-agent", req.Type)
 	assert.Equal(s.T(), "Test Agent", req.Attributes["name"])
 	assert.Equal(s.T(), "A test agent", req.Description)
-	assert.Equal(s.T(), "owner-id-123", req.Owner)
+	s.Require().NotNil(req.Owner)
+	assert.Equal(s.T(), "owner-id-123", req.Owner.ID)
+	assert.Equal(s.T(), providers.AgentOwnerIDTypeUUID, req.Owner.IDType)
+	assert.True(s.T(), req.Owner.Local())
 	assert.Equal(s.T(), "flow-abc", req.AuthFlowID)
 	assert.Equal(s.T(), "flow-reg-xyz", req.RegistrationFlowID)
 	assert.Equal(s.T(), "theme-blue", req.ThemeID)
@@ -159,6 +168,26 @@ attributes:
 	assert.Empty(s.T(), e.SystemAttributes)
 }
 
+// A declared agent keeps its project, which a Data Plane stores without checking.
+func (s *MakeAgentEntityParserTestSuite) TestMakeAgentEntityParser_KeepsProject() {
+	yamlData := []byte(`
+id: project-agent
+ouId: ou-1
+projectId: project-1
+type: service-agent
+`)
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().ValidateAgent(mock.Anything,
+		mock.MatchedBy(func(a *providers.Agent) bool { return a.ProjectID == "project-1" }), "project-agent").
+		Return("", "", inboundmodel.InboundClient{}, nil).Once()
+
+	e, _, _, err := makeAgentEntityParser(mockSvc)(yamlData)
+
+	s.Require().NoError(err)
+	assert.Equal(s.T(), "project-1", e.ProjectID)
+	assert.Equal(s.T(), "ou-1", e.OUID)
+}
+
 func (s *MakeAgentEntityParserTestSuite) TestMakeAgentEntityParser_WithOAuthPublicClient() {
 	yamlData := []byte(`
 id: public-agent
@@ -254,7 +283,144 @@ func (s *MakeAgentEntityParserTestSuite) TestMakeAgentEntityParser_ValidateAgent
 	assert.Contains(s.T(), err.Error(), "failed to validate agent 'err-agent'")
 }
 
+func (s *MakeAgentEntityParserTestSuite) TestMakeAgentEntityParser_InvalidValidUntil() {
+	yamlData := []byte("id: bad-lifespan\nouId: ou-1\ntype: t\nvalidUntil: not-a-date\n")
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().ValidateAgent(mock.Anything, mock.Anything, "bad-lifespan").
+		Return("", "", inboundmodel.InboundClient{}, nil).Once()
+
+	parser := makeAgentEntityParser(mockSvc)
+	_, _, _, err := parser(yamlData)
+
+	assert.ErrorIs(s.T(), err, errInvalidDeclarativeLifespan)
+	assert.Contains(s.T(), err.Error(), "failed to validate agent 'bad-lifespan'")
+}
+
+// The parser hands the personal kind to ValidateAgent, which applies the personal agent setup and its refusals.
+func (s *MakeAgentEntityParserTestSuite) TestMakeAgentEntityParser_PersonalSetupRefusalSurfaces() {
+	yamlData := []byte("id: pa-agent\nouId: ou-1\ntype: t\nkind: personal-assistant\nowner:\n  id: user-1\n" +
+		"inboundAuthConfig:\n  - type: oauth2\n    config:\n      grantTypes:\n        - client_credentials\n")
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().ValidateAgent(mock.Anything, mock.MatchedBy(func(a *providers.Agent) bool {
+		return a.Kind == providers.AgentKindPersonalAssistant
+	}), "pa-agent").Return("", "", inboundmodel.InboundClient{}, &ErrorGrantTypeNotAllowedForPersonalAgent).Once()
+	parser := makeAgentEntityParser(mockSvc)
+
+	_, _, _, err := parser(yamlData)
+
+	s.Require().Error(err)
+	assert.Contains(s.T(), err.Error(), ErrorGrantTypeNotAllowedForPersonalAgent.Code)
+}
+
+// A personal agent with an owner and the personal grants loads, keeping its kind and owner.
+func (s *MakeAgentEntityParserTestSuite) TestMakeAgentEntityParser_PersonalAgentStored() {
+	yamlData := []byte("id: pa-agent\nouId: ou-1\ntype: t\nkind: personal-assistant\nowner:\n  id: user-1\n" +
+		"inboundAuthConfig:\n  - type: oauth2\n    config:\n      grantTypes:\n        - authorization_code\n")
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().ValidateAgent(mock.Anything, mock.Anything, "pa-agent").
+		Return("", "", inboundmodel.InboundClient{}, nil).Once()
+	parser := makeAgentEntityParser(mockSvc)
+
+	e, _, _, err := parser(yamlData)
+
+	s.Require().NoError(err)
+	s.Require().NotNil(e)
+	stored := readSystemAttributes(e.SystemAttributes)
+	assert.Equal(s.T(), providers.AgentKindPersonalAssistant, stored.Kind)
+	assert.Equal(s.T(), "user-1", stored.Owner.ID)
+}
+
+// A file without a kind loads as an ordinary agent.
+func (s *MakeAgentEntityParserTestSuite) TestMakeAgentEntityParser_NoKindIsOrdinaryAgent() {
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().ValidateAgent(mock.Anything, mock.Anything, "plain-agent").
+		Return("", "", inboundmodel.InboundClient{}, nil).Once()
+	parser := makeAgentEntityParser(mockSvc)
+
+	e, _, _, err := parser([]byte("id: plain-agent\nouId: ou-1\ntype: t\n"))
+
+	s.Require().NoError(err)
+	s.Require().NotNil(e)
+	assert.Empty(s.T(), readSystemAttributes(e.SystemAttributes).Kind)
+}
+
 // --- makeAgentInboundParser error paths ---
+
+type MakeAgentSharingParserTestSuite struct {
+	suite.Suite
+}
+
+func TestMakeAgentSharingParserTestSuite(t *testing.T) {
+	suite.Run(t, new(MakeAgentSharingParserTestSuite))
+}
+
+// Most agent documents declare no policy, and those are not read against the loaded agent.
+func (s *MakeAgentSharingParserTestSuite) TestADocumentWithoutPoliciesDeclaresNone() {
+	parser := makeAgentSharingParser(agentmock.NewAgentServiceInterfaceMock(s.T()))
+
+	declared, err := parser([]byte("id: agent-1\nouId: ou-1\ntype: service-agent\n"))
+
+	s.Require().NoError(err)
+	s.Equal(&sharing.DeclaredResourcePolicies{ResourceID: "agent-1"}, declared)
+}
+
+// The policies are declared against the unit the loaded agent lives in, which the document may name by
+// handle.
+func (s *MakeAgentSharingParserTestSuite) TestReadsThePoliciesAgainstTheAgentsUnit() {
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().GetAgent(asRuntime, "agent-1", true).
+		Return(&model.AgentGetResponse{ID: "agent-1", OUID: "ou-1", Display: "Agent One"}, nil).Once()
+	doc := `
+id: agent-1
+ouHandle: engineering
+type: service-agent
+sharingPolicies:
+  - id: agent-1-policy-1
+    otherTreeRoots:
+      mode: selected
+      units:
+        - ouId: ou-2
+`
+
+	declared, err := makeAgentSharingParser(mockSvc)([]byte(doc))
+
+	s.Require().NoError(err)
+	s.Equal(&sharing.DeclaredResourcePolicies{
+		ResourceID:   "agent-1",
+		ResourceName: "Agent One",
+		OwningOUID:   "ou-1",
+		Policies: []sharing.PolicyRequest{{ID: "agent-1-policy-1", OtherTreeRoots: &sharing.OtherTreeRootsRequest{
+			Mode: sharing.OtherTreeRootsSelected, Units: []sharing.RootUnitRequest{{OUID: "ou-2"}}}}},
+	}, declared)
+}
+
+func (s *MakeAgentSharingParserTestSuite) TestNamesTheAgentByIDWithoutADisplayName() {
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().GetAgent(asRuntime, "agent-1", true).
+		Return(&model.AgentGetResponse{ID: "agent-1", OUID: "ou-1"}, nil).Once()
+	doc := "id: agent-1\nouId: ou-1\nsharingPolicies:\n  - id: p1\n    allUnits: {}\n"
+
+	declared, err := makeAgentSharingParser(mockSvc)([]byte(doc))
+
+	s.Require().NoError(err)
+	s.Equal("agent-1", declared.ResourceName)
+}
+
+func (s *MakeAgentSharingParserTestSuite) TestRefusesPoliciesForAnAgentThatDidNotLoad() {
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().GetAgent(asRuntime, "agent-1", true).Return(nil, &ErrorAgentNotFound).Once()
+	doc := "id: agent-1\nouId: ou-1\nsharingPolicies:\n  - id: p1\n    allUnits: {}\n"
+
+	_, err := makeAgentSharingParser(mockSvc)([]byte(doc))
+
+	s.ErrorContains(err, "failed to read agent 'agent-1' for its sharing policies")
+}
+
+func (s *MakeAgentSharingParserTestSuite) TestRefusesMalformedYAML() {
+	_, err := makeAgentSharingParser(agentmock.NewAgentServiceInterfaceMock(s.T()))([]byte("id: [unclosed"))
+
+	s.ErrorContains(err, "failed to parse agent YAML")
+}
 
 type MakeAgentInboundParserTestSuite struct {
 	suite.Suite
@@ -288,6 +454,33 @@ func (s *MakeAgentInboundParserTestSuite) TestMakeAgentInboundParser_ValidateAge
 	assert.Contains(s.T(), err.Error(), "failed to validate agent 'inbound-err-agent'")
 }
 
+// The inbound client carries the OAuth config as ValidateAgent completed it, so a personal agent declared without
+// one still gets the OAuth client its setup adds.
+func (s *MakeAgentInboundParserTestSuite) TestMakeAgentInboundParser_ReadsTheCompletedOAuthConfig() {
+	yamlData := []byte("id: pa-agent\nouId: ou-1\ntype: t\nkind: personal-assistant\nowner:\n  id: user-1\n")
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().ValidateAgent(mock.Anything, mock.Anything, "pa-agent").
+		Run(func(_ context.Context, a *providers.Agent, _ string) {
+			a.InboundAuthConfig = []providers.InboundAuthConfigWithSecret{{
+				Type: providers.OAuthInboundAuthType,
+				OAuthConfig: &providers.OAuthConfigWithSecret{
+					GrantTypes: []providers.GrantType{providers.GrantTypeAuthorizationCode},
+				},
+			}}
+		}).
+		Return("", "", inboundmodel.InboundClient{}, nil).Once()
+
+	client, err := makeAgentInboundParser(mockSvc)(yamlData)
+
+	s.Require().NoError(err)
+	s.Require().NotNil(client)
+	s.Equal("pa-agent", client.ID)
+	s.True(client.IsReadOnly)
+	profile, ok := client.Properties[inboundclient.PropOAuthProfile].(providers.OAuthProfile)
+	s.Require().True(ok, "the OAuth profile is set")
+	s.Equal([]string{string(providers.GrantTypeAuthorizationCode)}, profile.GrantTypes)
+}
+
 // --- makeAgentInboundConfig validator ---
 
 type MakeAgentInboundConfigTestSuite struct {
@@ -311,4 +504,63 @@ func (s *MakeAgentInboundConfigTestSuite) TestValidator_ValidInboundClient() {
 	cfg := makeAgentInboundConfig(mockSvc)
 	err := cfg.Validator(&inboundmodel.InboundClient{ID: "client-1"})
 	assert.NoError(s.T(), err)
+}
+
+// A declarative agent's credentials are held beside its client secret, as plaintext the loader hashes.
+func (s *MakeAgentEntityParserTestSuite) TestMakeAgentEntityParser_WithCredentials() {
+	yamlData := []byte(`
+id: cred-agent
+ouId: ou-1
+type: service-agent
+attributes:
+  name: Credential Agent
+credentials:
+  password: s3cret
+`)
+	mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+	mockSvc.EXPECT().ValidateAgent(mock.Anything, mock.Anything, "cred-agent").
+		Return("cred-client-id", "cred-client-secret", inboundmodel.InboundClient{}, nil).Once()
+
+	parser := makeAgentEntityParser(mockSvc)
+	e, _, sysCredsJSON, err := parser(yamlData)
+
+	s.Require().NoError(err)
+	var attrs map[string]interface{}
+	s.Require().NoError(json.Unmarshal(e.Attributes, &attrs))
+	assert.NotContains(s.T(), attrs, "password", "a credential is never kept as an attribute")
+	var sysCreds map[string]string
+	s.Require().NoError(json.Unmarshal(sysCredsJSON, &sysCreds))
+	assert.Equal(s.T(), map[string]string{fieldClientSecret: "cred-client-secret", "password": "s3cret"}, sysCreds)
+}
+
+func (s *MakeAgentEntityParserTestSuite) TestMakeAgentEntityParser_RefusesAMalformedCredential() {
+	for name, credentials := range map[string]string{
+		"not a string":      "  password:\n    - one\n",
+		"the client secret": "  " + fieldClientSecret + ": s3cret\n",
+		"the flow secret":   "  flowSecret: s3cret\n",
+		"a passkey":         "  passkey: s3cret\n",
+	} {
+		s.Run(name, func() {
+			mockSvc := agentmock.NewAgentServiceInterfaceMock(s.T())
+			mockSvc.EXPECT().ValidateAgent(mock.Anything, mock.Anything, "bad-cred-agent").
+				Return("", "", inboundmodel.InboundClient{}, nil).Once()
+
+			_, _, _, err := makeAgentEntityParser(mockSvc)([]byte(
+				"id: bad-cred-agent\nouId: ou-1\ntype: service-agent\ncredentials:\n" + credentials))
+
+			assert.ErrorContains(s.T(), err, "credentials of agent 'bad-cred-agent'")
+		})
+	}
+}
+
+func (s *MakeAgentEntityParserTestSuite) TestWithDeclarativeCredentials_KeepsWhatHasNoCredentials() {
+	sysCreds := json.RawMessage(`{"clientSecret":"x"}`)
+
+	merged, err := withDeclarativeCredentials(sysCreds, nil)
+
+	s.NoError(err)
+	s.Equal(sysCreds, merged)
+
+	_, err = withDeclarativeCredentials(json.RawMessage(`[1]`), map[string]interface{}{"password": "s3cret"})
+	s.Error(err)
 }

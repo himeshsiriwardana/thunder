@@ -70,6 +70,10 @@ export default function FlowComponentRenderer({
   onValidate,
   maxImageSize,
   additionalData,
+  renderField,
+  isSubmitDisabled,
+  rendersInputsWithoutSubmit,
+  isAutoFocusDisabled,
 }: FlowComponentRendererProps): JSX.Element | null {
   const comp = component as FlowComponent;
 
@@ -107,6 +111,10 @@ export default function FlowComponentRenderer({
         onBlur={onBlur}
         onSubmit={onSubmit}
         onValidate={onValidate}
+        renderField={renderField}
+        isSubmitDisabled={isSubmitDisabled}
+        rendersInputsWithoutSubmit={rendersInputsWithoutSubmit}
+        isAutoFocusDisabled={isAutoFocusDisabled}
       />
     );
   }
@@ -142,7 +150,14 @@ export default function FlowComponentRenderer({
       // is disabled; denying stays available.
       return (
         <>
-          <ConsentAdapter consentData={consentData} formValues={values} onInputChange={onInputChange} />
+          <ConsentAdapter
+            consentData={consentData}
+            formValues={values}
+            onInputChange={onInputChange}
+            clientIdHost={additionalData?.['clientIdHost'] as string | undefined}
+            redirectUriHost={additionalData?.['redirectUriHost'] as string | undefined}
+            redirectUriLoopback={additionalData?.['redirectUriLoopback'] === 'true'}
+          />
           <BlockAdapter
             component={component}
             index={index}
@@ -157,6 +172,10 @@ export default function FlowComponentRenderer({
             onValidate={onValidate}
             additionalData={additionalData}
             approvalBlocked={isConsentApprovalBlocked(parseConsentPurposes(consentData), values)}
+            renderField={renderField}
+            isSubmitDisabled={isSubmitDisabled}
+            rendersInputsWithoutSubmit={rendersInputsWithoutSubmit}
+            isAutoFocusDisabled={isAutoFocusDisabled}
           />
         </>
       );
@@ -176,6 +195,10 @@ export default function FlowComponentRenderer({
         onSubmit={onSubmit}
         onValidate={onValidate}
         additionalData={additionalData}
+        renderField={renderField}
+        isSubmitDisabled={isSubmitDisabled}
+        rendersInputsWithoutSubmit={rendersInputsWithoutSubmit}
+        isAutoFocusDisabled={isAutoFocusDisabled}
       />
     );
   }

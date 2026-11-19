@@ -5,10 +5,15 @@ package testutils
 
 import (
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
+
+	"github.com/thunder-id/thunderid/tests/integration/mockservices"
 )
 
 // The Control Plane suite runs the Control Plane binary inside the distribution build_backend
@@ -45,7 +50,46 @@ const (
 	UnscopedTokenEnv = "TEST_CP_UNSCOPED_TOKEN"
 	// StrangerTokenEnv carries a token the trusted issuer signed for TrustedIssuerStrangerSubject.
 	StrangerTokenEnv = "TEST_CP_STRANGER_TOKEN"
+
+	// MCPScopedTokenEnv, MCPUnscopedTokenEnv and MCPExpiredTokenEnv carry tokens the trusted issuer
+	// signed for MCPResource: one with the system scope, one without it, and one with the scope that
+	// expired an hour before the run.
+	MCPScopedTokenEnv   = "TEST_CP_MCP_SCOPED_TOKEN"
+	MCPUnscopedTokenEnv = "TEST_CP_MCP_UNSCOPED_TOKEN"
+	MCPExpiredTokenEnv  = "TEST_CP_MCP_EXPIRED_TOKEN"
+	// OtherResourceTokenEnv carries a token the trusted issuer signed with the system scope for
+	// OtherResource.
+	OtherResourceTokenEnv = "TEST_CP_OTHER_RESOURCE_TOKEN"
+	// OtherResource is a resource the trusted issuer issues tokens for that is not this Control Plane.
+	OtherResource = "https://other-resource.example.com"
 )
+
+// ControlPlaneChildScopes are the child permissions of system the trusted issuer signs a management token for,
+// each in the environment variable ControlPlaneScopedTokenEnv names.
+var ControlPlaneChildScopes = []string{"system:user", "system:app", "system:role", "system:flow", "system:connection",
+	"system:flow:update"}
+
+// ControlPlaneScopedTokenEnv returns the environment variable that carries the trusted issuer's management token
+// with exactly scope.
+func ControlPlaneScopedTokenEnv(scope string) string {
+	return "TEST_CP_TOKEN_" + strings.ToUpper(strings.ReplaceAll(scope, ":", "_"))
+}
+
+// MCPResource is the resource identifier the Control Plane's MCP server advertises, and the audience
+// a token for /mcp must name: the MCP server accepts only tokens issued for it, not for the audience
+// the management API accepts.
+func MCPResource() string {
+	return TestServerURL + "/mcp"
+}
+
+// IntegrationPlaneEnv names the plane a run tests. make test_integration_cp sets it to "control" on
+// the runner, and the test packages inherit it.
+const IntegrationPlaneEnv = "INTEGRATION_PLANE"
+
+// IsControlPlaneRun reports whether this process belongs to a run against the Control Plane.
+func IsControlPlaneRun() bool {
+	return os.Getenv(IntegrationPlaneEnv) == "control"
+}
 
 // UseControlPlane makes ReplaceResources install the Control Plane's deployment.yaml.
 func UseControlPlane() {
@@ -70,37 +114,68 @@ func InstallControlPlaneBinary() error {
 	return os.Chmod(dest, 0o755)
 }
 
+// TrustedIssuer is the identity provider the Control Plane trusts for management tokens. The Control
+// Plane is configured with its URL, so it answers on its own port rather than on the shared OIDC
+// mock service.
+type TrustedIssuer struct {
+	*mockservices.OIDCServer
+	server *http.Server
+}
+
+// tokenSigner is an identity provider that signs tokens as its issuer.
+type tokenSigner interface {
+	GetURL() string
+	SignJWT(header, claims map[string]interface{}) (string, error)
+}
+
 // StartTrustedIssuer starts the identity provider the Control Plane trusts for management tokens.
-func StartTrustedIssuer() (*MockOIDCServer, error) {
-	issuer, err := NewMockOIDCServer(TrustedIssuerPort, TrustedIssuerLookupClientID, TrustedIssuerLookupClientSecret)
+func StartTrustedIssuer() (*TrustedIssuer, error) {
+	issuer, err := mockservices.NewOIDCServer(fmt.Sprintf("http://localhost:%d", TrustedIssuerPort),
+		TrustedIssuerLookupClientID, TrustedIssuerLookupClientSecret)
 	if err != nil {
 		return nil, err
 	}
 	// The administrator the management tokens name, so the Control Plane can put a name to them.
 	issuer.AddUser(&OIDCUserInfo{Sub: TrustedIssuerAdminSubject, Name: TrustedIssuerAdminName})
-	if err := issuer.Start(); err != nil {
-		return nil, err
+
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", TrustedIssuerPort))
+	if err != nil {
+		return nil, fmt.Errorf("failed to start the trusted issuer: %w", err)
 	}
-	return issuer, nil
+	server := &http.Server{Handler: issuer}
+	go func() { _ = server.Serve(listener) }()
+	return &TrustedIssuer{OIDCServer: issuer, server: server}, nil
+}
+
+// Stop stops the trusted issuer.
+func (t *TrustedIssuer) Stop() error {
+	return t.server.Close()
 }
 
 // IssueManagementToken signs an access token for the Control Plane, as an external identity
 // provider would issue one to an administrator.
-func IssueManagementToken(issuer *MockOIDCServer, scope string, validFor time.Duration) (string, error) {
+func IssueManagementToken(issuer tokenSigner, scope string, validFor time.Duration) (string, error) {
 	return IssueManagementTokenFor(issuer, TrustedIssuerAdminSubject, scope, validFor)
 }
 
 // IssueManagementTokenFor signs an access token for the Control Plane naming the given user.
-func IssueManagementTokenFor(issuer *MockOIDCServer, subject, scope string,
+func IssueManagementTokenFor(issuer tokenSigner, subject, scope string,
 	validFor time.Duration) (string, error) {
 	now := time.Now()
+	return IssueToken(issuer, TrustedIssuerAudience, subject, scope, now, now.Add(validFor))
+}
+
+// IssueToken signs an access token for the given audience, one or a list, naming the given user and
+// valid from issuedAt until expiresAt. An empty scope leaves the scope claim out.
+func IssueToken(issuer tokenSigner, audience any, subject, scope string,
+	issuedAt, expiresAt time.Time) (string, error) {
 	claims := map[string]interface{}{
 		"iss": issuer.GetURL(),
-		"aud": TrustedIssuerAudience,
+		"aud": audience,
 		"sub": subject,
-		"iat": now.Unix(),
-		"nbf": now.Unix(),
-		"exp": now.Add(validFor).Unix(),
+		"iat": issuedAt.Unix(),
+		"nbf": issuedAt.Unix(),
+		"exp": expiresAt.Unix(),
 	}
 	if scope != "" {
 		claims["scope"] = scope

@@ -14,11 +14,15 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/thunder-id/thunderid/internal/system/managedresource"
 	"github.com/thunder-id/thunderid/internal/system/observability/event"
 	"github.com/thunder-id/thunderid/internal/system/security"
+	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+	"github.com/thunder-id/thunderid/tests/mocks/managedresourcemock"
 	"github.com/thunder-id/thunderid/tests/mocks/observabilityprovidermock"
+	"github.com/thunder-id/thunderid/tests/mocks/sysauthzmock"
 )
 
 type ServiceTestSuite struct {
@@ -38,12 +42,14 @@ func (suite *ServiceTestSuite) SetupTest() {
 	suite.mockStore = newServerConfigStoreInterfaceMock(suite.T())
 	suite.mockHandler = NewServerConfigHandlerInterfaceMock(suite.T())
 	suite.service = newServerConfigService(suite.mockStore,
-		map[ConfigName]ServerConfigHandlerInterface{ConfigNameCORS: suite.mockHandler}, nil)
+		map[ConfigName]ServerConfigHandlerInterface{ConfigNameCORS: suite.mockHandler}, nil, discardingBus{},
+		allowingAuthz(suite.T()))
 }
 
 // serviceWithoutHandlers builds a service with no registered handlers, sharing the suite store mock.
 func (suite *ServiceTestSuite) serviceWithoutHandlers() ServerConfigService {
-	return newServerConfigService(suite.mockStore, map[ConfigName]ServerConfigHandlerInterface{}, nil)
+	return newServerConfigService(suite.mockStore, map[ConfigName]ServerConfigHandlerInterface{}, nil,
+		discardingBus{}, allowingAuthz(suite.T()))
 }
 
 // Raw (byte) layers shared across the store tests, plus an incoming PUT value.
@@ -84,7 +90,7 @@ func (suite *ServiceTestSuite) TestListConfigNames_NoHandlers() {
 func (suite *ServiceTestSuite) TestListConfigNames_NilHandler() {
 	service := newServerConfigService(suite.mockStore, map[ConfigName]ServerConfigHandlerInterface{
 		ConfigNameCORS: nil,
-	}, nil)
+	}, nil, discardingBus{}, allowingAuthz(suite.T()))
 
 	names, svcErr := service.ListConfigNames(suite.ctx)
 
@@ -251,6 +257,28 @@ func (suite *ServiceTestSuite) TestSetConfig_UnsupportedName() {
 	suite.mockStore.AssertNotCalled(suite.T(), "UpsertServerConfig", mock.Anything, mock.Anything)
 }
 
+// A section a control plane deployed is not written through SetConfig, whether the call is an API write or a
+// plain import, but the managed import is let through; a failed read of the marks refuses the write.
+func (suite *ServiceTestSuite) TestSetConfig_ManagedSection() {
+	store := managedresourcemock.NewStoreInterfaceMock(suite.T())
+	suite.service.(*serverConfigService).managed = store
+
+	store.EXPECT().IsManaged(mock.Anything, string(ConfigNameCORS), managedresource.TypeServerConfig).
+		Return(true, nil).Once()
+	svcErr := suite.service.SetConfig(suite.ctx, ConfigNameCORS, incomingRaw)
+	assert.Same(suite.T(), &ErrorManagedConfig, svcErr)
+
+	store.EXPECT().IsManaged(mock.Anything, string(ConfigNameCORS), managedresource.TypeServerConfig).
+		Return(false, errors.New("marker store unavailable")).Once()
+	svcErr = suite.service.SetConfig(suite.ctx, ConfigNameCORS, incomingRaw)
+	assert.Same(suite.T(), &common.InternalServerError, svcErr)
+	suite.mockStore.AssertNotCalled(suite.T(), "UpsertServerConfig", mock.Anything, mock.Anything)
+
+	suite.mockHandler.EXPECT().Decode(incomingRaw).Return(nil, errors.New("bad shape"))
+	svcErr = suite.service.SetConfig(managedresource.WithManagedImport(suite.ctx), ConfigNameCORS, incomingRaw)
+	assert.Same(suite.T(), &ErrorInvalidConfigValue, svcErr, "the managed import reached the write")
+}
+
 func (suite *ServiceTestSuite) TestSetConfig_NoHandlerRegistered_FailClosed() {
 	svcErr := suite.serviceWithoutHandlers().SetConfig(suite.ctx, ConfigNameCORS, incomingRaw)
 	assert.Same(suite.T(), &common.InternalServerError, svcErr)
@@ -280,7 +308,7 @@ func (suite *ServiceTestSuite) TestSetConfig_HandlerRejects() {
 		Return(storeLayers{ReadOnly: declarative}, nil)
 	suite.mockHandler.EXPECT().Decode(declarative).Return(readOnlyVal, nil)
 	suite.mockHandler.EXPECT().Decode(json.RawMessage(nil)).Return(nil, nil)
-	suite.mockHandler.EXPECT().Validate(incomingVal, readOnlyVal, nil).Return(errors.New("bad value"))
+	suite.mockHandler.EXPECT().Validate(mock.Anything, incomingVal, readOnlyVal, nil).Return(errors.New("bad value"))
 	svcErr := suite.service.SetConfig(suite.ctx, ConfigNameCORS, incomingRaw)
 	assert.Same(suite.T(), &ErrorInvalidConfigValue, svcErr)
 	suite.mockStore.AssertNotCalled(suite.T(), "UpsertServerConfig", mock.Anything, mock.Anything)
@@ -292,7 +320,7 @@ func (suite *ServiceTestSuite) TestSetConfig_OK() {
 		Return(storeLayers{ReadOnly: declarative}, nil)
 	suite.mockHandler.EXPECT().Decode(declarative).Return(readOnlyVal, nil)
 	suite.mockHandler.EXPECT().Decode(json.RawMessage(nil)).Return(nil, nil)
-	suite.mockHandler.EXPECT().Validate(incomingVal, readOnlyVal, nil).Return(nil)
+	suite.mockHandler.EXPECT().Validate(mock.Anything, incomingVal, readOnlyVal, nil).Return(nil)
 	suite.mockStore.EXPECT().
 		UpsertServerConfig(mock.Anything, ServerConfig{Name: ConfigNameCORS, Value: incomingRaw}).Return(nil)
 	svcErr := suite.service.SetConfig(suite.ctx, ConfigNameCORS, incomingRaw)
@@ -303,7 +331,7 @@ func (suite *ServiceTestSuite) TestSetConfig_UpsertError() {
 	suite.mockHandler.EXPECT().Decode(incomingRaw).Return(incomingVal, nil)
 	suite.mockStore.EXPECT().GetServerConfig(mock.Anything, ConfigNameCORS).Return(storeLayers{}, nil)
 	suite.mockHandler.EXPECT().Decode(json.RawMessage(nil)).Return(nil, nil)
-	suite.mockHandler.EXPECT().Validate(incomingVal, nil, nil).Return(nil)
+	suite.mockHandler.EXPECT().Validate(mock.Anything, incomingVal, nil, nil).Return(nil)
 	suite.mockStore.EXPECT().UpsertServerConfig(mock.Anything, mock.Anything).Return(errors.New("db error"))
 	svcErr := suite.service.SetConfig(suite.ctx, ConfigNameCORS, incomingRaw)
 	assert.Same(suite.T(), &common.InternalServerError, svcErr)
@@ -317,7 +345,8 @@ func (suite *ServiceTestSuite) auditedService() (ServerConfigService, *[]*provid
 	obs.EXPECT().PublishEvent(mock.Anything, mock.Anything).
 		Run(func(_ context.Context, evt *providers.Event) { published = append(published, evt) })
 	return newServerConfigService(suite.mockStore,
-		map[ConfigName]ServerConfigHandlerInterface{ConfigNameCORS: suite.mockHandler}, obs), &published
+		map[ConfigName]ServerConfigHandlerInterface{ConfigNameCORS: suite.mockHandler}, obs,
+		discardingBus{}, allowingAuthz(suite.T())), &published
 }
 
 // A write is recorded with the section and the outcome, never the value, which may hold secrets.
@@ -328,7 +357,7 @@ func (suite *ServiceTestSuite) TestSetConfig_PublishesTheChange() {
 		Return(storeLayers{Writable: previous}, nil)
 	suite.mockHandler.EXPECT().Decode(json.RawMessage(nil)).Return(nil, nil)
 	suite.mockHandler.EXPECT().Decode(previous).Return(readOnlyVal, nil)
-	suite.mockHandler.EXPECT().Validate(incomingVal, nil, readOnlyVal).Return(nil)
+	suite.mockHandler.EXPECT().Validate(mock.Anything, incomingVal, nil, readOnlyVal).Return(nil)
 	suite.mockStore.EXPECT().UpsertServerConfig(mock.Anything, mock.Anything).Return(nil)
 	svc, published := suite.auditedService()
 
@@ -360,7 +389,8 @@ func (suite *ServiceTestSuite) TestSetConfig_PublishesARejection() {
 func (suite *ServiceTestSuite) TestSetConfig_UnknownNamePublishesNothing() {
 	obs := observabilityprovidermock.NewObservabilityProviderMock(suite.T())
 	svc := newServerConfigService(suite.mockStore,
-		map[ConfigName]ServerConfigHandlerInterface{ConfigNameCORS: suite.mockHandler}, obs)
+		map[ConfigName]ServerConfigHandlerInterface{ConfigNameCORS: suite.mockHandler}, obs, discardingBus{},
+		allowingAuthz(suite.T()))
 
 	suite.NotNil(svc.SetConfig(suite.ctx, ConfigName("no-such-section"), incomingRaw))
 }
@@ -370,7 +400,7 @@ func (suite *ServiceTestSuite) expectSuccessfulWrite() {
 	suite.mockHandler.EXPECT().Decode(incomingRaw).Return(incomingVal, nil)
 	suite.mockStore.EXPECT().GetServerConfig(mock.Anything, ConfigNameCORS).Return(storeLayers{}, nil)
 	suite.mockHandler.EXPECT().Decode(json.RawMessage(nil)).Return(nil, nil)
-	suite.mockHandler.EXPECT().Validate(incomingVal, nil, nil).Return(nil)
+	suite.mockHandler.EXPECT().Validate(mock.Anything, incomingVal, nil, nil).Return(nil)
 	suite.mockStore.EXPECT().UpsertServerConfig(mock.Anything, mock.Anything).Return(nil)
 }
 
@@ -379,7 +409,7 @@ func (suite *ServiceTestSuite) TestSetConfig_PublishesAFailedUpsert() {
 	suite.mockHandler.EXPECT().Decode(incomingRaw).Return(incomingVal, nil)
 	suite.mockStore.EXPECT().GetServerConfig(mock.Anything, ConfigNameCORS).Return(storeLayers{}, nil)
 	suite.mockHandler.EXPECT().Decode(json.RawMessage(nil)).Return(nil, nil)
-	suite.mockHandler.EXPECT().Validate(incomingVal, nil, nil).Return(nil)
+	suite.mockHandler.EXPECT().Validate(mock.Anything, incomingVal, nil, nil).Return(nil)
 	suite.mockStore.EXPECT().UpsertServerConfig(mock.Anything, mock.Anything).Return(errors.New("db error"))
 	svc, published := suite.auditedService()
 
@@ -429,7 +459,8 @@ func (suite *ServiceTestSuite) TestSetConfig_PublishesNothingWithoutObservabilit
 		obs := observabilityprovidermock.NewObservabilityProviderMock(suite.T())
 		obs.EXPECT().IsEnabled().Return(false).Once()
 		svc := newServerConfigService(suite.mockStore,
-			map[ConfigName]ServerConfigHandlerInterface{ConfigNameCORS: suite.mockHandler}, obs)
+			map[ConfigName]ServerConfigHandlerInterface{ConfigNameCORS: suite.mockHandler}, obs, discardingBus{},
+			allowingAuthz(suite.T()))
 
 		suite.Nil(svc.SetConfig(suite.ctx, ConfigNameCORS, incomingRaw))
 		obs.AssertNotCalled(suite.T(), "PublishEvent", mock.Anything, mock.Anything)
@@ -449,4 +480,34 @@ func (suite *ServiceTestSuite) assertCarriesNoValue(evt *providers.Event, values
 			suite.NotContains(fmt.Sprint(field), string(value), "field %s carries a config value", key)
 		}
 	}
+}
+
+func (suite *ServiceTestSuite) TestSetConfig_RefusedWithoutWriteAccess() {
+	tests := []struct {
+		name     string
+		authzErr *common.ServiceError
+		want     *common.ServiceError
+	}{
+		{"Denied", nil, &common.ErrorUnauthorized},
+		{"AuthorizationFailure", &common.InternalServerError, &common.InternalServerError},
+	}
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			authz := sysauthzmock.NewSystemAuthorizationServiceInterfaceMock(suite.T())
+			authz.On("IsActionAllowed", mock.Anything, security.ActionUpdateServerConfig,
+				&sysauthz.ActionContext{ResourceType: security.ResourceTypeServerConfig, ResourceID: "cors"}).
+				Return(false, tt.authzErr).Once()
+			service := newServerConfigService(newServerConfigStoreInterfaceMock(suite.T()),
+				map[ConfigName]ServerConfigHandlerInterface{ConfigNameCORS: mapHandler{}}, nil, discardingBus{}, authz)
+
+			suite.Equal(tt.want, service.SetConfig(context.Background(), ConfigNameCORS, json.RawMessage(`{}`)))
+		})
+	}
+}
+
+// allowingAuthz returns an authorization service that allows every action.
+func allowingAuthz(t *testing.T) *sysauthzmock.SystemAuthorizationServiceInterfaceMock {
+	authz := sysauthzmock.NewSystemAuthorizationServiceInterfaceMock(t)
+	authz.On("IsActionAllowed", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+	return authz
 }

@@ -4,26 +4,33 @@
 import {
   AccessStatusBanner,
   AccountStatusAction,
+  type CredentialResetField,
   DocumentTitle,
   PageLoadingAnimation,
   QueryErrorNotice,
   ResourceAvatar,
+  ResourceDeployStatus,
   UnsavedChangesBar,
 } from '@thunderid/components';
-import {useGetAgentType, useGetAgentTypes} from '@thunderid/configure-agent-types';
+import {useGetAgentType, useGetAllAgentTypes} from '@thunderid/configure-agent-types';
 import {
+  OAuth2GrantTypes,
   getBackchannelLogoutUriServerError,
   hasUserAccess,
   isIdJagEnabled,
   validateBackchannelLogoutUri,
 } from '@thunderid/configure-applications';
+import {FlowType, useGetFlows} from '@thunderid/configure-flows';
 import {dropNonConformingOptionalAttributes} from '@thunderid/configure-users';
+import {useCapabilitiesContext, useProjectScope} from '@thunderid/contexts';
+import {useResolveDisplayName} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
 import {getErrorMessage, isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
   Alert,
   Box,
   Button,
+  Chip,
   Dialog,
   DialogContent,
   IconButton,
@@ -36,7 +43,7 @@ import {
   Typography,
 } from '@wso2/oxygen-ui';
 import {ArrowLeft, Edit} from '@wso2/oxygen-ui-icons-react';
-import {useState, useCallback, useMemo, type SyntheticEvent, type JSX, type ReactNode} from 'react';
+import {type JSX, type ReactNode, type SyntheticEvent, useCallback, useEffect, useMemo, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {Link, useLocation, useNavigate, useParams} from 'react-router';
 import useGetAgent from '../api/useGetAgent';
@@ -52,7 +59,8 @@ import ShowClientSecret from '../components/ShowClientSecret';
 import AgentConstants from '../constants/agent-constants';
 import AgentQueryKeys from '../constants/agent-query-keys';
 import useAgentRoutes from '../hooks/useAgentRoutes';
-import type {Agent, OAuthAgentConfig} from '../models/agent';
+import {PERSONAL_AGENT_KIND, type Agent, type OAuthAgentConfig} from '../models/agent';
+import {isInvalidExternalOwner} from '../utils/externalOwner';
 import isDelegatedAgent, {hasDelegationGrant} from '../utils/isDelegatedAgent';
 
 interface TabPanelProps {
@@ -84,12 +92,20 @@ function TabPanel({children = null, value, index, ...other}: TabPanelProps) {
 export default function AgentEditPage(): JSX.Element {
   const routes = useAgentRoutes();
   const {t} = useTranslation();
+  const {can} = useCapabilitiesContext();
   const navigate = useNavigate();
   const location = useLocation();
   const logger = useLogger('AgentEditPage');
   const {agentId} = useParams<{agentId: string}>();
 
   const {data: agent, isLoading, error, refetch} = useGetAgent(agentId ?? '');
+  const {projectId} = useProjectScope();
+  // Another project's agent is not shown in the selected one: a deep link, a stale tab or a switch of
+  // project goes to the selected project's agents instead.
+  const isOtherProject = Boolean(projectId && agent && agent.projectId !== projectId);
+  useEffect(() => {
+    if (isOtherProject) void navigate(routes.agents.list(), {replace: true});
+  }, [isOtherProject, navigate, routes]);
   const updateAgent = useUpdateAgent();
   const handleStatusChanged = useCallback((): void => {
     void refetch();
@@ -107,13 +123,45 @@ export default function AgentEditPage(): JSX.Element {
   const [secretDialogOpen, setSecretDialogOpen] = useState(Boolean(justCreatedSecret));
 
   // The agent's type schema, used to drop stale attribute values on save.
-  const {data: agentTypesData, isLoading: isTypesLoading} = useGetAgentTypes();
-  const matchedSchema = agentTypesData?.types?.find((s) => s.handle === agent?.type);
-  const {data: agentTypeDetails, isLoading: isTypeLoading} = useGetAgentType(matchedSchema?.id);
+  const {
+    data: agentTypes,
+    isLoading: isTypesLoading,
+    error: agentTypesError,
+    refetch: refetchAgentTypes,
+  } = useGetAllAgentTypes();
+  const matchedSchema = agentTypes?.find((s) => s.handle === agent?.type);
+  const {
+    data: agentTypeDetails,
+    isLoading: isTypeLoading,
+    error: agentTypeError,
+    refetch: refetchAgentType,
+  } = useGetAgentType(matchedSchema?.id);
+  // The credentials the agent type declares, such as a password, which the Credentials tab can reset.
+  const {resolveDisplayName} = useResolveDisplayName({handlers: {t}});
+  const credentialFields: CredentialResetField[] = useMemo(() => {
+    if (!agentTypeDetails?.schema) return [];
+    return Object.entries(agentTypeDetails.schema)
+      .filter(([, fieldDef]) => (fieldDef.type === 'string' || fieldDef.type === 'number') && fieldDef.credential)
+      .map(([fieldName, fieldDef]) => {
+        const displayName =
+          'displayName' in fieldDef && fieldDef.displayName ? resolveDisplayName(fieldDef.displayName) : '';
+
+        return {fieldName, label: displayName || fieldName};
+      });
+  }, [agentTypeDetails, resolveDisplayName]);
   // Block save until the schema settles, else stale values bypass sanitization.
   const isSchemaResolving = isTypesLoading || isTypeLoading;
+  // A failed read of the schema keeps Save off rather than the whole page: viewing an agent doesn't
+  // need permission to read agent types. A failed refetch of data already read changes nothing.
+  const typeSchemaError =
+    (agentTypesError && !agentTypes ? agentTypesError : null) ??
+    (agentTypeError && !agentTypeDetails ? agentTypeError : null);
 
-  const [activeTab, setActiveTab] = useState(0);
+  // A link can open a tab by its key, such as `?tab=advanced` for the owner; it is shown until another
+  // tab is chosen.
+  const [activeTab, setActiveTab] = useState<number | string>(
+    () => new URLSearchParams(location.search).get('tab') ?? 0,
+  );
   const [editedAgent, setEditedAgent] = useState<Partial<Agent>>({});
   const [sectionResetKey, setSectionResetKey] = useState(0);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -132,6 +180,24 @@ export default function AgentEditPage(): JSX.Element {
   const hasAnyOtherValidationError = Object.values(validationErrorSources).some(Boolean);
   const [backchannelLogoutUriInvalid, setBackchannelLogoutUriInvalid] = useState(false);
   const [identityAssertionsInvalid, setIdentityAssertionsInvalid] = useState(false);
+  const [lifespanInvalid, setLifespanInvalid] = useState(false);
+
+  const oauth2Config: OAuthAgentConfig | undefined = (editedAgent.inboundAuthConfig ?? agent?.inboundAuthConfig)?.find(
+    (config) => config.type === 'oauth2',
+  )?.config;
+  const deviceGrantEnabled = oauth2Config?.grantTypes?.includes(OAuth2GrantTypes.DEVICE_CODE) ?? false;
+  const deviceGrantFlowId = editedAgent.deviceGrantFlowId ?? agent?.deviceGrantFlowId;
+  const {
+    data: deviceGrantFlowList,
+    isLoading: isLoadingDeviceGrantFlows,
+    error: deviceGrantFlowQueryError,
+    refetch: refetchDeviceGrantFlows,
+  } = useGetFlows({
+    flowType: FlowType.DEVICE_GRANT,
+    limit: 100,
+    fetchAllPages: true,
+    enabled: Boolean(deviceGrantEnabled && !deviceGrantFlowId),
+  });
 
   const handleBack = async () => {
     await navigate(routes.agents.list());
@@ -155,6 +221,31 @@ export default function AgentEditPage(): JSX.Element {
     [isUpdateAgentError, resetUpdateAgent],
   );
 
+  useEffect(() => {
+    const defaultDeviceGrantFlow = deviceGrantFlowList?.flows.find(
+      (flow) => flow.handle === 'default-device-grant-flow',
+    );
+
+    if (
+      !deviceGrantEnabled ||
+      editedAgent.deviceGrantFlowId ||
+      agent?.deviceGrantFlowId ||
+      !defaultDeviceGrantFlow ||
+      agent?.isReadOnly
+    ) {
+      return;
+    }
+
+    handleFieldChange('deviceGrantFlowId', defaultDeviceGrantFlow.id);
+  }, [
+    agent?.deviceGrantFlowId,
+    agent?.isReadOnly,
+    deviceGrantEnabled,
+    deviceGrantFlowList,
+    editedAgent.deviceGrantFlowId,
+    handleFieldChange,
+  ]);
+
   const handleSave = useCallback(async () => {
     if (!agent || !agentId) return;
 
@@ -168,24 +259,28 @@ export default function AgentEditPage(): JSX.Element {
     try {
       await updateAgent.mutateAsync({
         agentId,
-        data: {...updatedData, attributes, delegated: isDelegatedAgent(updatedData.inboundAuthConfig)},
+        data: {
+          ...updatedData,
+          attributes,
+          delegated: isDelegatedAgent(updatedData.inboundAuthConfig),
+        },
       });
       setEditedAgent({});
       await refetch();
+      setLifespanInvalid(false);
       setSectionResetKey((key) => key + 1);
     } catch (err) {
       logger.error('Failed to update agent', {error: err});
     }
   }, [agent, agentId, editedAgent, agentTypeDetails, updateAgent, refetch, logger]);
 
-  const hasChanges = useMemo(
-    () => Object.entries(editedAgent).some(([key, value]) => !isEqualIgnoringEmpty(value, agent?.[key as keyof Agent])),
-    [editedAgent, agent],
+  const hasChanges = Object.entries(editedAgent).some(
+    ([key, value]) => !isEqualIgnoringEmpty(value, agent?.[key as keyof Agent]),
   );
 
   const resourceTypeTitle = t('agents:listing.title', 'Agents');
 
-  if (isLoading || isSchemaResolving) {
+  if (isLoading || isSchemaResolving || isOtherProject) {
     return (
       <>
         <DocumentTitle title={resourceTypeTitle} />
@@ -228,10 +323,6 @@ export default function AgentEditPage(): JSX.Element {
     );
   }
 
-  const oauth2Config: OAuthAgentConfig | undefined = (editedAgent.inboundAuthConfig ?? agent.inboundAuthConfig)?.find(
-    (config) => config.type === 'oauth2',
-  )?.config;
-
   const hasOAuth = Boolean(oauth2Config);
 
   // Computed directly from state rather than reported by the Advanced/Access tab content, since
@@ -251,6 +342,7 @@ export default function AgentEditPage(): JSX.Element {
   const isMissingAllowedUserType = hasAuthorizationCodeGrant && allowedUserTypes.length === 0;
   const isMissingCertificate =
     oauth2Config?.tokenEndpointAuthMethod === 'private_key_jwt' && !oauth2Config?.certificate?.value;
+  const isMissingDeviceGrantFlow = Boolean(deviceGrantEnabled && !deviceGrantFlowId);
   // The field shows only with a user-facing grant, so a hidden value never blocks saving. The field
   // also reports a typed value it has not committed because it is invalid.
   const isInvalidBackchannelLogoutUri =
@@ -264,13 +356,23 @@ export default function AgentEditPage(): JSX.Element {
     hasDelegationGrant(oauth2Config?.grantTypes) &&
     isIdJagEnabled(oauth2Config) &&
     (identityAssertionsInvalid || (oauth2Config?.token?.idJag?.allowedAudiences ?? []).length === 0);
+  // The Lifespan card reports a draft it could not parse only while it is shown, so a staged end that
+  // has passed is checked here from state, and keeps blocking saving after the card's tab is left.
+  const isInvalidLifespan =
+    lifespanInvalid ||
+    // eslint-disable-next-line react-hooks/purity -- Date.now() is intentional for checking the end is still ahead
+    (typeof editedAgent.validUntil === 'string' && new Date(editedAgent.validUntil).getTime() <= Date.now());
+  const isInvalidOwner = isInvalidExternalOwner(editedAgent.owner);
   const hasAnyValidationError =
     hasAnyOtherValidationError ||
+    isInvalidOwner ||
     isMissingRedirectUri ||
     isMissingAllowedUserType ||
     isMissingCertificate ||
+    isMissingDeviceGrantFlow ||
     isInvalidBackchannelLogoutUri ||
-    isInvalidIdentityAssertions;
+    isInvalidIdentityAssertions ||
+    isInvalidLifespan;
 
   // ResourceAvatar opens its picker on any avatar click while onSelect is set, so a read-only
   // agent has to withhold the callback rather than rely on `editable` alone.
@@ -290,6 +392,15 @@ export default function AgentEditPage(): JSX.Element {
   if (isMissingCertificate) {
     validationIssues.push(t('agents:edit.page.validation.missingCertificate', 'add a certificate'));
   }
+  if (isMissingDeviceGrantFlow) {
+    validationIssues.push(
+      isLoadingDeviceGrantFlows
+        ? t('agents:edit.page.validation.loadingDeviceGrantFlow', 'wait for the default Device Grant flow to load')
+        : deviceGrantFlowQueryError
+          ? t('agents:edit.page.validation.deviceGrantFlowQueryFailed', 'retry loading the Device Grant flow list')
+          : t('agents:edit.page.validation.missingDeviceGrantFlow', 'select a Device Grant flow'),
+    );
+  }
   if (isInvalidBackchannelLogoutUri) {
     validationIssues.push(
       t('agents:edit.page.validation.invalidBackchannelLogoutUri', 'fix the back-channel logout URI'),
@@ -299,6 +410,12 @@ export default function AgentEditPage(): JSX.Element {
     validationIssues.push(
       t('agents:edit.page.validation.invalidIdentityAssertions', 'fix the identity assertions (ID-JAG) settings'),
     );
+  }
+  if (isInvalidLifespan) {
+    validationIssues.push(t('agents:edit.page.validation.invalidLifespan', 'choose a lifespan end in the future'));
+  }
+  if (isInvalidOwner) {
+    validationIssues.push(t('agents:edit.page.validation.invalidOwner', 'enter a valid ID for the external owner'));
   }
   if (hasAnyOtherValidationError) {
     validationIssues.push(t('agents:edit.page.validation.tokenSettings', 'fix the token settings'));
@@ -332,6 +449,8 @@ export default function AgentEditPage(): JSX.Element {
           agent={agent}
           oauth2Config={oauth2Config}
           onGoToAdvanced={() => handleNavigateToTab('advanced')}
+          onGoToAccess={() => handleNavigateToTab('access')}
+          onGoToFlows={hasOAuth ? () => handleNavigateToTab('flows') : undefined}
         />
       ),
     },
@@ -344,12 +463,13 @@ export default function AgentEditPage(): JSX.Element {
           agent={agent}
           editedAgent={editedAgent}
           onFieldChange={handleFieldChange}
+          onLifespanValidationChange={setLifespanInvalid}
         />
       ),
     },
   ];
 
-  if (hasOAuth) {
+  if (hasOAuth || (agent.kind !== PERSONAL_AGENT_KIND && credentialFields.length > 0)) {
     tabs.push({
       key: 'credentials',
       label: t('agents:edit.page.tabs.credentials', 'Credentials'),
@@ -359,6 +479,7 @@ export default function AgentEditPage(): JSX.Element {
           editedAgent={editedAgent}
           oauth2Config={oauth2Config}
           onFieldChange={handleFieldChange}
+          credentialFields={credentialFields}
         />
       ),
     });
@@ -380,6 +501,8 @@ export default function AgentEditPage(): JSX.Element {
           editedAgent={editedAgent}
           oauth2Config={oauth2Config}
           onFieldChange={handleFieldChange}
+          deviceGrantFlowQueryError={deviceGrantFlowQueryError}
+          onRetryDeviceGrantFlowQuery={() => void refetchDeviceGrantFlows()}
         />
       ),
     });
@@ -432,7 +555,8 @@ export default function AgentEditPage(): JSX.Element {
     }
   };
 
-  const safeActiveTab = activeTab >= tabs.length ? 0 : activeTab;
+  const shownTab = typeof activeTab === 'string' ? tabs.findIndex((tab) => tab.key === activeTab) : activeTab;
+  const safeActiveTab = shownTab < 0 || shownTab >= tabs.length ? 0 : shownTab;
 
   return (
     <PageContent>
@@ -442,7 +566,23 @@ export default function AgentEditPage(): JSX.Element {
           {t('common:messages.readOnlyResource', 'This resource is read-only and cannot be modified.')}
         </Alert>
       )}
+      {typeSchemaError && (
+        <Box sx={{mb: 2}}>
+          <QueryErrorNotice
+            variant="inline"
+            error={typeSchemaError}
+            t={tForErrors}
+            fallbackKey="agents:edit.page.typeSchemaError"
+            fallbackDefaultValue="The agent's type could not be loaded, so changes can't be saved."
+            onRetry={() => {
+              if (agentTypesError) void refetchAgentTypes();
+              if (agentTypeError) void refetchAgentType();
+            }}
+          />
+        </Box>
+      )}
       <AccessStatusBanner status={agent.status} category="agent" sx={{mb: 2}} />
+      <ResourceDeployStatus resourceType="agent" id={agent.id} variant="notice" sx={{mb: 2}} />
       <PageTitle>
         <PageTitle.BackButton component={<Link to={routes.agents.list()} />}>
           {t('agents:edit.page.back', 'Back to agents')}
@@ -481,6 +621,9 @@ export default function AgentEditPage(): JSX.Element {
         <PageTitle.Header>
           <Stack direction="row" alignItems="center" spacing={1} mb={1}>
             <Typography variant="h3">{agent.display ?? agent.id}</Typography>
+            {agent.kind === PERSONAL_AGENT_KIND && (
+              <Chip size="small" color="primary" variant="outlined" label={t('agents:kind.personal', 'Personal')} />
+            )}
           </Stack>
         </PageTitle.Header>
         <PageTitle.SubHeader>
@@ -567,7 +710,9 @@ export default function AgentEditPage(): JSX.Element {
           saveLabel={t('agents:edit.page.save', 'Save')}
           savingLabel={t('agents:edit.page.saving', 'Saving…')}
           isSaving={updateAgent.isPending}
-          saveDisabled={hasAnyValidationError || agent.isReadOnly === true}
+          saveDisabled={
+            hasAnyValidationError || agent.isReadOnly === true || !can('agent', 'update') || typeSchemaError !== null
+          }
           error={
             updateAgent.error
               ? (getBackchannelLogoutUriServerError(updateAgent.error, tForErrors) ??
@@ -584,6 +729,7 @@ export default function AgentEditPage(): JSX.Element {
               updateAgent.reset(); // a save error is stale once the form resets
             }
             setEditedAgent({});
+            setLifespanInvalid(false);
             setSectionResetKey((key) => key + 1);
           }}
           onSave={() => {

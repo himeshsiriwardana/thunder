@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -35,6 +36,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/revocation"
 	oauth2utils "github.com/thunder-id/thunderid/internal/oauth/oauth2/utils"
 	"github.com/thunder-id/thunderid/internal/system/config"
+	sysContext "github.com/thunder-id/thunderid/internal/system/context"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
@@ -170,7 +172,7 @@ func (suite *AuthorizeServiceTestSuite) SetupTest() {
 // newService builds an authorizeService with all mocked dependencies.
 func (suite *AuthorizeServiceTestSuite) newService() *authorizeService {
 	inboundClient := actorprovider.Initialize(
-		suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil, nil)
+		suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil, nil, nil)
 	return &authorizeService{
 		authzDetails:    authzdetailexec.Initialize(nil, time.Second),
 		cfg:             authorizeServiceCfgFromRuntime(),
@@ -396,6 +398,70 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Fl
 	assert.Equal(suite.T(), "test-state", authErr.State)
 }
 
+// An organization unit the application is not accessible from is answered to the client as the OU token
+// route answers it, not as a server error.
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_FlowInitOrganizationUnitRefused() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).
+		Return("", &flowexec.ErrorInvalidOrganizationUnit)
+
+	svc := suite.newService()
+	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), suite.testMsg())
+
+	assert.Nil(suite.T(), result)
+	suite.Require().NotNil(authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorUnauthorizedClient, authErr.Code)
+	assert.Equal(suite.T(), oauth2const.OUAccessRefusal, authErr.Message)
+	assert.True(suite.T(), authErr.SendErrorToClient)
+	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
+	assert.Equal(suite.T(), "test-state", authErr.State)
+}
+
+// The organization-unit-qualified route hands its unit to the flow start unlooked-up, so a unit that does
+// not exist and one the application is not shared with both reach the start, which refuses each with
+// FES-1028, and both come back to the client as the same redirect.
+func (suite *AuthorizeServiceTestSuite) TestOUQualifiedAuthorize_UnknownAndUnsharedUnitsGetTheSameRedirect() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+	var startedFor []string
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).
+		Run(func(ctx context.Context, _ *flowexec.FlowInitContext) {
+			startedFor = append(startedFor, sysContext.GetAccessingOUID(ctx))
+		}).
+		Return("", &flowexec.ErrorInvalidOrganizationUnit).Times(2)
+
+	mux := http.NewServeMux()
+	registerRoutes(mux, newAuthorizeHandler(suite.newService(), nil, authorizeServiceCfgFromRuntime()), true)
+	query := url.Values(suite.testMsg().RequestQueryParams).Encode()
+	authorize := func(ouID string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ou/"+ouID+"/oauth2/authorize?"+query, nil))
+		return recorder
+	}
+
+	unknown := authorize("no-such-ou")
+	unshared := authorize("customer-a")
+
+	suite.Equal([]string{"no-such-ou", "customer-a"}, startedFor)
+	suite.Require().Equal(http.StatusFound, unknown.Code)
+	suite.Require().Equal(http.StatusFound, unshared.Code)
+	suite.Equal(unknown.Header().Get("Location"), unshared.Header().Get("Location"),
+		"a unit that does not exist and one not shared must read the same")
+	location, err := url.Parse(unknown.Header().Get("Location"))
+	suite.Require().NoError(err)
+	suite.Equal("https://client.example.com/callback", location.Scheme+"://"+location.Host+location.Path)
+	suite.Equal(oauth2const.ErrorUnauthorizedClient, location.Query().Get("error"))
+	suite.Equal(oauth2const.OUAccessRefusal, location.Query().Get("error_description"))
+	suite.Equal("test-state", location.Query().Get("state"))
+}
+
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_StoreRequestError() {
 	app := suite.testApp()
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
@@ -430,6 +496,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Su
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), testAuthID, result.QueryParams[oauth2const.AuthID])
 	assert.Equal(suite.T(), "test-app-id", result.QueryParams[oauth2const.AppID])
+	assert.Equal(suite.T(), "~dGVzdC1hcHAtaWQ", result.QueryParams[oauth2const.Ref])
 	assert.Equal(suite.T(), "test-flow-id", result.QueryParams[oauth2const.ExecutionID])
 }
 
@@ -2843,46 +2910,15 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Un
 	assert.False(suite.T(), authErr.SendErrorToClient)
 }
 
-func (suite *AuthorizeServiceTestSuite) TestBindDeviceSession() {
-	first := oauth2model.SessionData{FlowIdentifier: "77e0937879f72858", SessionHandle: "handle-1"}
-	second := oauth2model.SessionData{FlowIdentifier: "f51bdb0f22d906bb", SessionHandle: "handle-2"}
-	longest := oauth2model.SessionData{FlowIdentifier: "77e0937879f72858",
-		SessionHandle: strings.Repeat("h", maxDeviceSessionFieldLength)}
-	overLong := strings.Repeat("x", maxDeviceSessionFieldLength+1)
-	tooMany := make([]oauth2model.SessionData, 0, maxDeviceSessions+1)
-	for i := range maxDeviceSessions + 1 {
-		tooMany = append(tooMany, oauth2model.SessionData{FlowIdentifier: fmt.Sprintf("identifier-%d", i),
-			SessionHandle: "handle"})
-	}
-	cases := []struct {
-		name        string
-		scopes      string
-		sessionData []oauth2model.SessionData
-		want        []oauth2model.SessionData
-	}{
-		{"every posted session is kept", "openid device_sso", []oauth2model.SessionData{first, second},
-			[]oauth2model.SessionData{first, second}},
-		{"device_sso was not requested", "openid", []oauth2model.SessionData{first}, nil},
-		{"nothing was posted", "device_sso", nil, nil},
-		{"an entry missing a field is dropped", "device_sso",
-			[]oauth2model.SessionData{{FlowIdentifier: "identifier"}, {SessionHandle: "handle"}, first},
-			[]oauth2model.SessionData{first}},
-		{"an entry with an over-long field is dropped", "device_sso",
-			[]oauth2model.SessionData{{FlowIdentifier: overLong, SessionHandle: "handle"},
-				{FlowIdentifier: "identifier", SessionHandle: overLong}, longest},
-			[]oauth2model.SessionData{longest}},
-		{"no more than maxDeviceSessions are kept", "device_sso", tooMany, tooMany[:maxDeviceSessions]},
-	}
+func (suite *AuthorizeServiceTestSuite) TestFromFlowSessionData_KeepsTheTimeLeft() {
+	got := fromFlowSessionData([]flowexec.IssuedSessionData{{
+		SessionData: flowexec.SessionData{FlowIdentifier: "77e0937879f72858", SessionHandle: "handle-1"},
+		ExpiresIn:   600,
+	}})
 
-	for _, tc := range cases {
-		suite.Run(tc.name, func() {
-			code := AuthorizationCode{Scopes: tc.scopes}
-
-			bindDeviceSession(&code, tc.sessionData)
-
-			suite.Equal(tc.want, code.SessionData)
-		})
-	}
+	suite.Equal([]oauth2model.SessionData{
+		{FlowIdentifier: "77e0937879f72858", SessionHandle: "handle-1", ExpiresIn: new(int64(600))},
+	}, got)
 }
 
 const (
@@ -3306,4 +3342,179 @@ func (suite *AuthorizeServiceTestSuite) TestDecodeAttributesFromAssertion_Grante
 	suite.Require().NoError(err)
 	assert.NotNil(suite.T(), claims.grantedAuthorizationDetails, "an empty claim is a decision granting none")
 	assert.Empty(suite.T(), claims.grantedAuthorizationDetails)
+}
+
+// metadataDocumentApp returns a client registered from a Client ID Metadata Document.
+func (suite *AuthorizeServiceTestSuite) metadataDocumentApp(redirectURI string) *providers.OAuthClient {
+	app := suite.testApp()
+	app.ClientID = "https://client.example.com/oauth/client.json"
+	app.ClientIDMetadataDocument = true
+	app.RedirectURIs = []string{redirectURI}
+	return app
+}
+
+// initiateStandardRequest sends an authorization request for app and returns the flow it starts.
+func (suite *AuthorizeServiceTestSuite) initiateStandardRequest(
+	app *providers.OAuthClient, redirectURI string) *flowexec.FlowInitContext {
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, app.ClientID).Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+	var captured *flowexec.FlowInitContext
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, ic *flowexec.FlowInitContext) { captured = ic }).
+		Return("test-flow-id", nil)
+
+	msg := suite.testMsg()
+	msg.RequestQueryParams["client_id"] = []string{app.ClientID}
+	msg.RequestQueryParams["redirect_uri"] = []string{redirectURI}
+	_, authErr := suite.newService().HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	suite.Require().Nil(authErr)
+	suite.Require().NotNil(captured)
+	return captured
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_MetadataDocumentClientHTTPSRedirect() {
+	redirectURI := "https://client.example.com/callback"
+
+	captured := suite.initiateStandardRequest(suite.metadataDocumentApp(redirectURI), redirectURI)
+
+	assert.Equal(suite.T(), "client.example.com", captured.RuntimeData[flowcm.RuntimeKeyClientIDHost])
+	assert.Equal(suite.T(), "client.example.com", captured.RuntimeData[flowcm.RuntimeKeyRedirectURIHost])
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_MetadataDocumentClientLoopbackRedirect() {
+	redirectURI := "http://127.0.0.1:3118/callback"
+
+	captured := suite.initiateStandardRequest(suite.metadataDocumentApp(redirectURI), redirectURI)
+
+	assert.Equal(suite.T(), "client.example.com", captured.RuntimeData[flowcm.RuntimeKeyClientIDHost])
+	assert.Equal(suite.T(), "127.0.0.1", captured.RuntimeData[flowcm.RuntimeKeyRedirectURIHost])
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_MetadataDocumentClientDefaultRedirect() {
+	app := suite.metadataDocumentApp("http://localhost/callback")
+
+	captured := suite.initiateStandardRequest(app, "")
+
+	assert.Equal(suite.T(), "client.example.com", captured.RuntimeData[flowcm.RuntimeKeyClientIDHost])
+	assert.Equal(suite.T(), "localhost", captured.RuntimeData[flowcm.RuntimeKeyRedirectURIHost])
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_OtherClientHasNoHosts() {
+	captured := suite.initiateStandardRequest(suite.testApp(), "https://client.example.com/callback")
+
+	assert.NotContains(suite.T(), captured.RuntimeData, flowcm.RuntimeKeyClientIDHost)
+	assert.NotContains(suite.T(), captured.RuntimeData, flowcm.RuntimeKeyRedirectURIHost)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_PARMetadataDocumentClientHosts() {
+	redirectURI := "http://[::1]:3118/callback"
+	app := suite.metadataDocumentApp(redirectURI)
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, app.ClientID).Return(app, nil)
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+	var captured *flowexec.FlowInitContext
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, ic *flowexec.FlowInitContext) { captured = ic }).
+		Return("test-flow-id", nil)
+
+	svc := suite.newService()
+	svc.parService = &stubPARService{params: &oauth2model.OAuthParameters{
+		ClientID:       app.ClientID,
+		RedirectURI:    redirectURI,
+		ResponseType:   "code",
+		StandardScopes: []string{"openid"},
+	}}
+	msg := &OAuthMessage{
+		RequestType: oauth2const.TypeInitialAuthorizationRequest,
+		RequestQueryParams: url.Values{
+			"client_id":   {app.ClientID},
+			"request_uri": {"urn:ietf:params:oauth:request_uri:abc"},
+		},
+	}
+
+	_, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	suite.Require().Nil(authErr)
+	suite.Require().NotNil(captured)
+	assert.Equal(suite.T(), "client.example.com", captured.RuntimeData[flowcm.RuntimeKeyClientIDHost])
+	assert.Equal(suite.T(), "::1", captured.RuntimeData[flowcm.RuntimeKeyRedirectURIHost])
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_MetadataDocumentClientHostsLowercased() {
+	redirectURI := "https://Client.Example.com/callback"
+	app := suite.metadataDocumentApp(redirectURI)
+	app.ClientID = "https://CLIENT.example.com/oauth/client.json"
+
+	captured := suite.initiateStandardRequest(app, redirectURI)
+
+	assert.Equal(suite.T(), "client.example.com", captured.RuntimeData[flowcm.RuntimeKeyClientIDHost])
+	assert.Equal(suite.T(), "client.example.com", captured.RuntimeData[flowcm.RuntimeKeyRedirectURIHost])
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_MetadataDocumentClientHostsPunycode() {
+	// A Cyrillic small letter o (U+043E) makes the host look like vscode.dev.
+	redirectURI := "https://VSC\u043eDE.dev/callback"
+	app := suite.metadataDocumentApp(redirectURI)
+	app.ClientID = "https://vsc\u043ede.dev/oauth/client.json"
+
+	captured := suite.initiateStandardRequest(app, redirectURI)
+
+	assert.Equal(suite.T(), "xn--vscde-lye.dev", captured.RuntimeData[flowcm.RuntimeKeyClientIDHost])
+	assert.Equal(suite.T(), "xn--vscde-lye.dev", captured.RuntimeData[flowcm.RuntimeKeyRedirectURIHost])
+}
+
+func (suite *AuthorizeServiceTestSuite) TestASCIIHost() {
+	testCases := []struct {
+		host     string
+		expected string
+		ok       bool
+	}{
+		{host: "Client.Example.com", expected: "client.example.com", ok: true},
+		{host: "my_host.example", expected: "my_host.example", ok: true},
+		{host: "::1", expected: "::1", ok: true},
+		{host: "m\u00fcnchen.de", expected: "xn--mnchen-3ya.de", ok: true},
+		{host: "\uff56\uff53\uff43\uff4f\uff44\uff45.dev", expected: "vscode.dev", ok: true},
+		// The lookup profile rejects Latin and Hebrew in one label, so the host is plain punycode.
+		{host: "AB\u05d0.example.com", expected: "xn--ab-wld.example.com", ok: true},
+		{host: "a\xffb.example.com", ok: false},
+	}
+	for _, tc := range testCases {
+		suite.Run(tc.host, func() {
+			host, ok := asciiHost(tc.host)
+
+			assert.Equal(suite.T(), tc.ok, ok)
+			if tc.ok {
+				assert.Equal(suite.T(), tc.expected, host)
+			}
+		})
+	}
+}
+
+func (suite *AuthorizeServiceTestSuite) TestAddMetadataDocumentClientHosts_SkipsWithoutBothHosts() {
+	testCases := []struct {
+		name        string
+		clientID    string
+		redirectURI string
+	}{
+		{name: "NoRedirectURI", clientID: "https://client.example.com/client.json", redirectURI: ""},
+		{name: "InvalidClientID", clientID: "https://client.example.com/%zz", redirectURI: "http://localhost/cb"},
+		{name: "InvalidRedirectURI", clientID: "https://client.example.com/client.json", redirectURI: "http://[::1"},
+		{name: "NoASCIIClientIDHost", clientID: "https://a%FFb.example.com/client.json",
+			redirectURI: "http://localhost/cb"},
+		{name: "NoASCIIRedirectURIHost", clientID: "https://client.example.com/client.json",
+			redirectURI: "https://a%FFb.example.com/cb"},
+	}
+	svc := suite.newService()
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			app := &providers.OAuthClient{ClientID: tc.clientID, ClientIDMetadataDocument: true}
+			runtimeData := map[string]string{}
+
+			svc.addMetadataDocumentClientHosts(runtimeData, app, tc.redirectURI)
+
+			assert.Empty(suite.T(), runtimeData)
+		})
+	}
 }

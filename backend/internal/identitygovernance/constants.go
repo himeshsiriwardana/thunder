@@ -7,15 +7,14 @@ import (
 	"math"
 	"time"
 
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
-// formationRetries bounds the re-reads when a concurrent writer wins the lock-formation guard.
-const formationRetries = 3
-
 // permanentUnlockAt is the stored unlock time for a permanent lock (duration zero). It compares
-// correctly both as a string and as a timestamp.
-const permanentUnlockAt = "9999-12-31T23:59:59Z"
+// correctly both as a string and as a timestamp. It is the instant an unbounded lifespan is stored as,
+// so a lock and a lifespan that never end read alike.
+const permanentUnlockAt = authnprovidercm.UnboundedValidUntil
 
 // LockReason says why an account-wide lock entry exists. Descriptive only; the unlock time decides
 // expiry.
@@ -93,6 +92,11 @@ const (
 	messageLocksReleased              = "Every automatic lock released"
 	messageSuspensionPlaced           = "Suspension placed"
 	messageSuspensionInPlace          = "Suspension already in place"
+	messageOwnerSuspensionPlaced      = "Owner's suspension placed"
+	messageOwnerSuspensionInPlace     = "Owner's suspension already in place"
+	messageOwnerSuspensionReleased    = "Owner's suspension released"
+	messageCascadedSuspensionPlaced   = "Cascaded suspension placed"
+	messageCascadedSuspensionReleased = "Cascaded suspension released"
 	messageSuspensionReleased         = "Suspension released"
 	messageSuspensionReleasedOntoHold = "Suspension released onto a post-suspension lock"
 )

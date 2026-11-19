@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
@@ -19,6 +20,8 @@ import (
 	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
+	"github.com/thunder-id/thunderid/internal/flow/executor"
+	"github.com/thunder-id/thunderid/internal/flow/executormeta"
 	"github.com/thunder-id/thunderid/internal/system/cache"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -751,7 +754,8 @@ func (s *EngineTestSuite) TestSwitchContextToCallee_DropsCallerPausedPrompt() {
 		CurrentPromptInputs: []providers.Input{{Identifier: "given_name", Required: true}},
 	}
 
-	_, svcErr := fe.switchContextToCallee(ctx, &common.NodeResponse{}, mockCalleeGraph, log.GetLogger())
+	_, svcErr := fe.switchContextToCallee(ctx, &common.NodeResponse{}, mockCalleeGraph,
+		providers.FlowTypeAuthentication, 1, log.GetLogger())
 	s.Nil(svcErr)
 
 	s.Empty(ctx.CurrentPromptNodeID)
@@ -1403,6 +1407,28 @@ func (s *EngineTestSuite) TestHandleDisplayOnlyPromptResponse_ForwardToEndNode()
 	// Node response AdditionalData is also merged
 	s.Contains(flowStep.Data.AdditionalData, "response_key")
 	s.Equal("response_value", flowStep.Data.AdditionalData["response_key"])
+}
+
+func (s *EngineTestSuite) TestHandleDisplayOnlyPromptResponse_DeviceGrantPromptCompletesFlow() {
+	t := s.T()
+	prompt := coremock.NewPromptNodeInterfaceMock(t)
+	prompt.On("GetNextNode").Return("end")
+	end := coremock.NewNodeInterfaceMock(t)
+	end.On("GetType").Return(common.NodeTypeEnd)
+	graph := coremock.NewGraphInterfaceMock(t)
+	graph.On("GetNode", "end").Return(end, true)
+	ctx := &EngineContext{CurrentNode: prompt, Graph: graph, FlowType: providers.FlowTypeDeviceGrant}
+	step := &FlowStep{Data: FlowData{}}
+	meta := map[string]interface{}{"components": []interface{}{"failure message"}}
+
+	next, continueExecution, err := (&flowEngine{}).handleDisplayOnlyPromptResponse(ctx,
+		&common.NodeResponse{Status: common.NodeStatusComplete, Meta: meta}, step, log.GetLogger())
+
+	s.Nil(err)
+	s.Nil(next)
+	s.True(continueExecution)
+	s.Equal(providers.FlowStatusComplete, step.Status)
+	s.Equal(meta, step.Data.Meta)
 }
 
 func (s *EngineTestSuite) TestHandleDisplayOnlyPromptResponse_UnknownNextNode() {
@@ -2155,7 +2181,6 @@ func (s *EngineTestSuite) TestSkipToNextNode_NoCondition() {
 	t := s.T()
 	mockNode := coremock.NewNodeInterfaceMock(t)
 	mockNode.On("GetCondition").Return((*core.NodeCondition)(nil))
-	mockNode.On("GetID").Return("node-1")
 
 	fe := &flowEngine{logger: log.GetLogger()}
 	ctx := &EngineContext{Context: context.Background()}
@@ -2170,7 +2195,6 @@ func (s *EngineTestSuite) TestSkipToNextNode_EmptyOnSkip() {
 	cond := &core.NodeCondition{OnSkip: ""}
 	mockNode := coremock.NewNodeInterfaceMock(t)
 	mockNode.On("GetCondition").Return(cond)
-	mockNode.On("GetID").Return("node-1")
 
 	fe := &flowEngine{logger: log.GetLogger()}
 	ctx := &EngineContext{Context: context.Background()}
@@ -2185,7 +2209,6 @@ func (s *EngineTestSuite) TestSkipToNextNode_NodeNotFound() {
 	cond := &core.NodeCondition{OnSkip: "skip-target"}
 	mockNode := coremock.NewNodeInterfaceMock(t)
 	mockNode.On("GetCondition").Return(cond)
-	mockNode.On("GetID").Return("node-1")
 
 	mockGraph := coremock.NewGraphInterfaceMock(t)
 	mockGraph.On("GetNode", "skip-target").Return(nil, false)
@@ -2251,6 +2274,64 @@ func (s *EngineTestSuite) TestProcessNodeResponse_CompleteStatus() {
 	s.Nil(err)
 	s.True(continueExec)
 	s.Equal(mockNextNode, next)
+}
+
+func (s *EngineTestSuite) TestProcessNodeResponse_LiftsSessionHandleOntoStep() {
+	type emission struct{ handle, expiresAt string }
+	cases := []struct {
+		name          string
+		presented     string
+		emitted       []emission
+		wantReused    bool
+		wantExpiresAt time.Time
+	}{
+		{"a minted handle", "", []emission{{"handle-1", ""}}, false, time.Time{}},
+		{"a handle other than the presented one", "handle-0", []emission{{"handle-1", ""}}, false, time.Time{}},
+		{"the presented handle", "handle-1", []emission{{"handle-1", ""}}, true, time.Time{}},
+		{"a session minted earlier in the step and then joined", "",
+			[]emission{{"handle-1", ""}, {"handle-1", ""}}, false, time.Time{}},
+		{"the session's end", "", []emission{{"handle-1", "1700028800"}}, false, time.Unix(1700028800, 0)},
+		{"an unreadable end", "", []emission{{"handle-1", "tomorrow"}}, false, time.Time{}},
+		{"a later handle without an end", "",
+			[]emission{{"handle-1", "1700028800"}, {"handle-1", ""}}, false, time.Time{}},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			t := s.T()
+			mockGraph := coremock.NewGraphInterfaceMock(t)
+			mockGraph.On("GetID").Return("sign-in-flow")
+			mockNextNode := coremock.NewNodeInterfaceMock(t)
+			mockNextNode.On("GetID").Return("next-node")
+			mockGraph.On("GetNode", "next-node").Return(mockNextNode, true)
+			fe := &flowEngine{logger: log.GetLogger()}
+			ctx := &EngineContext{
+				Context:     context.Background(),
+				Graph:       mockGraph,
+				CurrentNode: coremock.NewNodeInterfaceMock(t),
+				SSOHandleIn: tc.presented,
+			}
+			flowStep := &FlowStep{}
+
+			for _, e := range tc.emitted {
+				engineData := map[string]string{common.RuntimeKeySSOSessionHandle: e.handle}
+				if e.expiresAt != "" {
+					engineData[common.RuntimeKeySSOSessionExpiresAt] = e.expiresAt
+				}
+				_, continueExec, err := fe.processNodeResponse(ctx, &common.NodeResponse{
+					Status:     common.NodeStatusComplete,
+					NextNodeID: "next-node",
+					EngineData: engineData,
+				}, flowStep, log.GetLogger())
+				s.Require().Nil(err)
+				s.Require().True(continueExec)
+			}
+
+			s.Equal("handle-1", flowStep.SSOHandleOut)
+			s.Equal("sign-in-flow", flowStep.SSOFlowID)
+			s.Equal(tc.wantReused, flowStep.SSOHandleReused)
+			s.True(tc.wantExpiresAt.Equal(flowStep.SSOHandleExpiresAt), "got %v", flowStep.SSOHandleExpiresAt)
+		})
+	}
 }
 
 func (s *EngineTestSuite) TestProcessNodeResponse_IncompleteViewStatus() {
@@ -2398,7 +2479,6 @@ func (s *EngineTestSuite) TestSetNodeExecutor_NotExecutorBacked() {
 	t := s.T()
 	mockNode := coremock.NewNodeInterfaceMock(t)
 	mockNode.On("GetType").Return(common.NodeTypeTaskExecution)
-	mockNode.On("GetID").Return("node-1")
 
 	fe := &flowEngine{logger: log.GetLogger()}
 	err := fe.setNodeExecutor(context.Background(), mockNode, log.GetLogger())
@@ -2423,7 +2503,6 @@ func (s *EngineTestSuite) TestSetNodeExecutor_ExecutorNameEmpty() {
 	mockNode.On("GetType").Return(common.NodeTypeTaskExecution)
 	mockNode.On("GetExecutor").Return(nil)
 	mockNode.On("GetExecutorName").Return("")
-	mockNode.On("GetID").Return("node-1")
 
 	fe := &flowEngine{logger: log.GetLogger()}
 	err := fe.setNodeExecutor(context.Background(), mockNode, log.GetLogger())
@@ -2439,7 +2518,6 @@ func (s *EngineTestSuite) TestSetNodeExecutor_RegistryError() {
 	mockNode.On("GetType").Return(common.NodeTypeTaskExecution)
 	mockNode.On("GetExecutor").Return(nil)
 	mockNode.On("GetExecutorName").Return("myExec")
-	mockNode.On("GetID").Return("node-1")
 
 	fe := &flowEngine{executorRegistry: mockRegistry, logger: log.GetLogger()}
 	err := fe.setNodeExecutor(context.Background(), mockNode, log.GetLogger())
@@ -2684,7 +2762,7 @@ func (s *EngineTestSuite) TestExecuteNodePackage_SkipsNodeWhenShouldExecuteFalse
 
 // executeNodePackageCapturingContext runs one node and returns the context the engine handed it.
 func (s *EngineTestSuite) executeNodePackageCapturingContext(flowType providers.FlowType,
-	app providers.Application) context.Context {
+	app providers.Application, requiredSubjectID string) context.Context {
 	t := s.T()
 	var captured context.Context
 	mockNode := coremock.NewNodeInterfaceMock(t)
@@ -2709,6 +2787,7 @@ func (s *EngineTestSuite) executeNodePackageCapturingContext(flowType providers.
 		UserInputs:       map[string]string{},
 		ExecutionHistory: map[string]*providers.NodeExecutionRecord{},
 	}
+	ctx.RequiredSubjectID = requiredSubjectID
 
 	_, _, err := fe.executeNodePackage(ctx, mockNode, &FlowStep{}, 0)
 	s.Nil(err)
@@ -2721,34 +2800,46 @@ func (s *EngineTestSuite) TestExecuteNodePackage_CarriesSubjectTypeConstraintsOn
 	app.AllowedUserTypes = []string{"customer"}
 	app.AllowedAgentTypes = []string{"default"}
 
-	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeAuthentication, app)
+	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeAuthentication, app, "")
 
 	constraints, ok := authnprovidercm.SubjectTypeConstraintsFrom(nodeCtx)
 	s.True(ok)
 	s.Equal([]string{"customer"}, constraints.AllowedUserTypes)
 	s.Equal([]string{"default"}, constraints.AllowedAgentTypes)
+	s.Empty(constraints.RequiredSubjectID)
+}
+
+// A personal agent's owner, resolved when the context loads, reaches the authn providers as the only
+// subject they accept.
+func (s *EngineTestSuite) TestExecuteNodePackage_CarriesRequiredSubjectOnAuthenticationFlow() {
+	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeAuthentication,
+		providers.Application{}, "owner-1")
+
+	constraints, ok := authnprovidercm.SubjectTypeConstraintsFrom(nodeCtx)
+	s.True(ok)
+	s.Equal("owner-1", constraints.RequiredSubjectID)
 }
 
 func (s *EngineTestSuite) TestExecuteNodePackage_OmitsSubjectTypeConstraintsOnOtherFlowTypes() {
 	app := providers.Application{}
 	app.AllowedAgentTypes = []string{"default"}
 
-	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeRegistration, app)
+	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeRegistration, app, "")
 
 	_, ok := authnprovidercm.SubjectTypeConstraintsFrom(nodeCtx)
 	s.False(ok)
 }
 
 func (s *EngineTestSuite) TestExecuteNodePackage_MarksRecoveryFlow() {
-	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeRecovery, providers.Application{})
+	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeRecovery, providers.Application{}, "")
 
-	s.True(authnprovidercm.IsRecoveryFlow(nodeCtx))
+	s.True(authnprovidercm.IsRecoveryProof(nodeCtx))
 }
 
 func (s *EngineTestSuite) TestExecuteNodePackage_DoesNotMarkOtherFlowsAsRecovery() {
-	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeAuthentication, providers.Application{})
+	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeAuthentication, providers.Application{}, "")
 
-	s.False(authnprovidercm.IsRecoveryFlow(nodeCtx))
+	s.False(authnprovidercm.IsRecoveryProof(nodeCtx))
 }
 
 func (s *EngineTestSuite) TestExecuteNodePackage_CompletesAndReturnsNilNextNode() {
@@ -2878,6 +2969,158 @@ func (s *EngineTestSuite) TestExecuteNodePackage_IncompleteExitClearsNodeScopeBe
 	s.Empty(ctx.consumedInputs, "consumed list should be fully drained at this exit path")
 }
 
+// A node reads the bound subject; a write on its node context never reaches the engine.
+func (s *EngineTestSuite) TestExecuteNodePackage_BoundSubjectIsReadOnlyForNodes() {
+	t := s.T()
+	mockGraph := coremock.NewGraphInterfaceMock(t)
+	mockGraph.On("HasSegments").Return(false).Maybe()
+	mockGraph.On("GetID").Return("self-flow").Maybe()
+	mockGraph.On("GetInterceptors", mock.Anything).Return([]core.InterceptorUnitInterface{}).Maybe()
+	mockNode := coremock.NewNodeInterfaceMock(t)
+	mockNode.On("GetID").Return("prepare").Maybe()
+	mockNode.On("GetType").Return(common.NodeTypeStart).Maybe()
+	mockNode.On("GetProperties").Return(map[string]interface{}(nil)).Maybe()
+	mockNode.On("GetExecutionPolicy").Return((*providers.ExecutionPolicy)(nil)).Maybe()
+	mockNode.On("ShouldExecute", mock.Anything).Return(true)
+	var seen string
+	mockNode.On("Execute", mock.Anything).Run(func(args mock.Arguments) {
+		nodeCtx := args.Get(0).(*providers.NodeContext)
+		seen = nodeCtx.GetBoundSubject()
+		nodeCtx.SetBoundSubject("user-2")
+	}).Return(&common.NodeResponse{Status: common.NodeStatusIncomplete, Type: common.NodeResponseTypeView,
+		Inputs: []providers.Input{{Identifier: "attribute", Required: true}}}, nil)
+	mockRunner := NewInterceptorRunnerInterfaceMock(t)
+	mockRunner.On("runInterceptors", mock.Anything, mock.Anything).
+		Return(&common.InterceptorResponse{Status: common.InterceptorStatusComplete}, nil)
+	fe := &flowEngine{logger: log.GetLogger(), observabilitySvc: setupNodePackageMockObs(t),
+		interceptorRunner: mockRunner}
+	ctx := &EngineContext{Context: context.Background(), ExecutionID: "exec-bound", Graph: mockGraph,
+		CurrentNode: mockNode, UserInputs: map[string]string{},
+		ExecutionHistory: map[string]*providers.NodeExecutionRecord{}, boundSubject: "user-1"}
+
+	_, _, err := fe.executeNodePackage(ctx, mockNode, &FlowStep{}, 0)
+
+	s.Nil(err)
+	s.Equal("user-1", seen)
+	s.Equal("user-1", ctx.boundSubject)
+}
+
+// Only a self flow start binds a user: an execution started as another type that CALLs a
+// self flow runs the callee with the callee's type and no bound user.
+func (s *EngineTestSuite) TestCalledSelfFlowHasNoBoundSubject() {
+	t := s.T()
+	callerGraph := coremock.NewGraphInterfaceMock(t)
+	callNode := coremock.NewCallNodeInterfaceMock(t)
+	calleeGraph := coremock.NewGraphInterfaceMock(t)
+	calleeStart := coremock.NewNodeInterfaceMock(t)
+	flowProvider := NewFlowProviderMock(t)
+	graphBuilder := NewGraphBuilderInterfaceMock(t)
+	callNode.On("GetID").Return("call")
+	flow := &providers.CompleteFlowDefinition{ID: "self-flow", FlowType: providers.FlowTypeSelf}
+	flowProvider.On("GetFlow", mock.Anything, "self-flow").Return(flow, nil)
+	graphBuilder.On("GetGraph", mock.Anything, flow).Return(calleeGraph, nil)
+	calleeGraph.On("GetType").Return(providers.FlowTypeSelf)
+	calleeGraph.On("GetStartNode").Return(calleeStart, nil)
+	engine := &flowEngine{logger: log.GetLogger(), flowProvider: flowProvider, graphBuilder: graphBuilder}
+	ctx := &EngineContext{Context: context.Background(), Graph: callerGraph, CurrentNode: callNode,
+		FlowType: providers.FlowTypeAuthentication}
+
+	_, svcErr := engine.handleCallResponse(ctx, &common.NodeResponse{
+		Status: common.NodeStatusCall, CallTargetFlowID: "self-flow",
+	}, log.GetLogger())
+
+	s.Nil(svcErr)
+	s.Equal(providers.FlowTypeSelf, ctx.FlowType)
+	s.Empty(ctx.boundSubject)
+}
+
+// A flow running with the system's authority cannot call a flow that acts for its caller, while one acting for
+// its caller may call a flow of either kind.
+func (s *EngineTestSuite) TestCallTargetMustNotActForTheCallerOfASystemAuthorityFlow() {
+	for _, tc := range []struct {
+		name       string
+		rootType   providers.FlowType
+		calleeType providers.FlowType
+		refused    bool
+	}{
+		{"registration calls administration", providers.FlowTypeRegistration, providers.FlowTypeAdministration, true},
+		{"authentication calls onboarding", providers.FlowTypeAuthentication, providers.FlowTypeUserOnboarding, true},
+		{"system calls invitation", providers.FlowTypeSystem, providers.FlowTypeInvitation, true},
+		{"administration calls authentication", providers.FlowTypeAdministration, providers.FlowTypeAuthentication,
+			false},
+		{"authentication calls authentication", providers.FlowTypeAuthentication, providers.FlowTypeAuthentication,
+			false},
+	} {
+		s.Run(tc.name, func() {
+			t := s.T()
+			callNode := coremock.NewCallNodeInterfaceMock(t)
+			flowProvider := NewFlowProviderMock(t)
+			graphBuilder := NewGraphBuilderInterfaceMock(t)
+			flow := &providers.CompleteFlowDefinition{ID: "callee-flow", FlowType: tc.calleeType}
+			flowProvider.On("GetFlow", mock.Anything, "callee-flow").Return(flow, nil)
+			if !tc.refused {
+				calleeGraph := coremock.NewGraphInterfaceMock(t)
+				callNode.On("GetID").Return("call")
+				graphBuilder.On("GetGraph", mock.Anything, flow).Return(calleeGraph, nil)
+				calleeGraph.On("GetType").Return(tc.calleeType).Maybe()
+				calleeGraph.On("GetStartNode").Return(coremock.NewNodeInterfaceMock(t), nil)
+			}
+			engine := &flowEngine{logger: log.GetLogger(), flowProvider: flowProvider, graphBuilder: graphBuilder}
+			ctx := &EngineContext{Context: context.Background(), Graph: coremock.NewGraphInterfaceMock(t),
+				CurrentNode: callNode, FlowType: tc.rootType}
+
+			_, svcErr := engine.handleCallResponse(ctx, &common.NodeResponse{
+				Status: common.NodeStatusCall, CallTargetFlowID: "callee-flow",
+			}, log.GetLogger())
+
+			if tc.refused {
+				s.Require().NotNil(svcErr)
+				s.Equal(ErrorCallTargetNotPermitted.Code, svcErr.Code)
+				graphBuilder.AssertNotCalled(t, "GetGraph", mock.Anything, mock.Anything)
+				return
+			}
+			s.Nil(svcErr)
+		})
+	}
+}
+
+func (s *EngineTestSuite) TestBoundSubjectSurvivesCallAndReturn() {
+	t := s.T()
+	callerGraph := coremock.NewGraphInterfaceMock(t)
+	callNode := coremock.NewCallNodeInterfaceMock(t)
+	nextNode := coremock.NewNodeInterfaceMock(t)
+	calleeGraph := coremock.NewGraphInterfaceMock(t)
+	calleeStart := coremock.NewNodeInterfaceMock(t)
+	flowProvider := NewFlowProviderMock(t)
+	graphBuilder := NewGraphBuilderInterfaceMock(t)
+
+	callNode.On("GetID").Return("call")
+	callerGraph.On("GetNode", "call").Return(callNode, true)
+	callNode.On("GetOnSuccess").Return("record")
+	callerGraph.On("GetNode", "record").Return(nextNode, true)
+	flow := &providers.CompleteFlowDefinition{ID: "callee-flow", FlowType: providers.FlowTypeAuthentication}
+	flowProvider.On("GetFlow", mock.Anything, "callee-flow").Return(flow, nil)
+	graphBuilder.On("GetGraph", mock.Anything, flow).Return(calleeGraph, nil)
+	calleeGraph.On("GetType").Return(providers.FlowTypeAuthentication)
+	calleeGraph.On("GetStartNode").Return(calleeStart, nil)
+	engine := &flowEngine{logger: log.GetLogger(), flowProvider: flowProvider, graphBuilder: graphBuilder}
+	ctx := &EngineContext{Context: context.Background(), Graph: callerGraph, CurrentNode: callNode,
+		FlowType: providers.FlowTypeSelf, boundSubject: "user-1"}
+
+	_, svcErr := engine.handleCallResponse(ctx, &common.NodeResponse{
+		Status: common.NodeStatusCall, CallTargetFlowID: "callee-flow",
+	}, log.GetLogger())
+	s.Nil(svcErr)
+	s.Equal("user-1", ctx.boundSubject)
+
+	ctx.CurrentNode = calleeStart
+	next, svcErr := engine.handleCalleeReturn(ctx, log.GetLogger())
+	s.Nil(svcErr)
+	s.Equal(nextNode, next)
+	s.Equal(providers.FlowTypeSelf, ctx.FlowType)
+	s.Equal("user-1", ctx.boundSubject)
+}
+
 func (s *EngineTestSuite) TestFlowEngineExecute_NilGraph() {
 	t := s.T()
 	mockObs := observabilitymock.NewObservabilityServiceInterfaceMock(t)
@@ -2895,6 +3138,73 @@ func (s *EngineTestSuite) TestFlowEngineExecute_NilGraph() {
 
 	_, err := fe.Execute(ctx)
 	s.NotNil(err)
+}
+
+func (s *EngineTestSuite) TestFlowEngineExecute_FailsWhenNodeExceedsVisitLimit() {
+	t := s.T()
+	mockGraph := coremock.NewGraphInterfaceMock(t)
+	mockGraph.On("HasSegments").Return(false).Maybe()
+	mockGraph.On("GetID").Return("auth-flow").Maybe()
+	mockGraph.On("GetInterceptors", mock.Anything).Return([]core.InterceptorUnitInterface{}).Maybe()
+
+	taskNode := coremock.NewExecutorBackedNodeInterfaceMock(t)
+	taskNode.On("GetID").Return("credentials_auth").Maybe()
+	taskNode.On("GetType").Return(common.NodeTypeTaskExecution).Maybe()
+	taskNode.On("GetProperties").Return(map[string]interface{}(nil)).Maybe()
+	taskNode.On("GetExecutionPolicy").Return((*providers.ExecutionPolicy)(nil)).Maybe()
+	mockExecutor := coremock.NewExecutorInterfaceMock(t)
+	mockExecutor.On("GetName").Return("CredentialsAuthExecutor").Maybe()
+	mockExecutor.On("GetType").Return(providers.ExecutorTypeAuthentication).Maybe()
+	taskNode.On("GetExecutor").Return(mockExecutor).Maybe()
+	taskNode.On("GetInputs").Return([]providers.Input{{Identifier: "", Required: true}}).Maybe()
+	taskNode.On("GetMode").Return("").Maybe()
+	taskNode.On("ShouldExecute", mock.Anything).Return(true)
+	// The executor keeps asking for an input the prompt never collects.
+	taskNode.On("Execute", mock.Anything).Return(&common.NodeResponse{
+		Status:     common.NodeStatusForward,
+		NextNodeID: "prompt_credentials",
+	}, nil).Times(maxNodeVisitsPerRequest)
+
+	promptNode := coremock.NewPromptNodeInterfaceMock(t)
+	promptNode.On("GetID").Return("prompt_credentials").Maybe()
+	promptNode.On("GetType").Return(common.NodeTypePrompt).Maybe()
+	promptNode.On("GetProperties").Return(map[string]interface{}(nil)).Maybe()
+	promptNode.On("GetExecutionPolicy").Return((*providers.ExecutionPolicy)(nil)).Maybe()
+	promptNode.On("GetPrompts").Return([]common.Prompt{}).Maybe()
+	promptNode.On("IsDisplayOnly").Return(false).Maybe()
+	promptNode.On("ShouldExecute", mock.Anything).Return(true)
+	// The prompt already holds its inputs, so it completes without pausing.
+	promptNode.On("Execute", mock.Anything).Return(&common.NodeResponse{
+		Status:     common.NodeStatusComplete,
+		NextNodeID: "credentials_auth",
+	}, nil).Times(maxNodeVisitsPerRequest)
+
+	mockGraph.On("GetNode", "prompt_credentials").Return(promptNode, true).Maybe()
+	mockGraph.On("GetNode", "credentials_auth").Return(taskNode, true).Maybe()
+
+	mockRunner := NewInterceptorRunnerInterfaceMock(t)
+	mockRunner.On("runInterceptors", mock.Anything, mock.Anything).
+		Return(&common.InterceptorResponse{Status: common.InterceptorStatusComplete}, nil)
+
+	fe := &flowEngine{
+		logger:            log.GetLogger(),
+		observabilitySvc:  setupNodePackageMockObs(t),
+		interceptorRunner: mockRunner,
+	}
+	ctx := &EngineContext{
+		Context:          context.Background(),
+		ExecutionID:      "exec-loop",
+		FlowType:         providers.FlowTypeAuthentication,
+		Graph:            mockGraph,
+		CurrentNode:      taskNode,
+		UserInputs:       map[string]string{"username": "alice", "password": "secret"},
+		ExecutionHistory: map[string]*providers.NodeExecutionRecord{},
+	}
+
+	_, err := fe.Execute(ctx)
+
+	s.NotNil(err)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 // Tests for runInterceptors
@@ -4182,6 +4492,62 @@ func (s *EngineTestSuite) TestHandleCallResponse_Success() {
 	s.Equal(mockStartNode, ctx.CurrentNode)
 }
 
+func (s *EngineTestSuite) TestHandleCallResponse_FixedAuthenticationFlowUsesDeviceContext() {
+	t := s.T()
+	flowProvider := NewFlowProviderMock(t)
+	flow := &providers.CompleteFlowDefinition{ID: "app-auth-flow", FlowType: providers.FlowTypeAuthentication,
+		ActiveVersion: 2}
+	flowProvider.EXPECT().GetFlow(mock.Anything, "app-auth-flow").Return(flow, nil)
+	graphBuilder := NewGraphBuilderInterfaceMock(t)
+	calleeGraph := coremock.NewGraphInterfaceMock(t)
+	startNode := coremock.NewNodeInterfaceMock(t)
+	graphBuilder.EXPECT().GetGraph(mock.Anything, flow).Return(calleeGraph, nil)
+	calleeGraph.EXPECT().GetType().Return(providers.FlowTypeAuthentication)
+	calleeGraph.EXPECT().GetStartNode().Return(startNode, nil)
+	callNode := coremock.NewCallNodeInterfaceMock(t)
+	callNode.EXPECT().GetID().Return("call-app")
+	callNode.EXPECT().GetOnSuccess().Return("end")
+	callerGraph := coremock.NewGraphInterfaceMock(t)
+	callerGraph.EXPECT().GetNode("call-app").Return(callNode, true)
+	endNode := coremock.NewNodeInterfaceMock(t)
+	callerGraph.EXPECT().GetNode("end").Return(endNode, true)
+	ctx := &EngineContext{Context: context.Background(), FlowType: providers.FlowTypeDeviceGrant,
+		AppID: "verified-app", Application: providers.Application{ID: "verified-app",
+			InboundAuthProfile: providers.InboundAuthProfile{AuthFlowID: "app-auth-flow"}},
+		Graph: callerGraph, CurrentNode: callNode, sharedRuntimeData: map[string]string{
+			common.RuntimeKeyAuthorizationRequestID:     "device-request",
+			common.RuntimeKeyCallbackType:               string(providers.GrantTypeDeviceCode),
+			common.RuntimeKeyRequestedPermissions:       "booking:read",
+			common.RuntimeKeyResourceServerIdentifier:   "https://api.example.com",
+			common.RuntimeKeyRequiredOptionalAttributes: "email",
+		}}
+	engine := &flowEngine{logger: log.GetLogger(),
+		flowProvider: flowProvider, graphBuilder: graphBuilder}
+	next, err := engine.handleCallResponse(ctx, &common.NodeResponse{
+		Status: common.NodeStatusCall, CallTargetFlowID: "app-auth-flow",
+	}, log.GetLogger())
+	s.Nil(err)
+	s.Equal(startNode, next)
+	s.Equal("verified-app", ctx.AppID)
+	s.Equal("app-auth-flow", ctx.Application.AuthFlowID)
+	s.Equal(2, ctx.SSOFlowVersion)
+	s.Empty(ctx.RuntimeData)
+	s.Equal("device-request", ctx.sharedRuntimeData[common.RuntimeKeyAuthorizationRequestID])
+	s.Equal(string(providers.GrantTypeDeviceCode), ctx.sharedRuntimeData[common.RuntimeKeyCallbackType])
+	s.Equal("booking:read", ctx.sharedRuntimeData[common.RuntimeKeyRequestedPermissions])
+	s.Equal("https://api.example.com", ctx.sharedRuntimeData[common.RuntimeKeyResourceServerIdentifier])
+	s.Equal("email", ctx.sharedRuntimeData[common.RuntimeKeyRequiredOptionalAttributes])
+	s.Equal(1, ctx.frameDepth())
+	returned, err := engine.handleCalleeReturn(ctx, log.GetLogger())
+	s.Nil(err)
+	s.Equal(endNode, returned)
+	s.Equal(callerGraph, ctx.Graph)
+	s.Equal(providers.FlowTypeDeviceGrant, ctx.FlowType)
+	s.Empty(ctx.RuntimeData)
+	s.Equal("device-request", ctx.sharedRuntimeData[common.RuntimeKeyAuthorizationRequestID])
+	s.Zero(ctx.SSOFlowVersion)
+}
+
 func (s *EngineTestSuite) TestSharedRuntimeDataSurvivesAdministrationFlowCallAndReturn() {
 	t := s.T()
 	callerGraph := coremock.NewGraphInterfaceMock(t)
@@ -4408,6 +4774,34 @@ func (s *EngineTestSuite) TestHandleCalleeFailure_WithOnFailure() {
 	s.Equal(callerErr, ctx.CurrentNodeResponse.Error)
 }
 
+func (s *EngineTestSuite) TestHandleCalleeFailure_DeviceGrantRoutesToConfiguredFailureNode() {
+	t := s.T()
+	callerGraph := coremock.NewGraphInterfaceMock(t)
+	callNode := coremock.NewCallNodeInterfaceMock(t)
+	failurePrompt := coremock.NewNodeInterfaceMock(t)
+	callerGraph.On("GetNode", "call-app").Return(callNode, true)
+	callNode.On("GetOnFailure").Return("failure-prompt")
+	callerGraph.On("GetNode", "failure-prompt").Return(failurePrompt, true)
+	ctx := &EngineContext{Context: context.Background(), Graph: callerGraph,
+		FlowType: providers.FlowTypeDeviceGrant, RuntimeData: map[string]string{
+			common.RuntimeKeyAuthorizationRequestID: "device-request",
+			common.RuntimeKeyCallbackType:           string(providers.GrantTypeDeviceCode),
+		}}
+	ctx.pushFrame("call-app")
+	ctx.Graph = coremock.NewGraphInterfaceMock(t)
+	ctx.FlowType = providers.FlowTypeAuthentication
+	step := &FlowStep{}
+	denied := &tidcommon.ServiceError{Code: "consent-denied"}
+
+	next, continueExecution, err := (&flowEngine{}).handleCalleeFailure(ctx,
+		&common.NodeResponse{Status: common.NodeStatusFailure, Error: denied}, step, log.GetLogger())
+
+	s.Nil(err)
+	s.True(continueExecution)
+	s.Equal(failurePrompt, next)
+	s.Nil(step.Error)
+}
+
 func (s *EngineTestSuite) TestHandleCalleeFailure_CallNodeNotFound() {
 	t := s.T()
 	mockCallerGraph := coremock.NewGraphInterfaceMock(t)
@@ -4615,6 +5009,8 @@ func setupCapturingObservability(t *testing.T) (
 	return mockObs, captured
 }
 
+const testRequestTraceID = "request-trace-1"
+
 // agentFlowContext returns an engine context for an authentication flow driven by an agent that has
 // authenticated a user. The subject is recorded on AuthUser, which is where the authentication
 // executors put it — EngineContext.AuthenticatedUser is never written during execution, so a test
@@ -4622,7 +5018,7 @@ func setupCapturingObservability(t *testing.T) (
 func agentFlowContext() *EngineContext {
 	ctx := &EngineContext{
 		ExecutionID: "flow-exec-1",
-		TraceID:     "request-trace-1",
+		TraceID:     testRequestTraceID,
 		FlowType:    providers.FlowTypeAuthentication,
 		AppID:       "agent-entity-1",
 		Application: providers.Application{
@@ -4658,10 +5054,8 @@ func TestFlowStartedEvent_ReportsPrincipalAndCorrelation(t *testing.T) {
 	}
 	evt := (*captured)[0]
 
-	// The whole flow must share one trace, keyed on the execution id, so FLOW_STARTED stitches to
-	// its own child events.
-	if evt.TraceID != "flow-exec-1" {
-		t.Errorf("TraceID = %q, want the execution id %q", evt.TraceID, "flow-exec-1")
+	if evt.TraceID != testRequestTraceID {
+		t.Errorf("TraceID = %q, want the request trace id %q", evt.TraceID, testRequestTraceID)
 	}
 
 	assertEventData(t, evt, map[string]interface{}{
@@ -4788,6 +5182,9 @@ func TestNodeExecutionStartedEvent_ReportsSubjectAndPrincipal(t *testing.T) {
 
 	publishNodeExecutionStartedEvent(agentFlowContext(), node, mockObs)
 
+	if evt := (*captured)[0]; evt.TraceID != testRequestTraceID {
+		t.Errorf("TraceID = %q, want the request trace id %q", evt.TraceID, testRequestTraceID)
+	}
 	assertEventData(t, (*captured)[0], map[string]interface{}{
 		event.DataKey.ActorType:     string(providers.EntityCategoryAgent),
 		event.DataKey.ClientID:      "agent-client-id",
@@ -4848,15 +5245,15 @@ func TestFlowCompletedEvent_ReportsPrincipalAndCorrelation(t *testing.T) {
 	})
 }
 
-func TestFlowFailedEvent_SharesTheFlowTrace(t *testing.T) {
+func TestFlowFailedEvent_CarriesTheRequestTrace(t *testing.T) {
 	mockObs, captured := setupCapturingObservability(t)
 	defer config.ResetServerRuntime()
 
 	publishFlowFailedEvent(agentFlowContext(), nil, 0, 5, mockObs)
 
 	evt := (*captured)[0]
-	if evt.TraceID != "flow-exec-1" {
-		t.Errorf("TraceID = %q, want the execution id %q", evt.TraceID, "flow-exec-1")
+	if evt.TraceID != testRequestTraceID {
+		t.Errorf("TraceID = %q, want the request trace id %q", evt.TraceID, testRequestTraceID)
 	}
 	assertEventData(t, evt, map[string]interface{}{
 		event.DataKey.ActorType:     string(providers.EntityCategoryAgent),
@@ -4924,6 +5321,52 @@ func (s *EngineTestSuite) TestApplyVariableValues_StopsWhenAConnectionIsStillNot
 			RuntimeData: map[string]string{common.RuntimeKeyOUID: "ou-child"}}
 
 		s.Equal(&ErrorFlowConnectionNotSet, fe.applyVariableValues(ctx, node, resp, fe.logger))
+	})
+
+	s.Run("the node routes to its onFailure node", func() {
+		node, resp := s.unsetConnectionNodeAndResponse()
+		node.(core.VariablesNodeInterface).SetOnFailure("retry-prompt")
+		values := newVariableValueProviderMock(t)
+		values.EXPECT().GetEffectiveVariableValues(mock.Anything, "flow-1", app, "ou-child").
+			Return(map[string]string{}, nil)
+		fe := &flowEngine{variableValuesProvider: values, logger: log.GetLogger()}
+		resolver := coremock.NewExecutorBackedNodeInterfaceMock(t)
+		resolver.On("GetExecutorName").Return(executormeta.ExecutorNameOUResolver)
+		resolver.On("GetInputs").Return([]providers.Input{{Identifier: "orgHandle"}})
+		other := coremock.NewExecutorBackedNodeInterfaceMock(t)
+		other.On("GetExecutorName").Return("BasicAuthExecutor")
+		nodesGraph := coremock.NewGraphInterfaceMock(t)
+		nodesGraph.On("GetID").Return("flow-1")
+		nodesGraph.On("GetNodes").Return(map[string]core.NodeInterface{"resolve": resolver, "login": other})
+		ctx := &EngineContext{Context: context.Background(), Graph: nodesGraph, Application: app,
+			RuntimeData: map[string]string{common.RuntimeKeyOUID: "ou-child"},
+			UserInputs: map[string]string{
+				"ouHandle": "child-ou", "orgHandle": "child-ou", "username": "alice"}}
+
+		s.Nil(fe.applyVariableValues(ctx, node, resp, fe.logger))
+		s.Equal(map[string]string{"username": "alice"}, ctx.UserInputs)
+		s.NotContains(ctx.RuntimeData, common.RuntimeKeyOUID)
+		s.Equal(common.NodeStatusForward, resp.Status)
+		s.Equal("retry-prompt", resp.NextNodeID)
+		s.Equal(&ErrorFlowConnectionNotSet, resp.Error)
+		s.Contains(resp.RuntimeData["failureReasonJSON"], ErrorFlowConnectionNotSet.Code)
+	})
+
+	s.Run("an organization unit fixed before the flow stays when the node routes to its onFailure node", func() {
+		node, resp := s.unsetConnectionNodeAndResponse()
+		node.(core.VariablesNodeInterface).SetOnFailure("retry-prompt")
+		values := newVariableValueProviderMock(t)
+		values.EXPECT().GetEffectiveVariableValues(mock.Anything, "flow-1", app, "ou-child").
+			Return(map[string]string{}, nil)
+		fe := &flowEngine{variableValuesProvider: values, logger: log.GetLogger()}
+		emptyGraph := coremock.NewGraphInterfaceMock(t)
+		emptyGraph.On("GetID").Return("flow-1")
+		emptyGraph.On("GetNodes").Return(map[string]core.NodeInterface{})
+		ctx := &EngineContext{Context: context.Background(), Graph: emptyGraph, Application: app,
+			RuntimeData: map[string]string{common.RuntimeKeyOUID: "ou-child", common.RuntimeKeyOUFixed: "true"}}
+
+		s.Nil(fe.applyVariableValues(ctx, node, resp, fe.logger))
+		s.Equal("ou-child", ctx.RuntimeData[common.RuntimeKeyOUID])
 	})
 
 	s.Run("an engine with no values to apply", func() {
@@ -5035,6 +5478,444 @@ func (s *EngineTestSuite) TestNewFlowEngine_UsesTheVariableValuesItIsGiven() {
 	engine := newFlowEngine(nil, nil, nil, NewFlowProviderMock(s.T()), nil, values).(*flowEngine)
 	s.Same(values, engine.variableValuesProvider)
 
-	s.Nil(newFlowEngine(nil, nil, nil, NewFlowProviderMock(s.T()), nil, nil).(*flowEngine).variableValuesProvider,
-		"an engine given none leaves every flow on the owner's defaults")
+	s.Nil(newFlowEngine(nil, nil, nil, NewFlowProviderMock(s.T()), nil, nil).(*flowEngine).
+		variableValuesProvider, "an engine given none leaves every flow on the owner's defaults")
+}
+
+// captureStepContext runs a node whose condition skips it and returns the context the engine built
+// for the step.
+func (s *EngineTestSuite) captureStepContext(ctx *EngineContext) context.Context {
+	node := coremock.NewNodeInterfaceMock(s.T())
+	node.On("GetID").Return("node-1").Maybe()
+	node.On("GetType").Return(common.NodeTypeTaskExecution).Maybe()
+	node.On("GetCondition").Return(nil).Maybe()
+	var stepCtx context.Context
+	node.On("ShouldExecute", mock.Anything).Run(func(args mock.Arguments) {
+		stepCtx = args.Get(0).(*providers.NodeContext).Context
+	}).Return(false)
+	ctx.CurrentNode = node
+	if ctx.Context == nil {
+		ctx.Context = context.Background()
+	}
+
+	fe := &flowEngine{logger: log.GetLogger()}
+	_, _, _ = fe.executeNodePackage(ctx, node, &FlowStep{}, 0)
+	s.NotNil(stepCtx)
+	return stepCtx
+}
+
+func (s *EngineTestSuite) TestStepContext_CarriesSignInBoundaryOnlyWhenBounded() {
+	bounded := &EngineContext{AppID: "app-1", SignInBounded: true, RuntimeData: map[string]string{}}
+	boundary, ok := authnprovidercm.SignInBoundaryFrom(s.captureStepContext(bounded))
+	s.True(ok)
+	s.Equal(authnprovidercm.SignInBoundary{ApplicationID: "app-1"}, boundary)
+
+	unbounded := &EngineContext{AppID: "app-1", RuntimeData: map[string]string{}}
+	_, ok = authnprovidercm.SignInBoundaryFrom(s.captureStepContext(unbounded))
+	s.False(ok)
+}
+
+func (s *EngineTestSuite) TestStepContext_SignInBoundaryFollowsRuntimeOUID() {
+	ctx := &EngineContext{AppID: "app-1", SignInBounded: true, RuntimeData: map[string]string{}}
+	boundary, _ := authnprovidercm.SignInBoundaryFrom(s.captureStepContext(ctx))
+	s.Empty(boundary.OUID)
+
+	ctx.RuntimeData[common.RuntimeKeyOUID] = "ou-7"
+	boundary, ok := authnprovidercm.SignInBoundaryFrom(s.captureStepContext(ctx))
+	s.True(ok)
+	s.Equal(authnprovidercm.SignInBoundary{OUID: "ou-7", ApplicationID: "app-1"}, boundary)
+}
+
+// The subject an earlier step signed in rides on the boundary of the next step.
+func (s *EngineTestSuite) TestStepContext_SignInBoundaryCarriesTheSignedInSubject() {
+	ctx := &EngineContext{AppID: "app-1", SignInBounded: true, RuntimeData: map[string]string{}}
+	boundary, _ := authnprovidercm.SignInBoundaryFrom(s.captureStepContext(ctx))
+	s.Empty(boundary.EntityID)
+
+	ctx.AuthUser = signedInAuthUser()
+	boundary, ok := authnprovidercm.SignInBoundaryFrom(s.captureStepContext(ctx))
+	s.True(ok)
+	s.Equal(authnprovidercm.SignInBoundary{ApplicationID: "app-1", EntityID: signedInUserID}, boundary)
+}
+
+// An organization unit a node returns, such as the one a reused session follows, bounds the next step.
+func (s *EngineTestSuite) TestStepContext_SignInBoundaryFollowsAnOUIDTheLastNodeSet() {
+	ctx := &EngineContext{AppID: "app-1", SignInBounded: true, RuntimeData: map[string]string{}}
+	fe := &flowEngine{logger: log.GetLogger()}
+
+	fe.updateContextWithNodeResponse(ctx, &common.NodeResponse{
+		Status:      common.NodeStatusComplete,
+		RuntimeData: map[string]string{common.RuntimeKeyOUID: "ou-last"},
+	})
+
+	boundary, ok := authnprovidercm.SignInBoundaryFrom(s.captureStepContext(ctx))
+	s.True(ok)
+	s.Equal(authnprovidercm.SignInBoundary{OUID: "ou-last", ApplicationID: "app-1"}, boundary)
+}
+
+// switchToCallee builds a caller with the given boundedness, switches it to a callee of calleeType and
+// returns the context.
+func (s *EngineTestSuite) switchToCallee(callerBounded bool, calleeType providers.FlowType) *EngineContext {
+	t := s.T()
+	mockCallNode := coremock.NewNodeInterfaceMock(t)
+	mockCallNode.On("GetID").Return("call_node").Maybe()
+	mockStartNode := coremock.NewNodeInterfaceMock(t)
+	mockStartNode.On("GetID").Return("start").Maybe()
+	mockCalleeGraph := coremock.NewGraphInterfaceMock(t)
+	mockCalleeGraph.On("GetType").Return(calleeType).Maybe()
+	mockCalleeGraph.On("GetStartNode").Return(mockStartNode, nil).Maybe()
+
+	fe := &flowEngine{logger: log.GetLogger()}
+	ctx := &EngineContext{
+		Context:       context.Background(),
+		CurrentNode:   mockCallNode,
+		FlowType:      providers.FlowTypeAuthentication,
+		SignInBounded: callerBounded,
+	}
+	_, svcErr := fe.switchContextToCallee(ctx, &common.NodeResponse{}, mockCalleeGraph, calleeType, 1,
+		log.GetLogger())
+	s.Nil(svcErr)
+	return ctx
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_BoundedSignInCallingRegistrationRunsUnbounded() {
+	ctx := s.switchToCallee(true, providers.FlowTypeRegistration)
+	s.False(ctx.SignInBounded)
+
+	ctx.popFrame()
+	s.True(ctx.SignInBounded)
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_SignInCallingAuthenticationIsBounded() {
+	ctx := s.switchToCallee(true, providers.FlowTypeAuthentication)
+	s.True(ctx.SignInBounded)
+
+	ctx.popFrame()
+	s.True(ctx.SignInBounded)
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_UnboundedCallerCallingAuthenticationRunsUnbounded() {
+	ctx := s.switchToCallee(false, providers.FlowTypeAuthentication)
+	s.False(ctx.SignInBounded)
+
+	ctx.popFrame()
+	s.False(ctx.SignInBounded)
+}
+
+const (
+	calleeAppID   = "callee-app"
+	calleeAppOUID = "callee-app-ou"
+)
+
+// signedInUserID is the user signedInAuthUser holds.
+const signedInUserID = "user-1"
+
+// signedInAuthUser is a user the default provider signed in and resolved.
+func signedInAuthUser() providers.AuthUser {
+	var authUser providers.AuthUser
+	authUser.SetStateFor("default", providers.AuthState{
+		EntityReference: &providers.EntityReference{EntityID: signedInUserID, EntityCategory: "user"},
+		Attributes:      &providers.AttributesResponse{},
+	})
+	return authUser
+}
+
+// signInCallee is a bounded sign-in caller of calleeAppID that has called a sign-in flow.
+type signInCallee struct {
+	engine      *flowEngine
+	ctx         *EngineContext
+	callerGraph *coremock.GraphInterfaceMock
+	callNode    *coremock.CallNodeInterfaceMock
+	onSuccess   *coremock.NodeInterfaceMock
+}
+
+// callSignIn switches the bounded sign-in caller into a sign-in callee.
+func (s *EngineTestSuite) callSignIn() *signInCallee {
+	t := s.T()
+	c := &signInCallee{
+		callerGraph: coremock.NewGraphInterfaceMock(t),
+		callNode:    coremock.NewCallNodeInterfaceMock(t),
+		onSuccess:   coremock.NewNodeInterfaceMock(t),
+	}
+	c.callNode.On("GetID").Return("sign-in-call").Maybe()
+	c.callerGraph.On("GetNode", "sign-in-call").Return(c.callNode, true).Maybe()
+	c.callNode.On("GetOnSuccess").Return("after-sign-in").Maybe()
+	c.callerGraph.On("GetNode", "after-sign-in").Return(c.onSuccess, true).Maybe()
+	calleeGraph := coremock.NewGraphInterfaceMock(t)
+	calleeGraph.On("GetType").Return(providers.FlowTypeAuthentication)
+	calleeGraph.On("GetStartNode").Return(coremock.NewNodeInterfaceMock(t), nil)
+
+	c.engine = &flowEngine{logger: log.GetLogger()}
+	c.ctx = &EngineContext{
+		Context:       context.Background(),
+		AppID:         calleeAppID,
+		Application:   providers.Application{ID: calleeAppID, OUID: calleeAppOUID},
+		FlowType:      providers.FlowTypeAuthentication,
+		SignInBounded: true,
+		Graph:         c.callerGraph,
+		CurrentNode:   c.callNode,
+		RuntimeData:   map[string]string{},
+		AuthUser:      signedInAuthUser(),
+	}
+	_, svcErr := c.engine.switchContextToCallee(c.ctx, &common.NodeResponse{}, calleeGraph,
+		providers.FlowTypeAuthentication, 1, log.GetLogger())
+	s.Require().Nil(svcErr)
+	s.Require().True(c.ctx.SignInBounded)
+	return c
+}
+
+// end runs the callee's END node after the callee signed the user in with an assertion and a session handle.
+func (c *signInCallee) end(t *testing.T) (core.NodeInterface, bool, *FlowStep, *tidcommon.ServiceError) {
+	endNode := coremock.NewNodeInterfaceMock(t)
+	endNode.On("GetType").Return(common.NodeTypeEnd)
+	c.ctx.CurrentNode = endNode
+	c.ctx.Assertion = "callee-assertion"
+	step := &FlowStep{SSOHandleOut: "callee-handle", SSOFlowID: "sign-in-flow"}
+	next, cont, svcErr := c.engine.processNodeResponse(c.ctx,
+		&common.NodeResponse{Status: common.NodeStatusComplete}, step, log.GetLogger())
+	return next, cont, step, svcErr
+}
+
+// calleeOf switches a caller of calleeAppID with the given type, boundedness and ouId into a callee of calleeType.
+func (s *EngineTestSuite) calleeOf(callerType providers.FlowType, callerBounded bool, callerOUID string,
+	calleeType providers.FlowType) *EngineContext {
+	runtimeData := map[string]string{}
+	if callerOUID != "" {
+		runtimeData[common.RuntimeKeyOUID] = callerOUID
+	}
+	return s.calleeWithRuntimeData(callerType, callerBounded, runtimeData, calleeType)
+}
+
+// calleeWithRuntimeData is calleeOf for a caller holding the given runtime data.
+func (s *EngineTestSuite) calleeWithRuntimeData(callerType providers.FlowType, callerBounded bool,
+	runtimeData map[string]string, calleeType providers.FlowType) *EngineContext {
+	t := s.T()
+	callNode := coremock.NewNodeInterfaceMock(t)
+	callNode.On("GetID").Return("call").Maybe()
+	calleeGraph := coremock.NewGraphInterfaceMock(t)
+	calleeGraph.On("GetType").Return(calleeType)
+	calleeGraph.On("GetStartNode").Return(coremock.NewNodeInterfaceMock(t), nil)
+	ctx := &EngineContext{
+		Context:       context.Background(),
+		AppID:         calleeAppID,
+		Application:   providers.Application{ID: calleeAppID, OUID: calleeAppOUID},
+		FlowType:      callerType,
+		SignInBounded: callerBounded,
+		CurrentNode:   callNode,
+		RuntimeData:   runtimeData,
+	}
+	fe := &flowEngine{logger: log.GetLogger()}
+	_, svcErr := fe.switchContextToCallee(ctx, &common.NodeResponse{}, calleeGraph, calleeType, 1, log.GetLogger())
+	s.Require().Nil(svcErr)
+	return ctx
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_SignInCalleeKeepsTheOUItsSignInCallerDecided() {
+	ctx := s.calleeOf(providers.FlowTypeAuthentication, true, "caller-ou", providers.FlowTypeAuthentication)
+
+	s.True(ctx.SignInBounded)
+	s.Equal("caller-ou", ctx.RuntimeData[common.RuntimeKeyOUID])
+
+	ctx.popFrame()
+	s.Equal("caller-ou", ctx.RuntimeData[common.RuntimeKeyOUID])
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_SignInCalleeKeepsTheOUFixedMarkOfItsCaller() {
+	ctx := s.calleeWithRuntimeData(providers.FlowTypeAuthentication, true,
+		map[string]string{common.RuntimeKeyOUID: "caller-ou", common.RuntimeKeyOUFixed: "true"},
+		providers.FlowTypeAuthentication)
+
+	s.Equal("caller-ou", ctx.RuntimeData[common.RuntimeKeyOUID])
+	s.Equal("true", ctx.RuntimeData[common.RuntimeKeyOUFixed])
+
+	ctx.popFrame()
+	s.Equal("true", ctx.RuntimeData[common.RuntimeKeyOUFixed])
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_SignInCalleeOfACallerThatPickedItsOUHasNoFixedMark() {
+	ctx := s.calleeOf(providers.FlowTypeAuthentication, true, "caller-ou", providers.FlowTypeAuthentication)
+
+	s.NotContains(ctx.RuntimeData, common.RuntimeKeyOUFixed)
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_SignInCallerWithoutAnOUPassesNone() {
+	ctx := s.calleeOf(providers.FlowTypeAuthentication, true, "", providers.FlowTypeAuthentication)
+
+	s.True(ctx.SignInBounded)
+	s.NotContains(ctx.RuntimeData, common.RuntimeKeyOUID)
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_RegistrationCallerCallingSignInRunsUnboundedWithoutItsOU() {
+	ctx := s.calleeOf(providers.FlowTypeRegistration, false, "target-ou", providers.FlowTypeAuthentication)
+
+	s.False(ctx.SignInBounded)
+	s.NotContains(ctx.RuntimeData, common.RuntimeKeyOUID)
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_SignInCallersOUDoesNotBindANonSignInCallee() {
+	ctx := s.calleeOf(providers.FlowTypeAuthentication, true, "caller-ou", providers.FlowTypeRegistration)
+
+	s.False(ctx.SignInBounded)
+	s.NotContains(ctx.RuntimeData, common.RuntimeKeyOUID)
+}
+
+// refuseAtAssertion fails the callee's assertion node with refusal after the callee signed the user in with an
+// assertion and a session handle.
+func (c *signInCallee) refuseAtAssertion(t *testing.T, refusal *tidcommon.ServiceError) (
+	core.NodeInterface, bool, *FlowStep, *tidcommon.ServiceError) {
+	c.ctx.CurrentNode = coremock.NewNodeInterfaceMock(t)
+	c.ctx.Assertion = "callee-assertion"
+	step := &FlowStep{SSOHandleOut: "callee-handle", SSOFlowID: "sign-in-flow"}
+	next, cont, svcErr := c.engine.processNodeResponse(c.ctx,
+		&common.NodeResponse{Status: common.NodeStatusFailure, Error: refusal}, step, log.GetLogger())
+	return next, cont, step, svcErr
+}
+
+// signInBoundaryRefusals are the errors a node refuses a sign-in for its organization unit boundary with.
+var signInBoundaryRefusals = []*tidcommon.ServiceError{
+	&executor.ErrOrganizationNotResolved,
+	&executor.ErrNoAccessToApplication,
+}
+
+// A sign-in callee that ends returns to the caller's onSuccess with its user, assertion and handle, without the
+// OU provider being asked about its organization unit.
+func (s *EngineTestSuite) TestProcessNodeResponse_SignInCalleeReturnsWithoutABoundaryCheck() {
+	c := s.callSignIn()
+
+	next, cont, step, svcErr := c.end(s.T())
+
+	s.Nil(svcErr)
+	s.True(cont)
+	s.Equal(c.onSuccess, next)
+	s.Equal(0, c.ctx.frameDepth())
+	s.True(c.ctx.AuthUser.IsAuthenticated())
+	s.Equal("callee-assertion", c.ctx.Assertion)
+	s.Equal("callee-handle", step.SSOHandleOut)
+	s.Empty(step.Status)
+}
+
+// A sign-in refused after its Session node minted a session handle ends in error with no user, assertion or handle,
+// so the client is handed no session.
+func (s *EngineTestSuite) TestProcessNodeResponse_RefusedSignInDropsItsUserAndSessionHandle() {
+	for _, refusal := range signInBoundaryRefusals {
+		s.Run(refusal.Code, func() {
+			t := s.T()
+			sessionNode := coremock.NewNodeInterfaceMock(t)
+			assertNode := coremock.NewNodeInterfaceMock(t)
+			assertNode.On("GetID").Return("auth_assert").Maybe()
+			graph := coremock.NewGraphInterfaceMock(t)
+			graph.On("GetID").Return("sign-in-flow").Maybe()
+			graph.On("GetNode", "auth_assert").Return(assertNode, true)
+			fe := &flowEngine{logger: log.GetLogger()}
+			ctx := &EngineContext{
+				Context:       context.Background(),
+				FlowType:      providers.FlowTypeAuthentication,
+				SignInBounded: true,
+				Graph:         graph,
+				CurrentNode:   sessionNode,
+				AuthUser:      signedInAuthUser(),
+			}
+			step := &FlowStep{}
+
+			next, cont, svcErr := fe.processNodeResponse(ctx, &common.NodeResponse{
+				Status:     common.NodeStatusComplete,
+				NextNodeID: "auth_assert",
+				EngineData: map[string]string{
+					common.RuntimeKeySSOSessionHandle:    "minted-handle",
+					common.RuntimeKeySSOSessionExpiresAt: "1700028800",
+				},
+			}, step, log.GetLogger())
+			s.Require().Nil(svcErr)
+			s.Require().True(cont)
+			s.Require().Equal(assertNode, next)
+			s.Require().Equal("minted-handle", step.SSOHandleOut)
+			s.Require().False(step.SSOHandleExpiresAt.IsZero())
+
+			next, cont, svcErr = fe.processNodeResponse(ctx,
+				&common.NodeResponse{Status: common.NodeStatusFailure, Error: refusal}, step, log.GetLogger())
+
+			s.Nil(svcErr)
+			s.False(cont)
+			s.Nil(next)
+			s.Equal(providers.FlowStatusError, step.Status)
+			s.Equal(refusal, step.Error)
+			s.Empty(step.Assertion)
+			s.Empty(step.SSOHandleOut)
+			s.Empty(step.SSOFlowID)
+			s.True(step.SSOHandleExpiresAt.IsZero())
+			s.False(ctx.AuthUser.IsAuthenticated())
+			s.Empty(ctx.Assertion)
+		})
+	}
+}
+
+// A sign-in callee refused at its assertion node fails to its caller like any failed callee, with no user,
+// assertion or handle.
+func (s *EngineTestSuite) TestProcessNodeResponse_RefusedSignInCalleeTakesTheFailurePath() {
+	for _, refusal := range signInBoundaryRefusals {
+		s.Run(refusal.Code+" with an onFailure route", func() {
+			c := s.callSignIn()
+			failed := coremock.NewNodeInterfaceMock(s.T())
+			c.callNode.On("GetOnFailure").Return("sign-in-failed")
+			c.callerGraph.On("GetNode", "sign-in-failed").Return(failed, true)
+
+			next, cont, step, svcErr := c.refuseAtAssertion(s.T(), refusal)
+
+			s.Nil(svcErr)
+			s.True(cont)
+			s.Equal(failed, next)
+			s.Require().NotNil(c.ctx.CurrentNodeResponse)
+			s.Equal(refusal, c.ctx.CurrentNodeResponse.Error)
+			s.Equal(0, c.ctx.frameDepth())
+			s.True(c.ctx.SignInBounded)
+			s.False(c.ctx.AuthUser.IsAuthenticated())
+			s.Empty(c.ctx.Assertion)
+			s.Empty(step.SSOHandleOut)
+			s.Empty(step.SSOFlowID)
+		})
+
+		s.Run(refusal.Code+" without an onFailure route", func() {
+			c := s.callSignIn()
+			c.callNode.On("GetOnFailure").Return("")
+
+			next, cont, step, svcErr := c.refuseAtAssertion(s.T(), refusal)
+
+			s.Nil(svcErr)
+			s.False(cont)
+			s.Nil(next)
+			s.Equal(providers.FlowStatusError, step.Status)
+			s.Equal(refusal, step.Error)
+			s.Empty(c.ctx.Assertion)
+			s.Empty(step.SSOHandleOut)
+		})
+	}
+}
+
+// The caller's onFailure route after a sign-in callee refused at its assertion node sees no signed-in user.
+func (s *EngineTestSuite) TestProcessNodeResponse_RefusedSignInCalleeLeavesNoUserForTheFailureRoute() {
+	c := s.callSignIn()
+	assertNode := coremock.NewNodeInterfaceMock(s.T())
+	assertNode.On("GetID").Return("assert-after-failure")
+	assertNode.On("GetType").Return(common.NodeTypeTaskExecution)
+	assertNode.On("GetCondition").Return(nil)
+	var seen *providers.AuthUser
+	assertNode.On("ShouldExecute", mock.Anything).Run(func(args mock.Arguments) {
+		authUser := args.Get(0).(*providers.NodeContext).AuthUser
+		seen = &authUser
+	}).Return(false)
+	c.callNode.On("GetOnFailure").Return("assert-after-failure")
+	c.callerGraph.On("GetNode", "assert-after-failure").Return(assertNode, true)
+	c.callerGraph.On("GetID").Return("sign-in-flow")
+	s.Require().True(c.ctx.AuthUser.IsAuthenticated())
+
+	next, cont, step, svcErr := c.refuseAtAssertion(s.T(), &executor.ErrNoAccessToApplication)
+	s.Require().Nil(svcErr)
+	s.Require().True(cont)
+	s.Require().Equal(assertNode, next)
+	_, _, _ = c.engine.executeNodePackage(c.ctx, assertNode, step, 0)
+
+	s.Require().NotNil(seen)
+	s.False(seen.IsAuthenticated())
+	s.Empty(seen.ProviderNames())
+	s.Empty(c.ctx.Assertion)
 }

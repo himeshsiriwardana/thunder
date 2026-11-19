@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {QueryErrorNotice} from '@thunderid/components';
+import {useCapabilitiesContext, useProjectScope} from '@thunderid/contexts';
 import {useDataGridLocaleText} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
 import {IconButton, Typography, Tooltip, DataGrid, ListingTable} from '@wso2/oxygen-ui';
-import {Pencil, QrCode as QrCodeIcon, ShieldCheck, Trash2} from '@wso2/oxygen-ui-icons-react';
+import {Pencil, QrCode as QrCodeIcon, Trash2} from '@wso2/oxygen-ui-icons-react';
 import {useMemo, useCallback, useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
@@ -15,14 +16,24 @@ import useGetVerifiablePresentations from '../api/useGetVerifiablePresentations'
 import useVerifiableCredentialRoutes from '../hooks/useVerifiableCredentialRoutes';
 import type {VerifiablePresentationSummary} from '../models/vp';
 
+export interface VerifiablePresentationsListProps {
+  /**
+   * Shows the QR action that starts a wallet verification against the OpenID4VP verifier.
+   */
+  showWalletQr?: boolean;
+}
+
 /**
  * DataGrid listing of OpenID4VP presentation definitions.
  */
-export default function VerifiablePresentationsList(): JSX.Element {
+export default function VerifiablePresentationsList({
+  showWalletQr = false,
+}: VerifiablePresentationsListProps): JSX.Element {
   const navigate = useNavigate();
   const {t} = useTranslation();
   const logger = useLogger('VerifiablePresentationsList');
   const dataGridLocaleText = useDataGridLocaleText();
+  const {can} = useCapabilitiesContext();
   const routes = useVerifiableCredentialRoutes();
 
   // Resolves an error through the `verifiable-presentations` catalog. `t` defaults to the `common`
@@ -34,7 +45,8 @@ export default function VerifiablePresentationsList(): JSX.Element {
     [t],
   );
 
-  const {data, isLoading, error, refetch} = useGetVerifiablePresentations();
+  const {projectId} = useProjectScope();
+  const {data, isLoading, error, refetch} = useGetVerifiablePresentations(projectId);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<boolean>(false);
@@ -69,12 +81,7 @@ export default function VerifiablePresentationsList(): JSX.Element {
         flex: 1,
         minWidth: 180,
         renderCell: (params: DataGrid.GridRenderCellParams<VerifiablePresentationSummary>): JSX.Element => (
-          <ListingTable.CellIcon
-            icon={<ShieldCheck size={20} />}
-            primary={params.row.name ?? '-'}
-            secondary={params.row.handle}
-            sx={{width: '100%'}}
-          />
+          <Typography variant="body2">{params.row.name ?? '-'}</Typography>
         ),
       },
       {
@@ -99,48 +106,54 @@ export default function VerifiablePresentationsList(): JSX.Element {
         hideable: false,
         renderCell: (params: DataGrid.GridRenderCellParams<VerifiablePresentationSummary>): JSX.Element => (
           <ListingTable.RowActions>
-            <Tooltip title={t('verifiable-presentations:listing.verify', 'Verify')}>
-              <IconButton
-                size="small"
-                aria-label={t('verifiable-presentations:listing.verify', 'Verify')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setVerifyHandle(params.row.handle);
-                }}
-              >
-                <QrCodeIcon size={16} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={t('common:actions.edit', 'Edit')}>
-              <IconButton
-                size="small"
-                aria-label={t('common:actions.edit', 'Edit')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleEditClick(params.row.id);
-                }}
-              >
-                <Pencil size={16} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={t('common:actions.delete', 'Delete')}>
-              <IconButton
-                size="small"
-                color="error"
-                aria-label={t('common:actions.delete', 'Delete')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteClick(params.row.id);
-                }}
-              >
-                <Trash2 size={16} />
-              </IconButton>
-            </Tooltip>
+            {showWalletQr && (
+              <Tooltip title={t('verifiable-presentations:listing.verify', 'Verify')}>
+                <IconButton
+                  aria-label={t('verifiable-presentations:listing.verify', 'Verify')}
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setVerifyHandle(params.row.handle);
+                  }}
+                >
+                  <QrCodeIcon size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
+            {can('vc', 'update') && (
+              <Tooltip title={t('common:actions.edit', 'Edit')}>
+                <IconButton
+                  aria-label={t('common:actions.edit', 'Edit')}
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleEditClick(params.row.id);
+                  }}
+                >
+                  <Pencil size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
+            {can('vc', 'delete') && (
+              <Tooltip title={t('common:actions.delete', 'Delete')}>
+                <IconButton
+                  aria-label={t('common:actions.delete', 'Delete')}
+                  size="small"
+                  color="error"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteClick(params.row.id);
+                  }}
+                >
+                  <Trash2 size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
           </ListingTable.RowActions>
         ),
       },
     ],
-    [handleDeleteClick, handleEditClick, t],
+    [can, handleDeleteClick, handleEditClick, showWalletQr, t],
   );
 
   if (error) {
@@ -157,8 +170,8 @@ export default function VerifiablePresentationsList(): JSX.Element {
 
   return (
     <>
-      <ListingTable.Provider variant="data-grid" loading={isLoading}>
-        <ListingTable.Container>
+      <ListingTable.Provider variant="data-grid-card" loading={isLoading}>
+        <ListingTable.Container disablePaper>
           <ListingTable.DataGrid
             rows={data ?? []}
             columns={columns}
@@ -166,7 +179,6 @@ export default function VerifiablePresentationsList(): JSX.Element {
             onRowClick={(params) => {
               handleEditClick((params.row as VerifiablePresentationSummary).id);
             }}
-            rowHeight={64}
             pageSizeOptions={[5, 10, 25]}
             disableRowSelectionOnClick
             // Filtering is not wired end to end, so the column filter panel stays hidden.
@@ -182,11 +194,13 @@ export default function VerifiablePresentationsList(): JSX.Element {
 
       <VerifiablePresentationDeleteDialog open={deleteDialogOpen} vpId={selectedId} onClose={handleDeleteDialogClose} />
 
-      <VerificationDialog
-        open={verifyHandle !== null}
-        handle={verifyHandle}
-        onClose={(): void => setVerifyHandle(null)}
-      />
+      {showWalletQr && (
+        <VerificationDialog
+          open={verifyHandle !== null}
+          handle={verifyHandle}
+          onClose={(): void => setVerifyHandle(null)}
+        />
+      )}
     </>
   );
 }

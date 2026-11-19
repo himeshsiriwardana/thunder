@@ -4,13 +4,18 @@
 import {SettingsCard} from '@thunderid/components';
 import {useResolveDisplayName} from '@thunderid/hooks';
 import type {User} from '@thunderid/types';
+import {orderAttributes} from '@thunderid/utils';
 import {Box, CircularProgress, Typography} from '@wso2/oxygen-ui';
 import {useEffect, useRef, type JSX} from 'react';
 import {useForm, useWatch} from 'react-hook-form';
 import {useTranslation} from 'react-i18next';
 import AttributesSummarySection from './AttributesSummarySection';
+import SendVerificationLinkButton from './SendVerificationLinkButton';
+import VerificationStatus from './VerificationStatus';
 import useGetUserType from '../../api/useGetUserType';
 import useGetUserTypes from '../../api/useGetUserTypes';
+import UserConstants from '../../constants/user-constants';
+import getVerifiableAttributes from '../../utils/getVerifiableAttributes';
 import renderSchemaField from '../../utils/renderSchemaField';
 
 interface EditUserAttributesProps {
@@ -39,6 +44,7 @@ export default function EditUserAttributes({user, editedUser, onFieldChange}: Ed
   const {data: userTypeDetails, isLoading} = useGetUserType(matchedSchema?.id);
 
   const attributes = (editedUser.attributes ?? user.attributes ?? {}) as AttributeFormData;
+  const verifiable = getVerifiableAttributes(user, userTypeDetails?.schema);
 
   const {
     control,
@@ -76,7 +82,7 @@ export default function EditUserAttributes({user, editedUser, onFieldChange}: Ed
   }
 
   const schemaFields = userTypeDetails?.schema
-    ? Object.entries(userTypeDetails.schema).filter(
+    ? orderAttributes(userTypeDetails.schema).filter(
         ([, fieldDef]) => !((fieldDef.type === 'string' || fieldDef.type === 'number') && fieldDef.credential),
       )
     : [];
@@ -88,9 +94,35 @@ export default function EditUserAttributes({user, editedUser, onFieldChange}: Ed
     >
       <Box sx={{display: 'flex', flexDirection: 'column', gap: 2}}>
         {schemaFields.length > 0 ? (
-          schemaFields.map(([fieldName, fieldDef]) =>
-            renderSchemaField(fieldName, fieldDef, control, errors, resolveDisplayName),
-          )
+          schemaFields.map(([fieldName, fieldDef]) => {
+            // The status is for the stored value, so it hides while the field holds an edited one.
+            const value = watchedValues[fieldName];
+            const edited = value !== user.attributes?.[fieldName];
+            const showStatus = verifiable.has(fieldName) && !edited;
+            // An unverified value can be sent a link, and a non-blank edited one once saved.
+            const sendable = edited ? typeof value === 'string' && value.trim() !== '' : !verifiable.get(fieldName);
+            const resolvedLabel = fieldDef.displayName ? resolveDisplayName(fieldDef.displayName) : '';
+            const showAction =
+              verifiable.has(fieldName) && UserConstants.ADMIN_VERIFIABLE_TYPES.includes(fieldDef.type) && sendable;
+
+            return renderSchemaField(
+              fieldName,
+              fieldDef,
+              control,
+              errors,
+              resolveDisplayName,
+              showStatus ? <VerificationStatus verifiedAt={verifiable.get(fieldName)} /> : undefined,
+              showAction ? (
+                <SendVerificationLinkButton
+                  userId={user.id}
+                  attribute={fieldName}
+                  label={resolvedLabel !== '' ? resolvedLabel : fieldName}
+                  accessStatus={user.status?.value}
+                  edited={edited}
+                />
+              ) : undefined,
+            );
+          })
         ) : (
           <Typography variant="body2" color="text.secondary">
             {t('users:manageUser.sections.attributes.noSchema', 'No schema available for editing')}

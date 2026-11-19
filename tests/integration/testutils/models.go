@@ -28,13 +28,18 @@ type UserTypeSystemAttributes struct {
 
 // User represents a user in the system
 type User struct {
-	ID         string          `json:"id"`
-	OUID       string          `json:"ouId"`
-	OUHandle   string          `json:"ouHandle,omitempty"`
-	Type       string          `json:"type"`
-	Display    string          `json:"display,omitempty"`
-	Attributes json.RawMessage `json:"attributes"`
-	IsOwnedByOU    *bool           `json:"isOwnedByOU,omitempty"`
+	ID          string          `json:"id"`
+	OUID        string          `json:"ouId"`
+	OUHandle    string          `json:"ouHandle,omitempty"`
+	Type        string          `json:"type"`
+	Display     string          `json:"display,omitempty"`
+	Attributes  json.RawMessage `json:"attributes"`
+	IsOwnedByOU *bool           `json:"isOwnedByOU,omitempty"`
+}
+
+// VerifiedAttribute is one entry of a user response's verifiedAttributes.
+type VerifiedAttribute struct {
+	VerifiedAt string `json:"verifiedAt"`
 }
 
 // Application represents an application in the system
@@ -47,6 +52,7 @@ type Application struct {
 	IsRegistrationFlowEnabled bool                     `json:"isRegistrationFlowEnabled"`
 	IsRecoveryFlowEnabled     bool                     `json:"isRecoveryFlowEnabled,omitempty"`
 	AuthFlowID                string                   `json:"authFlowId,omitempty"`
+	DeviceGrantFlowID         string                   `json:"deviceGrantFlowId,omitempty"`
 	RegistrationFlowID        string                   `json:"registrationFlowId,omitempty"`
 	RecoveryFlowID            string                   `json:"recoveryFlowId,omitempty"`
 	SignOutFlowID             string                   `json:"signOutFlowId,omitempty"`
@@ -78,6 +84,7 @@ type OrganizationUnit struct {
 	Name            string  `json:"name"`
 	Description     string  `json:"description,omitempty"`
 	Parent          *string `json:"parent,omitempty"`
+	ProjectID       string  `json:"projectId,omitempty"`
 	LogoURL         string  `json:"logoUrl,omitempty"`
 	TosURI          string  `json:"tosUri,omitempty"`
 	PolicyURI       string  `json:"policyUri,omitempty"`
@@ -330,8 +337,9 @@ type TokenHTTPResult struct {
 
 // IntrospectionResult is the part of an introspection answer the tests read.
 type IntrospectionResult struct {
-	Active bool   `json:"active"`
-	Sub    string `json:"sub"`
+	Active bool                   `json:"active"`
+	Sub    string                 `json:"sub"`
+	Act    map[string]interface{} `json:"act"`
 }
 
 // AccessStatus is the effective access status a management read of a user, an agent or an
@@ -346,6 +354,7 @@ type AccessStatusDetails struct {
 	Reason        string         `json:"reason"`
 	Since         string         `json:"since"`
 	OperatorNote  string         `json:"operatorNote"`
+	AppliedBy     []string       `json:"appliedBy"`
 	LockedMethods []LockedMethod `json:"lockedMethods"`
 }
 
@@ -368,6 +377,10 @@ type ResourceServer struct {
 	Identifier  string  `json:"identifier,omitempty"`
 	OUID        string  `json:"ouId"`
 	Delimiter   *string `json:"delimiter,omitempty"`
+	Type        string  `json:"type,omitempty"`
+	// HierarchicalPermissions declares that this server's permissions nest, so a granted permission
+	// authorizes those beneath it. Off unless the resource server asks for it.
+	HierarchicalPermissions bool `json:"hierarchicalPermissions,omitempty"`
 }
 
 // Action represents an action in the resource system
@@ -377,6 +390,7 @@ type Action struct {
 	Handle      string `json:"handle"`
 	Description string `json:"description,omitempty"`
 	Permission  string `json:"permission,omitempty"`
+	Kind        string `json:"kind,omitempty"`
 }
 
 // ResourcePermissions represents permissions grouped by resource server
@@ -437,12 +451,15 @@ type FlowStep struct {
 }
 
 // FlowSessionData is one SSO session an app-native caller holds, keyed by the identifier of its flow.
+// ExpiresIn is the time the session has left, posted with the callback when set. A flow response's own
+// expiresIn decodes into FlowIssuedSessionData.ExpiresIn instead.
 type FlowSessionData struct {
 	FlowIdentifier string `json:"flowIdentifier"`
 	SessionHandle  string `json:"sessionHandle"`
+	ExpiresIn      int64  `json:"expiresIn,omitempty"`
 }
 
-// FlowIssuedSessionData is the SSO session a step started, with how long its handle stays usable.
+// FlowIssuedSessionData is the SSO session a step started or reused, with how long its handle stays usable.
 type FlowIssuedSessionData struct {
 	FlowSessionData
 	ExpiresIn int64 `json:"expiresIn"`
@@ -508,6 +525,25 @@ type OutboundAuthentication struct {
 	Properties map[string]string `json:"properties,omitempty"`
 }
 
+// AgentOwner names who is accountable for an agent.
+type AgentOwner struct {
+	ID      string `json:"id"`
+	IDType  string `json:"idType,omitempty"`
+	IsLocal *bool  `json:"isLocal,omitempty"`
+}
+
+// LocalAgentOwner returns a local owner identified by its entity ID.
+func LocalAgentOwner(id string) *AgentOwner {
+	local := true
+	return &AgentOwner{ID: id, IDType: "uuid", IsLocal: &local}
+}
+
+// ExternalAgentOwner returns an owner managed in another identity system.
+func ExternalAgentOwner(id, idType string) *AgentOwner {
+	local := false
+	return &AgentOwner{ID: id, IDType: idType, IsLocal: &local}
+}
+
 // Agent represents an agent resource in the system.
 type Agent struct {
 	ID          string      `json:"id,omitempty"`
@@ -516,9 +552,10 @@ type Agent struct {
 	Type        string      `json:"type,omitempty"`
 	Description string      `json:"description,omitempty"`
 	LogoURL     string      `json:"logoUrl,omitempty"`
-	Owner       string      `json:"owner,omitempty"`
+	Owner       *AgentOwner `json:"owner,omitempty"`
 	Attributes  interface{} `json:"attributes,omitempty"`
 	IsReadOnly  bool        `json:"isReadOnly"`
+	ValidUntil  string      `json:"validUntil,omitempty"`
 
 	AuthFlowID                string                   `json:"authFlowId,omitempty"`
 	RegistrationFlowID        string                   `json:"registrationFlowId,omitempty"`
@@ -526,7 +563,19 @@ type Agent struct {
 	ThemeID                   string                   `json:"themeId,omitempty"`
 	LayoutID                  string                   `json:"layoutId,omitempty"`
 	AllowedUserTypes          []string                 `json:"allowedUserTypes,omitempty"`
+	AllowedAgentTypes         []string                 `json:"allowedAgentTypes,omitempty"`
+	LoginConsent              *LoginConsent            `json:"loginConsent,omitempty"`
 	InboundAuthConfig         []AgentInboundAuthConfig `json:"inboundAuthConfig,omitempty"`
+	DeviceGrantFlowID         string                   `json:"deviceGrantFlowId,omitempty"`
+	Delegated                 bool                     `json:"delegated,omitempty"`
+
+	Kind string `json:"kind,omitempty"`
+}
+
+// LoginConsent holds a client's login consent settings.
+type LoginConsent struct {
+	ValidityPeriod int64 `json:"validityPeriod"`
+	AlwaysPrompt   *bool `json:"alwaysPrompt,omitempty"`
 }
 
 // AgentInboundAuthConfig represents an inbound auth config entry for an agent.
@@ -574,6 +623,7 @@ type CredentialDisplay struct {
 type CredentialConfiguration struct {
 	Handle          string             `json:"handle"`
 	OUID            string             `json:"ouId,omitempty"`
+	ProjectID       string             `json:"projectId,omitempty"`
 	Name            string             `json:"name,omitempty"`
 	Description     string             `json:"description,omitempty"`
 	Format          string             `json:"format,omitempty"`
@@ -589,6 +639,7 @@ type CredentialConfiguration struct {
 type PresentationDefinition struct {
 	Handle               string              `json:"handle"`
 	OUID                 string              `json:"ouId,omitempty"`
+	ProjectID            string              `json:"projectId,omitempty"`
 	Name                 string              `json:"name,omitempty"`
 	Description          string              `json:"description,omitempty"`
 	VCT                  string              `json:"vct"`
@@ -598,7 +649,14 @@ type PresentationDefinition struct {
 	OptionalClaims       []string            `json:"optionalClaims,omitempty"`
 	ClaimValues          map[string][]string `json:"claimValues,omitempty"`
 	EnforceTrustedIssuer *bool               `json:"enforceTrustedIssuer,omitempty"`
-	TrustedAuthorities   []string            `json:"trustedAuthorities,omitempty"`
+	TrustedAuthorities   []TrustedAuthority  `json:"trustedAuthorities,omitempty"`
+}
+
+// TrustedAuthority is a trusted issuer certificate supplied on a presentation definition
+// request. On update, an entry with only a name keeps the certificate stored under that name.
+type TrustedAuthority struct {
+	Name        string `json:"name"`
+	Certificate string `json:"certificate,omitempty"`
 }
 
 // VPInitiateResponse is the body returned by POST /openid4vp/initiate.
@@ -631,10 +689,18 @@ type ImportRequest struct {
 	Deletions []ResourceDeletion     `json:"deletions,omitempty"`
 }
 
-// ResourceDeletion names a resource an import should remove.
+// ResourceDeletion names a resource an import should remove, or the members to take off a role or group.
 type ResourceDeletion struct {
-	ResourceType string `json:"resourceType"`
-	ID           string `json:"id"`
+	ResourceType string          `json:"resourceType"`
+	ID           string          `json:"id"`
+	Members      []RemovedMember `json:"members,omitempty"`
+}
+
+// RemovedMember is an assignee to take off a role, or a member to take off a group.
+type RemovedMember struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	OUID string `json:"ouId,omitempty"`
 }
 
 // ImportOptions are the options of an import request.
@@ -667,4 +733,13 @@ type ImportItem struct {
 	Status       string `json:"status"`
 	Code         string `json:"code,omitempty"`
 	Message      string `json:"message,omitempty"`
+}
+
+// CapabilitiesResponse is the body of GET /capabilities.
+type CapabilitiesResponse struct {
+	Scope struct {
+		Type string `json:"type"`
+		OUID string `json:"ouId"`
+	} `json:"scope"`
+	Resources map[string]map[string]bool `json:"resources"`
 }

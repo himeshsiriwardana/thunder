@@ -3,6 +3,7 @@
 
 import {screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import {CapabilitiesProvider, ProjectScopeProvider} from '@thunderid/contexts';
 import {renderWithProviders} from '@thunderid/test-utils';
 import type * as OxygenUI from '@wso2/oxygen-ui';
 import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
@@ -31,39 +32,12 @@ vi.mock('@wso2/oxygen-ui', async () => {
       GridRenderCellParams: {},
     },
     ListingTable: {
-      Provider: ({
-        children,
-        loading = false,
-        variant = undefined,
-      }: {
-        children: React.ReactNode;
-        loading?: boolean;
-        variant?: string;
-      }) => (
-        <div data-testid="listing-table-provider" data-loading={loading ? 'true' : 'false'} data-variant={variant}>
+      Provider: ({children, loading = false}: {children: React.ReactNode; loading?: boolean}) => (
+        <div data-testid="listing-table-provider" data-loading={loading ? 'true' : 'false'}>
           {children}
         </div>
       ),
-      Container: ({children, disablePaper = false}: {children: React.ReactNode; disablePaper?: boolean}) => (
-        <div data-testid="listing-table-container" data-disable-paper={disablePaper ? 'true' : undefined}>
-          {children}
-        </div>
-      ),
-      CellIcon: ({
-        icon,
-        primary,
-        secondary = undefined,
-      }: {
-        icon: React.ReactNode;
-        primary: React.ReactNode;
-        secondary?: React.ReactNode;
-      }) => (
-        <div data-testid="cell-icon">
-          {icon}
-          <span>{primary}</span>
-          {secondary && <span>{secondary}</span>}
-        </div>
-      ),
+      Container: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
       RowActions: ({children}: {children: React.ReactNode}) => <div data-testid="row-actions">{children}</div>,
       DataGrid: ({
         rows = [],
@@ -150,6 +124,11 @@ vi.mock('@thunderid/logger/react', () => ({
   useLogger: () => mockLogger,
 }));
 
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
+
 describe('GroupsList', () => {
   const mockGroupsData: GroupListResponse = {
     totalResults: 2,
@@ -174,54 +153,27 @@ describe('GroupsList', () => {
     vi.clearAllMocks();
   });
 
+  it('should list the groups of the selected project', () => {
+    renderWithProviders(
+      <ProjectScopeProvider project={{id: 'project-1'}}>
+        <GroupsList />
+      </ProjectScopeProvider>,
+    );
+
+    expect(mockUseGetGroups).toHaveBeenCalledWith(expect.objectContaining({projectId: 'project-1'}));
+  });
+
+  it('should list every group without a selected project', () => {
+    renderWithProviders(<GroupsList />);
+
+    expect(mockUseGetGroups).toHaveBeenCalledWith(expect.objectContaining({projectId: undefined}));
+  });
+
   it('should render groups in the data grid', () => {
     renderWithProviders(<GroupsList />);
 
     expect(screen.getByTestId('row-g1')).toHaveTextContent('Group One');
     expect(screen.getByTestId('row-g2')).toHaveTextContent('Group Two');
-  });
-
-  it('should render the description as a secondary line only when present', () => {
-    renderWithProviders(<GroupsList />);
-
-    const nameCells = screen.getAllByTestId('cell-icon');
-    expect(nameCells[0]).toHaveTextContent('Group OneFirst group');
-    expect(nameCells[1]).toHaveTextContent(/^Group Two$/);
-  });
-
-  it('should not render a secondary line for an empty description', () => {
-    mockUseGetGroups.mockReturnValue({
-      data: {...mockGroupsData, groups: [{id: 'g3', name: 'Group Three', description: '', ouId: 'ou1'}]},
-      isLoading: false,
-      error: null,
-    });
-
-    renderWithProviders(<GroupsList />);
-
-    expect(screen.getByTestId('cell-icon')).toHaveTextContent(/^Group Three$/);
-  });
-
-  it('should render the data grid variant inside a paper container', () => {
-    renderWithProviders(<GroupsList />);
-
-    expect(screen.getByTestId('listing-table-provider')).toHaveAttribute('data-variant', 'data-grid');
-    expect(screen.getByTestId('listing-table-container')).not.toHaveAttribute('data-disable-paper');
-  });
-
-  it('should label the row action buttons', () => {
-    mockUseGetGroups.mockReturnValue({
-      data: {
-        ...mockGroupsData,
-        groups: [...mockGroupsData.groups, {id: 'g3', name: 'System Group', ouId: 'ou1', isReadOnly: true}],
-      },
-      isLoading: false,
-      error: null,
-    });
-    renderWithProviders(<GroupsList />);
-
-    expect(screen.getAllByRole('button', {name: 'Edit'})).toHaveLength(2);
-    expect(screen.getAllByRole('button', {name: 'Delete'})).toHaveLength(2);
-    expect(screen.getByRole('button', {name: 'Read only'})).toBeInTheDocument();
   });
 
   it('should show loading state', () => {
@@ -314,6 +266,17 @@ describe('GroupsList', () => {
     const deleteButtons = screen.getAllByRole('button', {name: /Delete/i});
     expect(editButtons.length).toBeGreaterThanOrEqual(2);
     expect(deleteButtons.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('should hide the edit and delete row actions when the admin may only view groups', () => {
+    renderWithProviders(
+      <CapabilitiesProvider capabilities={viewOnly}>
+        <GroupsList />
+      </CapabilitiesProvider>,
+    );
+
+    expect(screen.queryByRole('button', {name: /Edit/i})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: /Delete/i})).not.toBeInTheDocument();
   });
 
   it('should navigate to group on edit button click', async () => {

@@ -8,6 +8,7 @@ import {
   ResourceAvatar,
   UnsavedChangesBar,
 } from '@thunderid/components';
+import {useCapabilitiesContext, useProjectScope} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger/react';
 import {getErrorMessage, isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
@@ -27,7 +28,7 @@ import {ArrowLeft, Edit} from '@wso2/oxygen-ui-icons-react';
 import {useState, useCallback, useMemo} from 'react';
 import type {ReactNode, SyntheticEvent, JSX} from 'react';
 import {useTranslation} from 'react-i18next';
-import {useNavigate, useParams, useLocation, Link} from 'react-router';
+import {Navigate, useNavigate, useParams, useLocation, Link} from 'react-router';
 import useGetOrganizationUnit from '../api/useGetOrganizationUnit';
 import useUpdateOrganizationUnit from '../api/useUpdateOrganizationUnit';
 import EditChildOrganizationUnitSettings from '../components/edit-organization-unit/child-organization-unit-settings/EditChildOrganizationUnitSettings';
@@ -91,6 +92,7 @@ export default function OrganizationUnitEditPage({
   const routes = useOrganizationUnitRoutes();
   const {t} = useTranslation();
   const logger = useLogger('OrganizationUnitEditPage');
+  const {can} = useCapabilitiesContext();
 
   // Resolves an error through the `organizationUnits` catalog. `t` defaults to the `common`
   // namespace, so this forwards explicit `ns:` prefixes unchanged and prefixes bare keys with
@@ -108,6 +110,7 @@ export default function OrganizationUnitEditPage({
   const {data: organizationUnit, isLoading, error: fetchError, refetch} = useGetOrganizationUnit(id);
   const updateOrganizationUnit = useUpdateOrganizationUnit();
   const {resetTreeState} = useOrganizationUnit();
+  const {projectId} = useProjectScope();
 
   const [tabState, setTabState] = useState<{organizationUnitId: string | undefined; value: number}>({
     organizationUnitId: id,
@@ -292,6 +295,12 @@ export default function OrganizationUnitEditPage({
         </Button>
       </PageContent>
     );
+  }
+
+  // Another project's organization unit is not shown in the selected one: a deep link, a stale tab or a switch
+  // of project goes to the selected project's organization units instead.
+  if (projectId && organizationUnit.projectId !== projectId) {
+    return <Navigate to={listUrl} replace />;
   }
 
   return (
@@ -525,7 +534,9 @@ export default function OrganizationUnitEditPage({
 
         {/* Advanced Tab */}
         <TabPanel value={activeTab} index={renderDefaultFlowsSettings ? 6 : 5}>
-          {!organizationUnit.isReadOnly && <DangerZoneSection onDeleteClick={() => setDeleteDialogOpen(true)} />}
+          {!organizationUnit.isReadOnly && can('ou', 'delete') && (
+            <DangerZoneSection onDeleteClick={() => setDeleteDialogOpen(true)} />
+          )}
         </TabPanel>
       </>
 
@@ -545,7 +556,7 @@ export default function OrganizationUnitEditPage({
           saveLabel={t('organizationUnits:edit.actions.save.label')}
           savingLabel={t('organizationUnits:edit.actions.saving.label')}
           isSaving={updateOrganizationUnit.isPending}
-          saveDisabled={organizationUnit.isReadOnly === true}
+          saveDisabled={organizationUnit.isReadOnly === true || !can('ou', 'update')}
           error={
             updateOrganizationUnit.error
               ? getErrorMessage(

@@ -7,9 +7,15 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 )
+
+// DeviceCodeVerifier verifies a Device Grant user code and returns its trusted request context.
+type DeviceCodeVerifier interface {
+	VerifyUserCode(ctx context.Context, applicationID, userCode string) (*DeviceVerificationResult, error)
+}
 
 // AuthnProviderManager defines the interface for the authentication provider manager.
 type AuthnProviderManager interface {
@@ -90,10 +96,10 @@ type ActorProvider interface {
 	AuthenticateActor(
 		ctx context.Context, identifiers, credentials map[string]interface{},
 	) *common.ServiceError
-	GetActor(actorID string) (*Entity, *common.ServiceError)
-	GetActorGroups(actorID string) ([]EntityGroup, *common.ServiceError)
-	GetActorRoles(actorID string, groupIDs []string) ([]string, *common.ServiceError)
-	GetTransitiveGroupAncestors(groupID string) ([]string, *common.ServiceError)
+	GetActor(ctx context.Context, actorID string) (*Entity, *common.ServiceError)
+	GetActorGroups(ctx context.Context, actorID string) ([]EntityGroup, *common.ServiceError)
+	GetActorRoles(ctx context.Context, actorID string, groupIDs []string) ([]string, *common.ServiceError)
+	GetTransitiveGroupAncestors(ctx context.Context, groupID string) ([]string, *common.ServiceError)
 }
 
 // AgentMgtProvider provisions agents on behalf of runtime capabilities. The rules and semantics of an
@@ -105,7 +111,7 @@ type AgentMgtProvider interface {
 	//
 	// The returned agent carries the generated identifier and, on InboundAuthConfig, the generated
 	// client credentials. Fields the agent service does not echo come back zero, so the result is
-	// not a full round-trip. Owner falls back to the authenticated caller when unset.
+	// not a full round-trip. Owner falls back to the authenticated caller when nil.
 	CreateAgent(ctx context.Context, agent *Agent) (*Agent, *common.ServiceError)
 }
 
@@ -115,6 +121,16 @@ type UserMgtProvider interface {
 	// CreateUser provisions a user and returns it with its generated ID. Errors from the user
 	// service are returned unchanged so callers can distinguish the actual failure.
 	CreateUser(ctx context.Context, user *User) (*User, *common.ServiceError)
+	// UpdateUserCredentials sets schema-defined credentials, such as a password, for an existing user.
+	// Errors from the user service are returned unchanged.
+	UpdateUserCredentials(ctx context.Context, userID string, credentials json.RawMessage) *common.ServiceError
+}
+
+// PermissionProvider resolves the permissions an entity holds.
+type PermissionProvider interface {
+	// GetEntityPermissions returns the permissions the entity holds now, directly and through its
+	// groups, keyed by resource server ID.
+	GetEntityPermissions(ctx context.Context, entityID string) (map[string][]string, error)
 }
 
 // I18nProvider defines the interface for the i18n provider.
@@ -145,6 +161,14 @@ type OrganizationUnitProvider interface {
 	GetOrganizationUnitChildren(
 		ctx context.Context, id string, limit, offset int, f *common.FilterGroup,
 	) (*OrganizationUnitListResponse, *common.ServiceError)
+	// GetEligibleOUs returns the organization units the signed-in user of the sign-in on the context may sign in
+	// to, kept where its application is usable. Without a signed-in user it returns a client error, never a list.
+	GetEligibleOUs(ctx context.Context) ([]string, *common.ServiceError)
+	// IsEligibleOU reports whether the sign-in on the context may land in the organization unit: one its
+	// signed-in user is eligible for, or, before sign-in, one its application is usable from.
+	IsEligibleOU(ctx context.Context, ouID string) (bool, *common.ServiceError)
+	// IsApplicationShared reports whether the application of the sign-in on the context is shared.
+	IsApplicationShared(ctx context.Context) (bool, *common.ServiceError)
 }
 
 // FlowProvider defines the flow management operations required for flow execution.
@@ -155,6 +179,17 @@ type FlowProvider interface {
 	// GetSystemFlow returns the system flow with the given handle. A provider that serves no system
 	// flows returns a not-found error.
 	GetSystemFlow(ctx context.Context, handle string) (*CompleteFlowDefinition, *common.ServiceError)
+}
+
+// AttributeVerificationProvider pins a contact attribute before a challenge and records it as verified
+// after the challenge is passed. It makes no scope or access check; the caller makes both.
+type AttributeVerificationProvider interface {
+	// PrepareAttributeVerification pins the requested contact without writing. A pin for an entity
+	// pending creation names no subject until the contact is recorded.
+	PrepareAttributeVerification(ctx context.Context, request AttributeVerificationRequest) (
+		*AttributeVerificationPin, *common.ServiceError)
+	// RecordAttributeVerification records the pinned contact as verified if it is still current.
+	RecordAttributeVerification(ctx context.Context, pin AttributeVerificationPin) *common.ServiceError
 }
 
 // ResourceServerProvider defines the interface for the resource provider.
@@ -183,19 +218,24 @@ type IDPProvider interface {
 // ConsentProvider provides functionality to resolve consent requirements and
 // record user consent decisions during runtime authentication flows.
 type ConsentProvider interface {
-	// ResolveConsent checks whether the user has provided required consents for the given
-	// application, attribute set, authorized permission set, and authorization details. Returns nil
-	// if all required consents are active; otherwise returns ConsentPromptData describing which
-	// purposes / elements still need user consent. When forceReprompt is true, consent is re-prompted
-	// for all required claims and details regardless of existing active consent. Returning nil grants
+	// ResolveConsent checks whether the user has provided the required consents for the given
+	// application, attributes, permissions, and authorization details. Set Prompt on the returned
+	// ConsentResolution to the claims and details that need approval, or leave it nil when no prompting
+	// is required. Set Consent to the user's existing consent to restrict the assertion to its approved
+	// claims; only its "attributes:<appID>" and "permissions:<appID>" purposes are read. Return a nil
+	// resolution only when every requested claim is already approved. When forceReprompt is true, set
+	// Prompt for all required claims and details. Returning no Prompt grants
 	// every requested authorization detail, so a provider must prompt for or refuse any detail no
 	// earlier approval covers.
+	// Permission matching settings are resolved from each resource server's ID.
+	// The built-in provider currently supports a single resource server per call.
 	ResolveConsent(ctx context.Context, ouID, appID, appName, userID string,
-		essentialAttributes, optionalAttributes, authorizedPermissions []string,
+		essentialAttributes, optionalAttributes []string,
+		authorizedPermissions []AuthorizedResourcePermissions,
 		authorizationDetails []AuthorizationDetail,
 		availableAttributes *AttributesResponse, forceReprompt bool,
 		runtimeMetadata map[string][]string) (
-		*ConsentPromptData, *common.ServiceError)
+		*ConsentResolution, *common.ServiceError)
 
 	// RecordConsent records the user's consent decisions and returns the persisted consent record.
 	// If the user denied any essential attribute, ErrorEssentialConsentDenied is returned. The returned
@@ -340,6 +380,14 @@ type RuntimeStoreProvider interface {
 	// assumed to be JSON documents.
 	CompareFieldAndSwap(
 		ctx context.Context, namespace RuntimeStoreNamespace, key, field, expected string, newValue []byte,
+	) (bool, error)
+
+	// CompareFieldAndSwapBeforeExpiry atomically replaces the value at key only when the top-level
+	// JSON string field equals expected and the supplied application-level expiry is still in the
+	// future. It preserves the existing store TTL and returns whether the swap occurred.
+	CompareFieldAndSwapBeforeExpiry(
+		ctx context.Context, namespace RuntimeStoreNamespace, key, field, expected string,
+		expiresAt time.Time, newValue []byte,
 	) (bool, error)
 }
 

@@ -83,14 +83,16 @@ func (suite *DefinitionStoreTestSuite) TestDefinitionStoreRoundTripTrustFields()
 		Format:               DefaultCredentialFormat,
 		MandatoryClaims:      []string{"given_name"},
 		EnforceTrustedIssuer: &enforce,
-		TrustedAuthorities:   []string{"root-a", "root-b"},
+		TrustedAuthorities: []TrustedAuthority{
+			{Name: "root-a", Certificate: "pem-a"}, {Name: "root-b", Certificate: "pem-b"},
+		},
 	}
 
 	got, err := buildDefinitionDTOFromRow(rowFromDTO(suite.T(), original))
 	suite.Require().NoError(err)
 	suite.Require().NotNil(got.EnforceTrustedIssuer)
 	suite.True(*got.EnforceTrustedIssuer)
-	suite.Equal([]string{"root-a", "root-b"}, got.TrustedAuthorities)
+	suite.Equal(original.TrustedAuthorities, got.TrustedAuthorities)
 }
 
 func (suite *DefinitionStoreTestSuite) TestDefinitionStoreRoundTripTrustFieldsNull() {
@@ -137,7 +139,7 @@ func (suite *DefinitionStoreTestSuite) TestCreate() {
 				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
 				suite.mockDBClient.On("ExecuteContext", mock.Anything, queryCreateDefinition,
 					"def-1", "eudi-pid", "ou-1", "EUDI PID", "", "urn:eudi:pid:de:1", "dc+sd-jwt",
-					mock.Anything, nil, nil, testDeploymentID,
+					mock.Anything, nil, nil, nil, testDeploymentID,
 				).Return(int64(1), nil)
 			},
 		},
@@ -148,7 +150,7 @@ func (suite *DefinitionStoreTestSuite) TestCreate() {
 				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
 				suite.mockDBClient.On("ExecuteContext", mock.Anything, queryCreateDefinition,
 					mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
-					mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+					mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 				).Return(int64(0), errors.New("insert failed"))
 			},
 			shouldErr: true,
@@ -201,7 +203,7 @@ func (suite *DefinitionStoreTestSuite) TestGetByID() {
 						MandatoryClaims:      []string{"given_name"},
 						OptionalClaims:       []string{"birthdate"},
 						EnforceTrustedIssuer: &enforce,
-						TrustedAuthorities:   []string{"root-ca"},
+						TrustedAuthorities:   []TrustedAuthority{{Name: "root-ca", Certificate: "pem"}},
 					}),
 				}, nil)
 			},
@@ -212,7 +214,7 @@ func (suite *DefinitionStoreTestSuite) TestGetByID() {
 				suite.Equal([]string{"birthdate"}, got.OptionalClaims)
 				suite.Require().NotNil(got.EnforceTrustedIssuer)
 				suite.True(*got.EnforceTrustedIssuer)
-				suite.Equal([]string{"root-ca"}, got.TrustedAuthorities)
+				suite.Equal([]TrustedAuthority{{Name: "root-ca", Certificate: "pem"}}, got.TrustedAuthorities)
 			},
 		},
 		{
@@ -480,7 +482,7 @@ func (suite *DefinitionStoreTestSuite) TestUpdate() {
 				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
 				suite.mockDBClient.On("ExecuteContext", mock.Anything, queryUpdateDefinition,
 					"def-1", "new-handle", "ou-1", "", "", "urn:eudi:pid:de:1", "dc+sd-jwt",
-					mock.Anything, nil, nil, testDeploymentID,
+					mock.Anything, nil, nil, nil, testDeploymentID,
 				).Return(int64(1), nil)
 			},
 		},
@@ -491,7 +493,7 @@ func (suite *DefinitionStoreTestSuite) TestUpdate() {
 				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
 				suite.mockDBClient.On("ExecuteContext", mock.Anything, queryUpdateDefinition,
 					mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
-					mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+					mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 				).Return(int64(0), errors.New("update failed"))
 			},
 			shouldErr: true,
@@ -635,6 +637,18 @@ func (suite *DefinitionStoreTestSuite) TestBuildDefinitionDTOFromRowMalformedTru
 	suite.Nil(got)
 }
 
+func (suite *DefinitionStoreTestSuite) TestBuildDefinitionDTOFromRowRejectsNameOnlyTrustedAuthorities() {
+	row := map[string]interface{}{
+		"id":                  "def-1",
+		"handle":              "h",
+		"vct":                 "v",
+		"trusted_authorities": `["root-a"]`,
+	}
+	got, err := buildDefinitionDTOFromRow(row)
+	suite.Error(err)
+	suite.Nil(got)
+}
+
 // loadRuntimeForScope loads a server runtime naming the deployment these tests assert on. The store
 // resolves its deployment from the runtime rather than holding one, and other suites in this package
 // reset the runtime, so it is loaded per test rather than once for the package.
@@ -643,4 +657,112 @@ func loadRuntimeForScope() {
 	_ = config.InitializeServerRuntime("", &config.Config{
 		Server: engineconfig.ServerConfig{Identifier: testDeploymentID},
 	})
+}
+
+func (suite *DefinitionStoreTestSuite) TestListSummariesByOUID() {
+	testCases := []struct {
+		name       string
+		setupMocks func()
+		shouldErr  bool
+	}{
+		{
+			name: "ReturnsOwnedRows",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", mock.Anything, queryListDefinitionSummariesByOUID,
+					"ou-1", testDeploymentID).
+					Return([]map[string]interface{}{
+						{
+							"id": "id-1", "handle": "h1", "ou_id": "ou-1",
+							"name": "N1", "vct": "v1", "format": "f",
+						},
+					}, nil)
+			},
+		},
+		{
+			name: "QueryError",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", mock.Anything, queryListDefinitionSummariesByOUID,
+					"ou-1", testDeploymentID).
+					Return(nil, errors.New("query failed"))
+			},
+			shouldErr: true,
+		},
+		{
+			name: "DBClientError",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(nil, errors.New("db error"))
+			},
+			shouldErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			suite.refreshMocks()
+			tc.setupMocks()
+			summaries, err := suite.store.ListPresentationDefinitionSummariesByOUID(context.Background(), "ou-1")
+			if tc.shouldErr {
+				suite.Error(err)
+				suite.Nil(summaries)
+				return
+			}
+			suite.NoError(err)
+			suite.Require().Len(summaries, 1)
+			suite.Equal("id-1", summaries[0].ID)
+			suite.Equal("ou-1", summaries[0].OUID)
+		})
+	}
+}
+
+func (suite *DefinitionStoreTestSuite) TestListSummariesByProject() {
+	suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, queryListDefinitionSummariesByProject,
+		"proj-1", testDeploymentID).
+		Return([]map[string]interface{}{
+			{"id": "id-1", "handle": "h1", "ou_id": "ou-1", "project_id": "proj-1", "name": "N1", "vct": "v1"},
+		}, nil)
+
+	summaries, err := suite.store.ListPresentationDefinitionSummariesByProject(context.Background(), "proj-1")
+	suite.Require().NoError(err)
+	suite.Require().Len(summaries, 1)
+	suite.Equal("proj-1", summaries[0].ProjectID)
+}
+
+func (suite *DefinitionStoreTestSuite) TestCountByProject() {
+	for name, tc := range map[string]struct {
+		rows    []map[string]interface{}
+		err     error
+		want    int
+		wantErr bool
+	}{
+		"int64":       {rows: []map[string]interface{}{{"total": int64(2)}}, want: 2},
+		"int":         {rows: []map[string]interface{}{{"total": 3}}, want: 3},
+		"float64":     {rows: []map[string]interface{}{{"total": float64(4)}}, want: 4},
+		"no row":      {rows: []map[string]interface{}{}, wantErr: true},
+		"bad type":    {rows: []map[string]interface{}{{"total": "2"}}, wantErr: true},
+		"query error": {err: errors.New("boom"), wantErr: true},
+	} {
+		suite.Run(name, func() {
+			suite.refreshMocks()
+			suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+			suite.mockDBClient.On("QueryContext", mock.Anything, queryCountDefinitionsByProject, "proj-1",
+				testDeploymentID).
+				Return(tc.rows, tc.err)
+
+			count, err := suite.store.CountPresentationDefinitionsByProject(context.Background(), "proj-1")
+			if tc.wantErr {
+				suite.Error(err)
+				return
+			}
+			suite.Require().NoError(err)
+			suite.Equal(tc.want, count)
+		})
+	}
+
+	suite.refreshMocks()
+	suite.mockDBProvider.On("GetConfigDBClient").Return(nil, errors.New("db error"))
+	_, err := suite.store.CountPresentationDefinitionsByProject(context.Background(), "proj-1")
+	suite.Error(err)
 }

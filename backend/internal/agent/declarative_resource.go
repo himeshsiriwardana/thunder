@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
+	"time"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -15,9 +17,11 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/thunder-id/thunderid/internal/agent/model"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/entity"
 	"github.com/thunder-id/thunderid/internal/inboundclient"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -29,21 +33,38 @@ const (
 	paramTypeAgent    = "Agent"
 )
 
+// ownerVariables are the owner's values an export refers to by name.
+var ownerVariables = []string{"Owner.ID", "Owner.IDType", "Owner.IsLocal"}
+
 // agentExporter implements declarativeresource.ResourceExporter for agents.
 type agentExporter struct {
-	service AgentServiceInterface
+	service        AgentServiceInterface
+	entityService  entity.EntityServiceInterface
+	sharingService sharing.SharingServiceInterface
+	logger         *log.Logger
+	// references writes a credential as a secret reference rather than a template placeholder, as a
+	// control plane's export does for every other credential.
+	references bool
 }
 
-func newAgentExporter(service AgentServiceInterface) *agentExporter {
-	return &agentExporter{service: service}
+func newAgentExporter(service AgentServiceInterface, entityService entity.EntityServiceInterface,
+	sharingService sharing.SharingServiceInterface) *agentExporter {
+	return &agentExporter{service: service, entityService: entityService, sharingService: sharingService,
+		logger: log.GetLogger().With(log.String(log.LoggerKeyComponentName, "AgentExporter"))}
 }
 
 // NewAgentExporterForTest exposes the exporter constructor for test packages.
-func NewAgentExporterForTest(service AgentServiceInterface) *agentExporter {
+func NewAgentExporterForTest(service AgentServiceInterface,
+	entityService entity.EntityServiceInterface, sharingService sharing.SharingServiceInterface) *agentExporter {
 	if !testing.Testing() {
 		panic("only for tests!")
 	}
-	return newAgentExporter(service)
+	return newAgentExporter(service, entityService, sharingService)
+}
+
+// WriteValueReferences sets whether credentials are written as references or as placeholders.
+func (e *agentExporter) WriteValueReferences(references bool) {
+	e.references = references
 }
 
 // GetResourceType returns the resource type identifier for agents.
@@ -99,7 +120,43 @@ func (e *agentExporter) GetResourceByID(
 			a.AttributesYAML = attrs
 		}
 	}
+	// An unbounded lifespan is written as its sentinel rather than left out, since an import reads an
+	// absent validUntil as leaving the target agent's lifespan unchanged.
+	if a.Lifespan != nil && a.Lifespan.Phase == model.LifespanPhaseUnbounded {
+		a.ValidUntil = authnprovidercm.UnboundedValidUntil
+	}
+	// A credential the agent has not set is left out rather than exported empty, since an import would
+	// otherwise demand a value for something the agent never had.
+	held, heldErr := e.entityService.GetHeldCredentialTypes(ctx, id)
+	if heldErr != nil {
+		if mapped := mapEntityError(heldErr); mapped != nil {
+			return nil, "", mapped
+		}
+		e.logger.Error(ctx, "Failed to read an agent's credentials for export",
+			log.MaskedString("agentID", id), log.Error(heldErr))
+		return nil, "", &tidcommon.InternalServerError
+	}
+	if len(held) > 0 {
+		a.Credentials = declarativeresource.CredentialPlaceholders(resourceTypeAgent, a.ID, held, e.references)
+	}
+	// An export that silently lost the agent's sharing would declare an agent no other unit can use, so
+	// a failure to read it fails the export.
+	replayable, sharingErr := e.sharingService.ExportPolicies(ctx, agentSharingType, id)
+	if sharingErr != nil {
+		return nil, "", &tidcommon.InternalServerError
+	}
+	for _, r := range replayable {
+		a.SharingPolicies = append(a.SharingPolicies, r.Request)
+	}
 	return a, a.Display, nil
+}
+
+// GetResourceID returns the ID of an exported agent.
+func (e *agentExporter) GetResourceID(resource interface{}) string {
+	if a, ok := resource.(*model.AgentGetResponse); ok {
+		return a.ID
+	}
+	return ""
 }
 
 // ValidateResource validates an agent resource prior to export.
@@ -120,9 +177,16 @@ func (e *agentExporter) ValidateResource(ctx context.Context,
 }
 
 // ViewResource shows an exported agent as a read of it returns it. The read carries the agent's
-// client ID at its top level and never its client secret, so the view does the same.
+// client ID at its top level and never its client secret, so the view does the same. It also reports
+// the lifespan as a read does: the unbounded sentinel export writes is shown as an unbounded phase with
+// no date.
 func (e *agentExporter) ViewResource(_ context.Context, document *yaml.Node) (interface{}, error) {
 	return declarativeresource.DecodeView(document, func(a *model.AgentGetResponse) (interface{}, error) {
+		if a.ValidUntil != "" {
+			if end, svcErr := parseLifespanEnd(a.ValidUntil); svcErr == nil {
+				a.ValidUntil, a.Lifespan = lifespanView(&end, time.Now())
+			}
+		}
 		var err error
 		if len(a.AttributesYAML) > 0 {
 			a.Attributes, err = json.Marshal(a.AttributesYAML)
@@ -138,9 +202,10 @@ func (e *agentExporter) ViewResource(_ context.Context, document *yaml.Node) (in
 	})
 }
 
-// SecretFields names where an exported agent holds its client secret.
+// SecretFields names where an exported agent holds a secret: its client secret, and every key of its
+// credentials map, since which credentials an agent has is its type's to say.
 func (e *agentExporter) SecretFields() []string {
-	return []string{"inboundAuthConfig[].config.clientSecret"}
+	return []string{"inboundAuthConfig[].config.clientSecret", "credentials.*"}
 }
 
 // GetResourceRules returns parameterization rules for agents with OAuth.
@@ -155,26 +220,30 @@ func (e *agentExporter) GetResourceRules() *declarativeresource.ResourceRules {
 		ArrayVariables: []string{
 			"InboundAuthConfig[].OAuthConfig.RedirectURIs",
 		},
+		DynamicPropertyFields: []string{"Credentials"},
 	}
 }
 
 // GetResourceRulesForResource returns per-resource parameterization rules.
-// Public clients omit ClientSecret. RedirectURIs are only parameterized when present
-// (e.g. M2M agents using client_credentials have no redirect URIs).
+// Clients without a client secret (public, private_key_jwt or none) omit ClientSecret. RedirectURIs
+// are only parameterized when present (e.g. M2M agents using client_credentials have no redirect URIs).
+// A control plane's export refers to the owner, so that each gateway names its own, except a personal
+// agent's, which is the user the agent acts for. A template export writes the owner as it is: a template
+// is filled in as text, which an owner's ID, being free text, could break.
 func (e *agentExporter) GetResourceRulesForResource(resource interface{}) *declarativeresource.ResourceRules {
 	a, ok := resource.(*model.AgentGetResponse)
 	if !ok {
 		return e.GetResourceRules()
 	}
 
-	isPublicClient := false
+	hasNoClientSecret := false
 	hasRedirectURIs := false
 	for _, inbound := range a.InboundAuthConfig {
 		if inbound.OAuthConfig == nil {
 			continue
 		}
-		if inbound.OAuthConfig.PublicClient {
-			isPublicClient = true
+		if !inboundclient.UsesClientSecret(inbound.OAuthConfig) {
+			hasNoClientSecret = true
 		}
 		if len(inbound.OAuthConfig.RedirectURIs) > 0 {
 			hasRedirectURIs = true
@@ -182,12 +251,16 @@ func (e *agentExporter) GetResourceRulesForResource(resource interface{}) *decla
 	}
 
 	variables := []string{"InboundAuthConfig[].OAuthConfig.ClientID"}
+	if e.references && a.Owner != nil && a.Kind != providers.AgentKindPersonalAssistant {
+		variables = append(variables, ownerVariables...)
+	}
 	var secrets []string
-	if !isPublicClient {
+	if !hasNoClientSecret {
 		secrets = append(secrets, "InboundAuthConfig[].OAuthConfig.ClientSecret")
 	}
 
-	rules := &declarativeresource.ResourceRules{Variables: variables, SecretVariables: secrets}
+	rules := &declarativeresource.ResourceRules{Variables: variables, SecretVariables: secrets,
+		DynamicPropertyFields: []string{"Credentials"}}
 	if hasRedirectURIs {
 		rules.ArrayVariables = []string{"InboundAuthConfig[].OAuthConfig.RedirectURIs"}
 	}
@@ -200,6 +273,54 @@ func makeAgentDeclarativeConfig(agentSvc AgentServiceInterface) entity.Declarati
 		Directory: "agents",
 		Category:  providers.EntityCategoryAgent,
 		Parser:    makeAgentEntityParser(agentSvc),
+	}
+}
+
+// makeAgentSharingConfig returns the loader configuration the sharing framework reads an agent's declared
+// policies with. A policy is carried inside the agent document that declares it.
+func makeAgentSharingConfig(agentSvc AgentServiceInterface) sharing.DeclarativeLoaderConfig {
+	return sharing.DeclarativeLoaderConfig{
+		ResourceType:  agentSharingType,
+		DirectoryName: "agents",
+		Parser:        makeAgentSharingParser(agentSvc),
+	}
+}
+
+// agentSharingDocument is the part of an agent document the sharing framework reads.
+type agentSharingDocument struct {
+	ID              string                  `yaml:"id"`
+	SharingPolicies []sharing.PolicyRequest `yaml:"sharingPolicies,omitempty"`
+}
+
+// makeAgentSharingParser returns a parser that reads the sharing half of one agent document. The policies
+// are declared against the unit the agent was loaded into, which the document may name by handle.
+func makeAgentSharingParser(
+	agentSvc AgentServiceInterface,
+) func([]byte) (*sharing.DeclaredResourcePolicies, error) {
+	return func(data []byte) (*sharing.DeclaredResourcePolicies, error) {
+		var doc agentSharingDocument
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return nil, fmt.Errorf("failed to parse agent YAML: %w", err)
+		}
+		if len(doc.SharingPolicies) == 0 {
+			return &sharing.DeclaredResourcePolicies{ResourceID: doc.ID}, nil
+		}
+
+		a, svcErr := agentSvc.GetAgent(security.WithRuntimeContext(context.Background()), doc.ID, true)
+		if svcErr != nil {
+			return nil, fmt.Errorf("failed to read agent '%s' for its sharing policies: %s",
+				doc.ID, svcErr.Error.DefaultValue)
+		}
+		name := a.Display
+		if name == "" {
+			name = a.ID
+		}
+		return &sharing.DeclaredResourcePolicies{
+			ResourceID:   a.ID,
+			ResourceName: name,
+			OwningOUID:   a.OUID,
+			Policies:     doc.SharingPolicies,
+		}, nil
 	}
 }
 
@@ -230,14 +351,18 @@ func makeAgentEntityParser(
 			ID:          req.ID,
 			OUID:        req.OUID,
 			OUHandle:    req.OUHandle,
+			ProjectID:   req.ProjectID,
 			Type:        req.Type,
 			Description: req.Description,
 			LogoURL:     req.LogoURL,
 			Owner:       req.Owner,
 			Attributes:  attributesJSON,
+			Kind:        req.Kind,
 			InboundAuthProfile: providers.InboundAuthProfile{
 				AuthFlowID:                req.AuthFlowID,
 				AuthFlowHandle:            req.AuthFlowHandle,
+				DeviceGrantFlowID:         req.DeviceGrantFlowID,
+				DeviceGrantFlowHandle:     req.DeviceGrantFlowHandle,
 				RegistrationFlowID:        req.RegistrationFlowID,
 				RegistrationFlowHandle:    req.RegistrationFlowHandle,
 				IsRegistrationFlowEnabled: req.IsRegistrationFlowEnabled,
@@ -263,17 +388,62 @@ func makeAgentEntityParser(
 			return nil, nil, nil, fmt.Errorf("failed to validate agent '%s': %v", req.ID, svcErr)
 		}
 
+		validUntil, err := resolveDeclarativeValidUntil(req.ValidUntil)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to validate agent '%s': %w", req.ID, err)
+		}
+
 		// agent.OUID may have been resolved from OUHandle by ValidateAgent.
 		e, sysCredsJSON, buildErr := buildAgentEntity(
 			req.ID, req.Type, agent.OUID, attributesJSON,
-			req.Description, req.Owner, clientID, clientSecret,
+			model.AgentSystemAttributes{
+				Description: req.Description,
+				Owner:       agent.Owner,
+				ClientID:    clientID,
+				Kind:        req.Kind,
+			},
+			clientSecret, validUntil,
 		)
 		if buildErr != nil {
 			return nil, nil, nil, fmt.Errorf("failed to build agent entity for '%s': %w", req.ID, buildErr)
 		}
+		sysCredsJSON, buildErr = withDeclarativeCredentials(sysCredsJSON, req.Credentials)
+		if buildErr != nil {
+			return nil, nil, nil, fmt.Errorf("failed to read the credentials of agent '%s': %w", req.ID, buildErr)
+		}
+		e.ProjectID = agent.ProjectID
 
 		return e, nil, sysCredsJSON, nil
 	}
+}
+
+// withDeclarativeCredentials adds a declarative agent's credentials to its system credentials, each as
+// the plaintext value the loader hashes. A credential is a string. None may be one the system sets
+// itself, such as the client secret or a passkey, since the entity layer verifies a credential by its
+// name whichever column holds it.
+func withDeclarativeCredentials(sysCreds json.RawMessage,
+	credentials map[string]interface{}) (json.RawMessage, error) {
+	if len(credentials) == 0 {
+		return sysCreds, nil
+	}
+	merged := map[string]interface{}{}
+	if len(sysCreds) > 0 {
+		if err := json.Unmarshal(sysCreds, &merged); err != nil {
+			return nil, err
+		}
+	}
+	for credType, value := range credentials {
+		if slices.Contains(authnprovidercm.SystemCredentialTypes, credType) ||
+			slices.Contains(authnprovidercm.InternalCredentialTypes, credType) {
+			return nil, fmt.Errorf("%q is set by the system, not declared", credType)
+		}
+		text, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("credential %q is not a string", credType)
+		}
+		merged[credType] = text
+	}
+	return json.Marshal(merged)
 }
 
 // makeAgentInboundConfig returns the inbound client loader configuration for agents.
@@ -307,9 +477,12 @@ func makeAgentInboundParser(agentSvc AgentServiceInterface) func([]byte) (*inbou
 			Description: req.Description,
 			LogoURL:     req.LogoURL,
 			Owner:       req.Owner,
+			Kind:        req.Kind,
 			InboundAuthProfile: providers.InboundAuthProfile{
 				AuthFlowID:                req.AuthFlowID,
 				AuthFlowHandle:            req.AuthFlowHandle,
+				DeviceGrantFlowID:         req.DeviceGrantFlowID,
+				DeviceGrantFlowHandle:     req.DeviceGrantFlowHandle,
 				RegistrationFlowID:        req.RegistrationFlowID,
 				RegistrationFlowHandle:    req.RegistrationFlowHandle,
 				IsRegistrationFlowEnabled: req.IsRegistrationFlowEnabled,
@@ -339,7 +512,8 @@ func makeAgentInboundParser(agentSvc AgentServiceInterface) func([]byte) (*inbou
 		resolvedClient.IsReadOnly = true
 		setLogoProperty(&resolvedClient, req.LogoURL)
 
-		oauthProfile := buildOAuthProfile(req.InboundAuthConfig)
+		// ValidateAgent may have completed the OAuth config (a personal agent's setup), so it is read back.
+		oauthProfile := buildOAuthProfile(agent.InboundAuthConfig)
 		if oauthProfile != nil {
 			if resolvedClient.Properties == nil {
 				resolvedClient.Properties = make(map[string]interface{})

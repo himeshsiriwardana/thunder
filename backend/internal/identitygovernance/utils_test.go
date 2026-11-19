@@ -402,10 +402,15 @@ func (s *UtilsTestSuite) TestStatusDetailsDescribeTheHold() {
 
 	noteless := AccessState{Suspend: &SuspendState{SuspendedAt: s.at(-time.Hour)}}
 
+	byOwner := AccessState{OwnerSuspend: &OwnerSuspendState{SuspendedAt: s.at(-2 * time.Hour)}}
+	byBoth := suspended
+	byBoth.OwnerSuspend = byOwner.OwnerSuspend
+
 	suspension := &providers.AccessStatusDetails{
 		Reason:       providers.AccessHoldReasonAdministrativeSuspension,
 		Since:        s.at(-time.Hour),
 		OperatorNote: "Credential exposure",
+		AppliedBy:    []providers.SuspensionAppliedBy{providers.SuspensionAppliedByOrganization},
 	}
 	cases := []struct {
 		name   string
@@ -433,11 +438,34 @@ func (s *UtilsTestSuite) TestStatusDetailsDescribeTheHold() {
 			suspendedAndLocked, providers.AccessStatusSuspended, suspension},
 		{"a suspension known only from the column reports no circumstances", providers.EntityStateSuspended,
 			AccessState{}, providers.AccessStatusSuspended,
-			&providers.AccessStatusDetails{Reason: providers.AccessHoldReasonAdministrativeSuspension}},
+			&providers.AccessStatusDetails{Reason: providers.AccessHoldReasonAdministrativeSuspension,
+				AppliedBy: []providers.SuspensionAppliedBy{providers.SuspensionAppliedByOrganization}}},
 		{"an operator who gave no note produces none", providers.EntityStateSuspended, noteless,
 			providers.AccessStatusSuspended, &providers.AccessStatusDetails{
-				Reason: providers.AccessHoldReasonAdministrativeSuspension,
-				Since:  s.at(-time.Hour),
+				Reason:    providers.AccessHoldReasonAdministrativeSuspension,
+				Since:     s.at(-time.Hour),
+				AppliedBy: []providers.SuspensionAppliedBy{providers.SuspensionAppliedByOrganization},
+			}},
+		{"the owner's suspension alone is the owner's", providers.EntityStateActive, byOwner,
+			providers.AccessStatusSuspended, &providers.AccessStatusDetails{
+				Reason:    providers.AccessHoldReasonOwnerSuspension,
+				Since:     s.at(-2 * time.Hour),
+				AppliedBy: []providers.SuspensionAppliedBy{providers.SuspensionAppliedByOwner},
+			}},
+		{"a cascaded suspension alone is reported as cascaded", providers.EntityStateActive,
+			AccessState{CascadeSuspend: &CascadeSuspendState{SuspendedAt: s.at(-3 * time.Hour)}},
+			providers.AccessStatusSuspended, &providers.AccessStatusDetails{
+				Reason:    providers.AccessHoldReasonCascadedSuspension,
+				Since:     s.at(-3 * time.Hour),
+				AppliedBy: []providers.SuspensionAppliedBy{providers.SuspensionAppliedByCascade},
+			}},
+		{"both suspensions name both parties and report the organization's", providers.EntityStateSuspended,
+			byBoth, providers.AccessStatusSuspended, &providers.AccessStatusDetails{
+				Reason:       providers.AccessHoldReasonAdministrativeSuspension,
+				Since:        s.at(-time.Hour),
+				OperatorNote: "Credential exposure",
+				AppliedBy: []providers.SuspensionAppliedBy{providers.SuspensionAppliedByOrganization,
+					providers.SuspensionAppliedByOwner},
 			}},
 	}
 
@@ -970,4 +998,53 @@ func (s *UtilsTestSuite) TestAccessReadReportsByTheGivenTime() {
 	s.Equal(providers.AccessStatusLocked, accessReadFor(&entity, lockEnforcement{}, s.now).Status.Value)
 	s.Equal(providers.AccessStatusActive,
 		accessReadFor(&entity, lockEnforcement{}, s.now.Add(10*time.Minute)).Status.Value, "the lock has ended")
+}
+
+// readWithLifespan derives the management read of an agent with the given state, runtime attributes,
+// and stored validUntil.
+func (s *UtilsTestSuite) readWithLifespan(state providers.EntityState, runtimeAttrs, validUntil string) AccessRead {
+	entity := providers.Entity{ID: "agent-1", Category: providers.EntityCategoryAgent, State: state,
+		SystemAttributes: json.RawMessage(`{"validUntil":"` + validUntil + `"}`)}
+	if runtimeAttrs != "" {
+		entity.RuntimeAttributes = json.RawMessage(runtimeAttrs)
+	}
+	return accessReadFor(&entity, lockEnforcement{}, s.now)
+}
+
+func (s *UtilsTestSuite) TestAccessReadReportsAnEndedLifespanAsExpired() {
+	validUntil := s.now.Add(-time.Hour).Format(time.RFC3339)
+
+	read := s.readWithLifespan(providers.EntityStateActive, "", validUntil)
+
+	s.Equal(providers.AccessStatusExpired, read.Status.Value)
+	s.Require().NotNil(read.Status.Details)
+	s.Equal(providers.AccessHoldReasonLifespanEnded, read.Status.Details.Reason)
+	s.Equal(validUntil, read.Status.Details.Since)
+}
+
+func (s *UtilsTestSuite) TestAccessReadReportsALifespanAheadAsActive() {
+	read := s.readWithLifespan(providers.EntityStateActive, "", s.now.Add(time.Hour).Format(time.RFC3339))
+	s.Equal(providers.AccessStatusActive, read.Status.Value)
+}
+
+func (s *UtilsTestSuite) TestAccessReadReportsASuspensionOverAnEndedLifespan() {
+	read := s.readWithLifespan(providers.EntityStateSuspended, "", s.now.Add(-time.Hour).Format(time.RFC3339))
+	s.Equal(providers.AccessStatusSuspended, read.Status.Value)
+}
+
+func (s *UtilsTestSuite) TestAccessReadReportsAnEndedLifespanOverALock() {
+	read := s.readWithLifespan(providers.EntityStateActive,
+		`{"accessState":{"lock":{"entity":{"unlockAt":"9999-12-31T23:59:59Z","reason":"POST_SUSPENDED"}}}}`,
+		s.now.Add(-time.Hour).Format(time.RFC3339))
+	s.Equal(providers.AccessStatusExpired, read.Status.Value)
+}
+
+// A lifespan end that does not parse is reported as expired, as the access checks refuse it, rather
+// than leaving the agent looking unbounded.
+func (s *UtilsTestSuite) TestAccessReadReportsAnUnreadableLifespanAsExpired() {
+	read := s.readWithLifespan(providers.EntityStateActive, "", "not-a-timestamp")
+
+	s.Equal(providers.AccessStatusExpired, read.Status.Value)
+	s.Require().NotNil(read.Status.Details)
+	s.Empty(read.Status.Details.Since)
 }

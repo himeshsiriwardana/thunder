@@ -11,6 +11,7 @@ import (
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/thunder-id/thunderid/internal/entityprovider"
+	entitytypemodel "github.com/thunder-id/thunderid/internal/entitytype/model"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/notification"
@@ -121,6 +122,7 @@ func (e *emailExecutor) executeSend(ctx *providers.NodeContext) (*providers.Exec
 		}
 		execResp.Status = providers.ExecFailure
 		execResp.Error = &ErrEmailRecipientMissing
+		withUndeliveredInviteLink(ctx, execResp)
 		return execResp, nil
 	}
 
@@ -157,6 +159,11 @@ func (e *emailExecutor) executeSend(ctx *providers.NodeContext) (*providers.Exec
 		return failOrSkip(fmt.Errorf("failed to render email template: %s", svcErr.Code))
 	}
 
+	delivered, err := withDeliveredRecipient(ctx, recipient)
+	if err != nil {
+		return failOrSkip(err)
+	}
+
 	notifSvcErr := e.notifSenderSvc.SendEmail(ctx.Context, senderID, notifcm.EmailData{
 		To:      []string{recipient},
 		Subject: rendered.Subject,
@@ -174,6 +181,7 @@ func (e *emailExecutor) executeSend(ctx *providers.NodeContext) (*providers.Exec
 			execResp.AdditionalData[common.DataEmailSent] = dataValueFalse
 			execResp.Status = providers.ExecFailure
 			execResp.Error = &ErrEmailProviderNotConfigured
+			withUndeliveredInviteLink(ctx, execResp)
 			return execResp, nil
 		}
 		return failOrSkip(fmt.Errorf("email send failed: %s", notifSvcErr.Code))
@@ -181,9 +189,21 @@ func (e *emailExecutor) executeSend(ctx *providers.NodeContext) (*providers.Exec
 
 	logger.Debug(ctx.Context, "Email sent successfully", log.MaskedString("recipient", recipient))
 
+	execResp.SharedRuntimeData = delivered
 	execResp.AdditionalData[common.DataEmailSent] = dataValueTrue
 	execResp.Status = providers.ExecComplete
 	return execResp, nil
+}
+
+// withUndeliveredInviteLink hands an invite link the email could not carry to the screen that shows it instead.
+// An administrator-initiated flow's link is withheld: its administrator could finish the flow in the user's place.
+func withUndeliveredInviteLink(ctx *providers.NodeContext, execResp *providers.ExecutorResponse) {
+	if ctx.FlowType == providers.FlowTypeAdminInitiated {
+		return
+	}
+	if link := ctx.RuntimeData[common.RuntimeKeyInviteLink]; link != "" {
+		execResp.AdditionalData[common.DataInviteLink] = link
+	}
 }
 
 // bestEffortResponse completes a node that sent nothing, with emailSent set to false.
@@ -208,9 +228,20 @@ func (e *emailExecutor) resolveSenderID(ctx *providers.NodeContext) (string, err
 	return senderID, nil
 }
 
-// resolveRecipientEmail retrieves the recipient email from user inputs, runtime data, or forwarded data.
+// resolveRecipientEmail retrieves the recipient email from the email recipient an earlier node set, user
+// inputs, runtime data, or forwarded data.
 func (e *emailExecutor) resolveRecipientEmail(ctx *providers.NodeContext, logger *log.Logger) (string, error) {
+	if ctx.RuntimeData[common.RuntimeKeyRecipientType] == entitytypemodel.TypeEmail {
+		if recipientEmail := ctx.RuntimeData[common.RuntimeKeyExpectedRecipient]; recipientEmail != "" {
+			return recipientEmail, nil
+		}
+	}
+
 	emailAttr := resolveInputIdentifierByType(ctx, providers.InputTypeEmail, userAttributeEmail)
+
+	if isConstantNodeInput(ctx, emailAttr) && ctx.UserInputs[emailAttr] != "" {
+		return ctx.UserInputs[emailAttr], nil
+	}
 
 	if recipientEmail, ok := ctx.ForwardedData[emailAttr].(string); ok && recipientEmail != "" {
 		return recipientEmail, nil
@@ -233,7 +264,7 @@ func (e *emailExecutor) resolveRecipientEmail(ctx *providers.NodeContext, logger
 		if e.entityProvider == nil {
 			return "", errors.New("entity provider is not configured for email resolution")
 		}
-		user, providerErr := e.entityProvider.GetEntityProfile(userID)
+		user, providerErr := e.entityProvider.GetEntityProfile(ctx.Context, userID)
 		if providerErr != nil {
 			if providerErr.Code == entityprovider.ErrorCodeEntityNotFound {
 				return "", nil

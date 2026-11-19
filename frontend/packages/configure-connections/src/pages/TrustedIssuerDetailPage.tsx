@@ -2,36 +2,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {DocumentTitle, QueryErrorNotice, ResourceAvatar, SettingsCard, UnsavedChangesBar} from '@thunderid/components';
-import {useConfig} from '@thunderid/contexts';
+import {useCapabilitiesContext, useConfig} from '@thunderid/contexts';
 import {getErrorMessage} from '@thunderid/utils';
 import {
   Alert,
   Box,
   Button,
-  FormControl,
-  FormLabel,
   ListingTable,
   PageContent,
   Skeleton,
   Stack,
   Switch,
+  Tab,
+  Tabs,
   TextField,
   Tooltip,
   Typography,
 } from '@wso2/oxygen-ui';
 import {AlertCircle, ChevronLeft, Trash2} from '@wso2/oxygen-ui-icons-react';
-import {useCallback, useMemo, useState, type JSX} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode, type SyntheticEvent} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate, useParams} from 'react-router';
 import useDeleteConnection from '../api/useDeleteConnection';
 import useTrustedIssuer from '../api/useTrustedIssuer';
 import useUpdateTrustedIssuer from '../api/useUpdateTrustedIssuer';
+import AuthorizationMappingSection from '../components/AuthorizationMappingSection';
 import ConnectionDeleteDialog from '../components/ConnectionDeleteDialog';
 import OrganizationUnitSection from '../components/OrganizationUnitSection';
 import ConnectionConstants from '../constants/connection-constants';
 import useConnectionRoutes from '../hooks/useConnectionRoutes';
 import useIsIdJagAcceptanceUnavailable from '../hooks/useIsIdJagAcceptanceUnavailable';
-import {ConnectionTypes} from '../models/connection';
+import {
+  ConnectionTypes,
+  type AttributeConfiguration,
+  type AuthorizationDirectMapping,
+  type AuthorizationRuleMapping,
+} from '../models/connection';
 import type {TrustedIssuerFormData} from '../models/trusted-issuer';
 import isConflictError from '../utils/isConflictError';
 import isTrustedIssuerFormDirty from '../utils/isTrustedIssuerFormDirty';
@@ -40,8 +46,29 @@ import validateTrustedIssuerForm, {
   type TrustedIssuerFormErrors,
 } from '../utils/validateTrustedIssuerForm';
 
+interface TabPanelProps {
+  children: ReactNode;
+  index: number;
+  value: number;
+  keepMounted?: boolean;
+}
+
+function TabPanel({children, value, index, keepMounted = false}: TabPanelProps): JSX.Element {
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`trusted-issuer-tabpanel-${index}`}
+      aria-labelledby={`trusted-issuer-tab-${index}`}
+    >
+      {(keepMounted || value === index) && <Box sx={{py: 3}}>{children}</Box>}
+    </div>
+  );
+}
+
 export default function TrustedIssuerDetailPage(): JSX.Element {
   const {t} = useTranslation();
+  const {can} = useCapabilitiesContext();
   const navigate = useNavigate();
   const {id} = useParams<{id: string}>();
   const {config} = useConfig();
@@ -53,10 +80,18 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
   const deleteMutation = useDeleteConnection(ConnectionTypes.OIDC);
   const isIdJagAcceptanceUnavailable = useIsIdJagAcceptanceUnavailable();
 
+  const [activeTab, setActiveTab] = useState(0);
   const [editedValues, setEditedValues] = useState<Partial<TrustedIssuerFormData>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [nameError, setNameError] = useState<string | null>(null);
   const [generalError, setGeneralError] = useState<string | null>(null);
+  const [editedAuthzMappings, setEditedAuthzMappings] = useState<AuthorizationRuleMapping[] | undefined | null>(null);
+  const [authzMappingsValid, setAuthzMappingsValid] = useState(true);
+  const [editedDirectMappings, setEditedDirectMappings] = useState<AuthorizationDirectMapping[] | undefined | null>(
+    null,
+  );
+  const [directMappingsValid, setDirectMappingsValid] = useState(true);
+  const [mappingsKey, setMappingsKey] = useState(0);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -75,10 +110,33 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
   );
 
   const values: TrustedIssuerFormData = useMemo(() => ({...baseline, ...editedValues}), [baseline, editedValues]);
-  const dirty: boolean = isTrustedIssuerFormDirty(values, baseline);
+  const baselineAttr: AttributeConfiguration | undefined = data?.attributeConfiguration;
+  const baselineAuthzMappings: AuthorizationRuleMapping[] | undefined = baselineAttr?.authorizationMapping?.rules;
+  const baselineDirectMappings: AuthorizationDirectMapping[] | undefined = baselineAttr?.authorizationMapping?.direct;
+  const authzMappingsDirty: boolean =
+    editedAuthzMappings !== null &&
+    JSON.stringify(editedAuthzMappings ?? []) !== JSON.stringify(baselineAuthzMappings ?? []);
+  const directMappingsDirty: boolean =
+    editedDirectMappings !== null &&
+    JSON.stringify(editedDirectMappings ?? []) !== JSON.stringify(baselineDirectMappings ?? []);
+  // When a refetch brings a different stored mapping and the section holds no edits, remount it
+  // so it shows the stored rows instead of the ones it was first given.
+  const storedMapping = baselineAttr?.authorizationMapping;
+  const [seededMapping, setSeededMapping] = useState(storedMapping);
+  if (storedMapping !== seededMapping && editedAuthzMappings === null && editedDirectMappings === null) {
+    setSeededMapping(storedMapping);
+    setMappingsKey((prev) => prev + 1);
+  }
+  // An incomplete row is left out of the payload, so only its validity flag shows the change.
+  const dirty: boolean =
+    isTrustedIssuerFormDirty(values, baseline) ||
+    authzMappingsDirty ||
+    directMappingsDirty ||
+    !authzMappingsValid ||
+    !directMappingsValid;
 
   const errors: TrustedIssuerFormErrors = useMemo(() => validateTrustedIssuerForm(values), [values]);
-  const valid: boolean = Object.keys(errors).length === 0;
+  const valid: boolean = Object.keys(errors).length === 0 && authzMappingsValid && directMappingsValid;
 
   const fieldErrorMessage = (kind: TrustedIssuerFieldErrorKind | undefined): string | undefined => {
     if (kind === 'required') {
@@ -117,8 +175,31 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
 
   const setTouchedField = (field: string): void => setTouched((prev) => ({...prev, [field]: true}));
 
+  // The current edits, read after the post-save refetch to tell whether any were made while it ran.
+  const latestEdits = useRef({
+    editedValues,
+    editedAuthzMappings,
+    editedDirectMappings,
+    authzMappingsValid,
+    directMappingsValid,
+  });
+  useEffect(() => {
+    latestEdits.current = {
+      editedValues,
+      editedAuthzMappings,
+      editedDirectMappings,
+      authzMappingsValid,
+      directMappingsValid,
+    };
+  }, [editedValues, editedAuthzMappings, editedDirectMappings, authzMappingsValid, directMappingsValid]);
+
   const resetEdits = (): void => {
     setEditedValues({});
+    setEditedAuthzMappings(null);
+    setAuthzMappingsValid(true);
+    setEditedDirectMappings(null);
+    setDirectMappingsValid(true);
+    setMappingsKey((prev) => prev + 1);
     setTouched({});
     setNameError(null);
     setGeneralError(null);
@@ -151,13 +232,38 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
 
     setNameError(null);
     setGeneralError(null);
-    updateMutation.mutate(values, {
+    const submitted = latestEdits.current;
+    // null means untouched (keep the stored value); undefined means the admin cleared the mapping.
+    const effectiveRules = editedAuthzMappings !== null ? editedAuthzMappings : baselineAuthzMappings;
+    const effectiveDirect = editedDirectMappings !== null ? editedDirectMappings : baselineDirectMappings;
+    const hasMapping = Boolean(effectiveRules?.length) || Boolean(effectiveDirect?.length);
+    // Send the stored attribute configuration back so the update keeps it. The empty user type default is inert.
+    const attributeConfiguration: AttributeConfiguration | undefined =
+      baselineAttr || hasMapping
+        ? {
+            userTypeResolution: {default: ''},
+            ...baselineAttr,
+            authorizationMapping: hasMapping ? {rules: effectiveRules, direct: effectiveDirect} : undefined,
+          }
+        : undefined;
+    updateMutation.mutate(attributeConfiguration ? {...values, attributeConfiguration} : values, {
       onSuccess: () => {
-        void trustedIssuerQuery.refetch();
-        resetEdits();
+        // Reset after the refetch so the mapping section remounts from the saved values,
+        // unless the admin edited again while it ran.
+        void trustedIssuerQuery.refetch().then((result) => {
+          // A failed refetch keeps the old values cached, so keep the saved edits instead.
+          if (result.isError) return;
+          const current = latestEdits.current;
+          const unchanged = (Object.keys(current) as (keyof typeof current)[]).every(
+            (key) => current[key] === submitted[key],
+          );
+          if (unchanged) resetEdits();
+        });
       },
       onError: (error) => {
         if (isConflictError(error)) {
+          // The name field is on General, so show it there.
+          setActiveTab(0);
           setNameError(t('trustedIssuers:detail.duplicateName', 'A trusted issuer with this name already exists.'));
         } else {
           setGeneralError(
@@ -182,7 +288,7 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
 
       {isLoading ? (
         <Skeleton variant="rounded" height={480} />
-      ) : trustedIssuerQuery.error ? (
+      ) : trustedIssuerQuery.error && !data ? (
         <QueryErrorNotice
           error={trustedIssuerQuery.error}
           t={tForErrors}
@@ -231,23 +337,67 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
             </Stack>
           </Stack>
 
+          {/* A failed refresh keeps the page, and the edits on it, in place. */}
+          {trustedIssuerQuery.error && (
+            <Box sx={{mb: 3}}>
+              <QueryErrorNotice
+                error={trustedIssuerQuery.error}
+                t={tForErrors}
+                variant="inline"
+                fallbackKey="trustedIssuers:detail.loadError"
+                fallbackDefaultValue="Failed to load trusted issuer."
+                onRetry={() => void trustedIssuerQuery.refetch()}
+              />
+            </Box>
+          )}
+
           {generalError && (
             <Alert severity="error" onClose={clearUpdateError} sx={{mb: 3}}>
               {generalError}
             </Alert>
           )}
 
-          <Stack direction="column" spacing={4}>
-            <SettingsCard
-              title={t('trustedIssuers:detail.general.title', 'General')}
-              description={t('trustedIssuers:detail.general.description', 'Core identity of this trusted issuer.')}
-            >
-              <Stack direction="column" spacing={3}>
-                <FormControl fullWidth required error={Boolean(nameError ?? (touched['name'] && errors.name))}>
-                  <FormLabel htmlFor="trusted-issuer-name">
-                    {t('trustedIssuers:create.form.name.label', 'Name')}
-                  </FormLabel>
+          <Tabs
+            value={activeTab}
+            onChange={(_e: SyntheticEvent, v: number) => setActiveTab(v)}
+            aria-label={t('trustedIssuers:detail.tabs.ariaLabel', 'Trusted issuer settings')}
+          >
+            <Tab
+              label={t('connections:detail.tabs.general', 'General')}
+              sx={{textTransform: 'none'}}
+              id="trusted-issuer-tab-0"
+              aria-controls="trusted-issuer-tabpanel-0"
+              data-testid="trusted-issuer-tab-general"
+            />
+            <Tab
+              label={t('connections:detail.tabs.attributeMapping', 'Attribute configuration')}
+              sx={{textTransform: 'none'}}
+              id="trusted-issuer-tab-1"
+              aria-controls="trusted-issuer-tabpanel-1"
+              data-testid="trusted-issuer-tab-attributes"
+            />
+            {can('connection', 'delete') && (
+              <Tab
+                label={t('connections:detail.tabs.advanced', 'Advanced')}
+                sx={{textTransform: 'none'}}
+                id="trusted-issuer-tab-2"
+                aria-controls="trusted-issuer-tabpanel-2"
+                data-testid="trusted-issuer-tab-advanced"
+              />
+            )}
+          </Tabs>
+
+          <TabPanel value={activeTab} index={0}>
+            <Stack direction="column" spacing={4}>
+              <SettingsCard
+                title={t('trustedIssuers:detail.general.title', 'General')}
+                description={t('trustedIssuers:detail.general.description', 'Core identity of this trusted issuer.')}
+              >
+                <Stack direction="column" spacing={3}>
                   <TextField
+                    labelPlacement="top"
+                    label={t('trustedIssuers:create.form.name.label', 'Name')}
+                    required
                     id="trusted-issuer-name"
                     fullWidth
                     value={values.name}
@@ -256,13 +406,11 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
                     onChange={(e) => setField('name', e.target.value)}
                     onBlur={() => setTouchedField('name')}
                   />
-                </FormControl>
 
-                <FormControl fullWidth required error={Boolean(touched['issuer'] && errors.issuer)}>
-                  <FormLabel htmlFor="trusted-issuer-issuer">
-                    {t('trustedIssuers:create.form.issuer.label', 'Issuer URI')}
-                  </FormLabel>
                   <TextField
+                    labelPlacement="top"
+                    label={t('trustedIssuers:create.form.issuer.label', 'Issuer URI')}
+                    required
                     id="trusted-issuer-issuer"
                     fullWidth
                     value={values.issuer}
@@ -277,13 +425,11 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
                     onChange={(e) => setField('issuer', e.target.value)}
                     onBlur={() => setTouchedField('issuer')}
                   />
-                </FormControl>
 
-                <FormControl fullWidth required error={Boolean(touched['jwksEndpoint'] && errors.jwksEndpoint)}>
-                  <FormLabel htmlFor="trusted-issuer-jwks-endpoint">
-                    {t('trustedIssuers:create.form.jwksEndpoint.label', 'JWKS endpoint')}
-                  </FormLabel>
                   <TextField
+                    labelPlacement="top"
+                    label={t('trustedIssuers:create.form.jwksEndpoint.label', 'JWKS endpoint')}
+                    required
                     id="trusted-issuer-jwks-endpoint"
                     fullWidth
                     value={values.jwksEndpoint}
@@ -298,26 +444,23 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
                     onChange={(e) => setField('jwksEndpoint', e.target.value)}
                     onBlur={() => setTouchedField('jwksEndpoint')}
                   />
-                </FormControl>
-              </Stack>
-            </SettingsCard>
+                </Stack>
+              </SettingsCard>
 
-            {data?.ouId && <OrganizationUnitSection ouId={data.ouId} />}
+              {data?.ouId && <OrganizationUnitSection ouId={data.ouId} />}
 
-            <SettingsCard
-              title={t('trustedIssuers:detail.tokenExchange.title', 'Token exchange')}
-              description={t(
-                'trustedIssuers:detail.tokenExchange.description',
-                'Exchange subject tokens from this issuer for access tokens.',
-              )}
-              enabled={values.tokenExchangeEnabled}
-              onToggle={(checked) => setField('tokenExchangeEnabled', checked)}
-            >
-              <FormControl fullWidth>
-                <FormLabel htmlFor="trusted-issuer-token-audience">
-                  {t('trustedIssuers:detail.tokenExchange.audience.label', 'Trusted token audience')}
-                </FormLabel>
+              <SettingsCard
+                title={t('trustedIssuers:detail.tokenExchange.title', 'Token exchange')}
+                description={t(
+                  'trustedIssuers:detail.tokenExchange.description',
+                  'Exchange subject tokens from this issuer for access tokens.',
+                )}
+                enabled={values.tokenExchangeEnabled}
+                onToggle={(checked) => setField('tokenExchangeEnabled', checked)}
+              >
                 <TextField
+                  labelPlacement="top"
+                  label={t('trustedIssuers:detail.tokenExchange.audience.label', 'Trusted token audience')}
                   id="trusted-issuer-token-audience"
                   fullWidth
                   placeholder="api://thunderid"
@@ -329,61 +472,90 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
                   )}
                   onChange={(e) => setField('trustedTokenAudience', e.target.value || undefined)}
                 />
-              </FormControl>
-            </SettingsCard>
+              </SettingsCard>
 
-            <SettingsCard
-              title={idJagTitle}
-              description={t(
-                'trustedIssuers:detail.idJag.description',
-                'Accept and exchange signed identity assertions from this issuer for access tokens.',
-              )}
-              headerAction={
-                isIdJagAcceptanceUnavailable ? (
-                  <Tooltip title={idJagUnavailableHint}>
-                    <span>{idJagSwitch}</span>
-                  </Tooltip>
-                ) : (
-                  idJagSwitch
-                )
-              }
-            >
-              {(values.idJagEnabled || isIdJagAcceptanceUnavailable) && (
-                <Typography variant="body2" color="text.secondary">
-                  {isIdJagAcceptanceUnavailable
-                    ? idJagUnavailableHint
-                    : t(
-                        'trustedIssuers:detail.idJag.enabledNote',
-                        'Identity assertions from this issuer are accepted via the ID-JAG protocol.',
-                      )}
-                </Typography>
-              )}
-            </SettingsCard>
-
-            <SettingsCard title={t('trustedIssuers:detail.dangerZone.title', 'Danger zone')}>
-              <Typography variant="h6" gutterBottom color="error">
-                {t('trustedIssuers:detail.dangerZone.delete.title', 'Delete trusted issuer')}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{mb: 3}}>
-                {t(
-                  'trustedIssuers:detail.dangerZone.delete.description',
-                  'Applications relying on assertions from this issuer will stop receiving tokens. This cannot be undone.',
+              <SettingsCard
+                title={idJagTitle}
+                description={t(
+                  'trustedIssuers:detail.idJag.description',
+                  'Accept and exchange signed identity assertions from this issuer for access tokens.',
                 )}
-              </Typography>
-              <Button
-                variant="contained"
-                color="error"
-                startIcon={<Trash2 size={16} />}
-                onClick={() => {
-                  setDeleteError(null);
-                  setDeleteOpen(true);
-                }}
-                data-testid="trusted-issuer-delete-button"
+                headerAction={
+                  isIdJagAcceptanceUnavailable ? (
+                    <Tooltip title={idJagUnavailableHint}>
+                      <span>{idJagSwitch}</span>
+                    </Tooltip>
+                  ) : (
+                    idJagSwitch
+                  )
+                }
               >
-                {t('common:actions.delete')}
-              </Button>
-            </SettingsCard>
-          </Stack>
+                {(values.idJagEnabled || isIdJagAcceptanceUnavailable) && (
+                  <Typography variant="body2" color="text.secondary">
+                    {isIdJagAcceptanceUnavailable
+                      ? idJagUnavailableHint
+                      : t(
+                          'trustedIssuers:detail.idJag.enabledNote',
+                          'Identity assertions from this issuer are accepted via the ID-JAG protocol.',
+                        )}
+                  </Typography>
+                )}
+              </SettingsCard>
+            </Stack>
+          </TabPanel>
+
+          {/* Kept mounted: the section holds rows being edited in its own state. */}
+          <TabPanel value={activeTab} index={1} keepMounted>
+            <AuthorizationMappingSection
+              key={`authz-${id}-${mappingsKey}`}
+              ouId={data?.ouId}
+              initialRuleConfig={baselineAuthzMappings}
+              initialDirectConfig={baselineDirectMappings}
+              description={t(
+                'trustedIssuers:detail.authorizationMapping.description',
+                'Map values in tokens from this issuer to local roles, groups, or permissions. ' +
+                  'When a mapping is set, these tokens carry only the permissions it grants.',
+              )}
+              onRuleChange={(mappings, isValid) => {
+                clearUpdateError();
+                setEditedAuthzMappings(mappings);
+                setAuthzMappingsValid(isValid);
+              }}
+              onDirectChange={(mappings, isValid) => {
+                clearUpdateError();
+                setEditedDirectMappings(mappings);
+                setDirectMappingsValid(isValid);
+              }}
+            />
+          </TabPanel>
+
+          {can('connection', 'delete') && (
+            <TabPanel value={activeTab} index={2}>
+              <SettingsCard title={t('trustedIssuers:detail.dangerZone.title', 'Danger zone')}>
+                <Typography variant="h6" gutterBottom color="error">
+                  {t('trustedIssuers:detail.dangerZone.delete.title', 'Delete trusted issuer')}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{mb: 3}}>
+                  {t(
+                    'trustedIssuers:detail.dangerZone.delete.description',
+                    'Applications relying on assertions from this issuer will stop receiving tokens. This cannot be undone.',
+                  )}
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="error"
+                  startIcon={<Trash2 size={16} />}
+                  onClick={() => {
+                    setDeleteError(null);
+                    setDeleteOpen(true);
+                  }}
+                  data-testid="trusted-issuer-delete-button"
+                >
+                  {t('common:actions.delete')}
+                </Button>
+              </SettingsCard>
+            </TabPanel>
+          )}
 
           {dirty && (
             <UnsavedChangesBar
@@ -392,7 +564,7 @@ export default function TrustedIssuerDetailPage(): JSX.Element {
               saveLabel={t('trustedIssuers:detail.saveBar.save', 'Save changes')}
               savingLabel={t('common:status.saving', 'Saving...')}
               isSaving={updateMutation.isPending}
-              saveDisabled={!valid}
+              saveDisabled={!valid || !can('connection', 'update')}
               onReset={resetEdits}
               onSave={handleSave}
             />

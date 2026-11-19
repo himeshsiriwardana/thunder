@@ -21,6 +21,25 @@ func TestModelSuite(t *testing.T) {
 	suite.Run(t, new(ModelTestSuite))
 }
 
+func (suite *ModelTestSuite) TestAccessEvaluationResponse_AlternativesAreNotJSON() {
+	response := AccessEvaluationResponse{
+		Decision:       false,
+		Context:        map[string]interface{}{"reason": "narrower permission"},
+		GrantedInstead: []string{"reports:view"},
+	}
+	encoded, err := json.Marshal(response)
+	suite.Require().NoError(err)
+	suite.JSONEq(`{"decision":false,"context":{"reason":"narrower permission"}}`, string(encoded))
+
+	var decoded AccessEvaluationResponse
+	err = json.Unmarshal([]byte(`{"decision":false,"GrantedInstead":["admin"],
+		"grantedInstead":["admin"],"granted_instead":["admin"],
+		"context":{"granted_instead":["admin"]}}`), &decoded)
+	suite.Require().NoError(err)
+	suite.Empty(decoded.GrantedInstead)
+	suite.Contains(decoded.Context, "granted_instead")
+}
+
 func (suite *ModelTestSuite) TestSubjectJSONFields() {
 	payload, err := json.Marshal(Subject{Category: "user", Type: "Customer", ID: "user-1"})
 	suite.Require().NoError(err)
@@ -109,6 +128,63 @@ func (suite *ModelTestSuite) TestInput_IsSensitive() {
 	for _, typ := range notSensitive {
 		assert.False(suite.T(), Input{Type: typ}.IsSensitive(), "expected %q to not be sensitive", typ)
 	}
+}
+
+// ----- InputDefinition default and constant -----
+
+func (suite *ModelTestSuite) TestInputDefinition_IsSensitive() {
+	for _, typ := range []string{InputTypePassword, InputTypeOTP} {
+		assert.True(suite.T(), InputDefinition{Type: typ}.IsSensitive(), "expected %q to be sensitive", typ)
+	}
+
+	for _, typ := range []string{InputTypeText, InputTypeEmail, InputTypeBoolean, InputTypeSelect} {
+		assert.False(suite.T(), InputDefinition{Type: typ}.IsSensitive(), "expected %q to not be sensitive", typ)
+	}
+}
+
+func (suite *ModelTestSuite) TestInputDefinition_DefaultAndConstant_OmittedWhenUnset() {
+	def := InputDefinition{Type: InputTypeText, Identifier: "locale"}
+
+	jsonOut, err := json.Marshal(def)
+	suite.Require().NoError(err)
+	yamlOut, err := yaml.Marshal(def)
+	suite.Require().NoError(err)
+
+	for _, out := range []string{string(jsonOut), string(yamlOut)} {
+		assert.NotContains(suite.T(), out, "default")
+		assert.NotContains(suite.T(), out, "constant")
+	}
+}
+
+func (suite *ModelTestSuite) TestInputDefinition_DefaultAndConstant_RoundTrip() {
+	def := InputDefinition{Type: InputTypeText, Identifier: "locale", DefaultValue: "en-US", Constant: true}
+
+	jsonOut, err := json.Marshal(def)
+	suite.Require().NoError(err)
+	var fromJSON InputDefinition
+	suite.Require().NoError(json.Unmarshal(jsonOut, &fromJSON))
+	suite.Equal(def, fromJSON)
+
+	yamlOut, err := yaml.Marshal(def)
+	suite.Require().NoError(err)
+	var fromYAML InputDefinition
+	suite.Require().NoError(yaml.Unmarshal(yamlOut, &fromYAML))
+	suite.Equal(def, fromYAML)
+}
+
+func (suite *ModelTestSuite) TestInput_ConstantIsNotSerialized() {
+	out, err := json.Marshal(Input{Identifier: "locale", Type: InputTypeText, DefaultValue: "en-US", Constant: true})
+
+	suite.Require().NoError(err)
+	assert.Contains(suite.T(), string(out), `"defaultValue":"en-US"`)
+	assert.NotContains(suite.T(), string(out), "constant")
+}
+
+func (suite *ModelTestSuite) TestInput_DefaultValue_IsSerializedOnlyWhenSet() {
+	withoutValue, err := json.Marshal(Input{Identifier: "department", Type: InputTypeText})
+
+	suite.Require().NoError(err)
+	assert.NotContains(suite.T(), string(withoutValue), "defaultValue")
 }
 
 // ----- Event -----
@@ -439,4 +515,99 @@ func (s *AuthorizationRuleMappingModelTestSuite) TestIsMultiValued() {
 		"a number is always a single value, delimiter is not applicable to it")
 	s.False(AuthorizationRuleMapping{ValueType: AuthorizationValueTypeBoolean}.IsMultiValued(),
 		"a boolean is always a single value, delimiter is not applicable to it")
+}
+
+func (suite *ModelTestSuite) TestAgentOwnerLocality_JSONIsABooleanUnlessAReference() {
+	cases := []struct {
+		name string
+		in   AgentOwner
+		want string
+	}{
+		{name: "local", in: AgentOwner{ID: "u1", IsLocal: AgentOwnerLocal}, want: `{"id":"u1","isLocal":true}`},
+		{name: "external", in: AgentOwner{ID: "u1", IsLocal: AgentOwnerExternal},
+			want: `{"id":"u1","isLocal":false}`},
+		{name: "unstated", in: AgentOwner{ID: "u1"}, want: `{"id":"u1"}`},
+		{name: "reference", in: AgentOwner{ID: "u1", IsLocal: "var:AGENT__A__IS_LOCAL"},
+			want: `{"id":"u1","isLocal":"var:AGENT__A__IS_LOCAL"}`},
+	}
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			encoded, err := json.Marshal(tc.in)
+			suite.Require().NoError(err)
+			suite.JSONEq(tc.want, string(encoded))
+
+			var decoded AgentOwner
+			suite.Require().NoError(json.Unmarshal(encoded, &decoded))
+			suite.Equal(tc.in, decoded)
+		})
+	}
+}
+
+// A null states no locality, which reads as local, as an absent one does.
+func (suite *ModelTestSuite) TestAgentOwnerLocality_JSONNullIsUnstated() {
+	var owner AgentOwner
+	suite.Require().NoError(json.Unmarshal([]byte(`{"id":"u1","isLocal":null}`), &owner))
+	suite.Equal(AgentOwnerLocality(""), owner.IsLocal)
+	suite.True(owner.Local())
+}
+
+func (suite *ModelTestSuite) TestAgentOwnerLocality_JSONRejectsANumber() {
+	var owner AgentOwner
+	suite.Error(json.Unmarshal([]byte(`{"id":"u1","isLocal":1}`), &owner))
+}
+
+func (suite *ModelTestSuite) TestAgentOwnerLocality_YAMLReadsABooleanTextOrAReference() {
+	cases := []struct {
+		name string
+		in   string
+		want AgentOwnerLocality
+	}{
+		{name: "boolean", in: "isLocal: false", want: AgentOwnerExternal},
+		{name: "resolved reference", in: `isLocal: "false"`, want: AgentOwnerExternal},
+		{name: "reference", in: "isLocal: var:AGENT__A__IS_LOCAL", want: "var:AGENT__A__IS_LOCAL"},
+		{name: "absent", in: "id: u1", want: ""},
+	}
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			var owner AgentOwner
+			suite.Require().NoError(yaml.Unmarshal([]byte(tc.in), &owner))
+			suite.Equal(tc.want, owner.IsLocal)
+		})
+	}
+}
+
+// A reference is put in as a string-tagged node, which is how a stored "false" arrives once resolved.
+func (suite *ModelTestSuite) TestAgentOwnerLocality_YAMLReadsAStringTaggedNode() {
+	node := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Value: "isLocal"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "false"},
+	}}
+	var owner AgentOwner
+	suite.Require().NoError(node.Decode(&owner))
+	suite.Equal(AgentOwnerExternal, owner.IsLocal)
+	suite.False(owner.Local())
+}
+
+func (suite *ModelTestSuite) TestAgentOwnerLocality_YAMLRejectsAList() {
+	var owner AgentOwner
+	suite.Error(yaml.Unmarshal([]byte("isLocal: [true]"), &owner))
+}
+
+func (suite *ModelTestSuite) TestAgentOwnerLocality_YAMLWritesABooleanUnlessAReference() {
+	local, err := yaml.Marshal(AgentOwner{ID: "u1", IsLocal: AgentOwnerLocal})
+	suite.Require().NoError(err)
+	suite.Equal("id: u1\nisLocal: true\n", string(local))
+
+	reference, err := yaml.Marshal(AgentOwner{ID: "u1", IsLocal: "var:AGENT__A__IS_LOCAL"})
+	suite.Require().NoError(err)
+	suite.Equal("id: u1\nisLocal: var:AGENT__A__IS_LOCAL\n", string(reference))
+}
+
+func (suite *ModelTestSuite) TestAgentOwner_Local() {
+	suite.True((&AgentOwner{}).Local())
+	suite.True((&AgentOwner{IsLocal: AgentOwnerLocal}).Local())
+	suite.False((&AgentOwner{IsLocal: AgentOwnerExternal}).Local())
+	suite.False((&AgentOwner{IsLocal: "var:AGENT__A__IS_LOCAL"}).Local())
+	suite.Equal(AgentOwnerLocal, AgentOwnerLocalityOf(true))
+	suite.Equal(AgentOwnerExternal, AgentOwnerLocalityOf(false))
 }

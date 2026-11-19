@@ -3,9 +3,9 @@
 
 import {focusManager} from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
+import {CapabilitiesProvider} from '@thunderid/contexts';
 import {renderWithProviders, screen, waitFor, within} from '@thunderid/test-utils';
-import {beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
-import {page} from 'vitest/browser';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {apiError, createHttpRouter, SERVER_URL, type HttpCall} from '../../__tests__/http';
 import GatewaysListPage from '../GatewaysListPage';
 
@@ -41,16 +41,16 @@ const routes = {
   'GET /gateways': gateways,
 };
 
-// The grid renders only the columns that fit, so a desktop width keeps the actions column in the DOM.
-beforeAll(async () => {
-  await page.viewport(1280, 800);
-});
-
 beforeEach(() => {
   mockHttpRequest.mockReset();
   mockNavigate.mockReset();
   mockNavigate.mockResolvedValue(undefined);
 });
+
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
 
 describe('GatewaysListPage', () => {
   it('lists the gateways, marking the default, and nothing about what they run', async () => {
@@ -77,6 +77,20 @@ describe('GatewaysListPage', () => {
 
     await user.click(screen.getAllByRole('button', {name: 'Edit'})[1]);
     expect(mockNavigate).toHaveBeenCalledWith('/gateways/gw-2');
+  });
+
+  it('offers no register, edit or delete when the admin may only view gateways', async () => {
+    mockHttpRequest.mockImplementation(createHttpRouter(routes));
+    renderWithProviders(
+      <CapabilitiesProvider capabilities={viewOnly}>
+        <GatewaysListPage />
+      </CapabilitiesProvider>,
+    );
+
+    expect(await screen.findByText('production')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Register gateway'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Edit'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Delete'})).not.toBeInTheDocument();
   });
 
   it('confirms before removing a gateway', async () => {

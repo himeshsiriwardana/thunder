@@ -17,14 +17,23 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/agent"
 	"github.com/thunder-id/thunderid/internal/agent/model"
+	"github.com/thunder-id/thunderid/internal/entity"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/varname"
 	"github.com/thunder-id/thunderid/tests/mocks/agentmock"
+	"github.com/thunder-id/thunderid/tests/mocks/entitymock"
+	"github.com/thunder-id/thunderid/tests/mocks/sharingmock"
+
+	"gopkg.in/yaml.v3"
 )
 
 type AgentExporterTestSuite struct {
 	suite.Suite
 	mockService *agentmock.AgentServiceInterfaceMock
+	mockEntity  *entitymock.EntityServiceInterfaceMock
+	mockSharing *sharingmock.SharingServiceInterfaceMock
 	exporter    declarativeresource.ResourceExporter
 	logger      *log.Logger
 }
@@ -35,7 +44,9 @@ func TestAgentExporterTestSuite(t *testing.T) {
 
 func (s *AgentExporterTestSuite) SetupTest() {
 	s.mockService = agentmock.NewAgentServiceInterfaceMock(s.T())
-	s.exporter = agent.NewAgentExporterForTest(s.mockService)
+	s.mockEntity = entitymock.NewEntityServiceInterfaceMock(s.T())
+	s.mockSharing = sharingmock.NewSharingServiceInterfaceMock(s.T())
+	s.exporter = agent.NewAgentExporterForTest(s.mockService, s.mockEntity, s.mockSharing)
 	s.logger = log.GetLogger()
 }
 
@@ -124,12 +135,151 @@ func (s *AgentExporterTestSuite) TestGetAllResourceIDs_EmptyList() {
 func (s *AgentExporterTestSuite) TestGetResourceByID_Success() {
 	expected := &model.AgentGetResponse{ID: "agent1", Display: "My Agent"}
 	s.mockService.EXPECT().GetAgent(mock.Anything, "agent1", true).Return(expected, nil)
+	s.mockEntity.EXPECT().GetHeldCredentialTypes(mock.Anything, "agent1").Return(nil, nil)
+	s.mockSharing.EXPECT().ExportPolicies(mock.Anything, sharing.ResourceType("agent"), "agent1").Return(nil, nil)
 
 	resource, name, err := s.exporter.GetResourceByID(context.Background(), "agent1")
 
 	assert.Nil(s.T(), err)
 	assert.Equal(s.T(), "My Agent", name)
 	assert.Equal(s.T(), expected, resource)
+	assert.Nil(s.T(), expected.Credentials, "an agent with no credential set exports none")
+	assert.Nil(s.T(), expected.SharingPolicies, "an agent nobody shared exports no policies")
+}
+
+// An agent's sharing policies go with it, so an export of a declared agent keeps them.
+func (s *AgentExporterTestSuite) TestGetResourceByID_WritesTheSharingPolicies() {
+	s.mockService.EXPECT().GetAgent(mock.Anything, "agent1", true).
+		Return(&model.AgentGetResponse{ID: "agent1", Display: "My Agent"}, nil)
+	s.mockEntity.EXPECT().GetHeldCredentialTypes(mock.Anything, "agent1").Return(nil, nil)
+	request := sharing.PolicyRequest{ID: "agent1-policy-1", OtherTreeRoots: &sharing.OtherTreeRootsRequest{
+		Mode: sharing.OtherTreeRootsSelected, Units: []sharing.RootUnitRequest{{OUID: "ou-2"}}}}
+	s.mockSharing.EXPECT().ExportPolicies(mock.Anything, sharing.ResourceType("agent"), "agent1").
+		Return([]sharing.ReplayablePolicy{{InitiatingOUID: "ou-1", Request: request}}, nil)
+
+	resource, _, err := s.exporter.GetResourceByID(context.Background(), "agent1")
+	s.Require().Nil(err)
+
+	assert.Equal(s.T(), []sharing.PolicyRequest{request}, resource.(*model.AgentGetResponse).SharingPolicies)
+	document, marshalErr := yaml.Marshal(resource)
+	s.Require().NoError(marshalErr)
+	assert.Contains(s.T(), string(document), "sharingPolicies:\n    - id: agent1-policy-1\n")
+}
+
+// An export that cannot read the agent's sharing fails rather than writing the agent without it.
+func (s *AgentExporterTestSuite) TestGetResourceByID_SharingReadFailure() {
+	s.mockService.EXPECT().GetAgent(mock.Anything, "agent1", true).
+		Return(&model.AgentGetResponse{ID: "agent1", Display: "My Agent"}, nil)
+	s.mockEntity.EXPECT().GetHeldCredentialTypes(mock.Anything, "agent1").Return(nil, nil)
+	s.mockSharing.EXPECT().ExportPolicies(mock.Anything, sharing.ResourceType("agent"), "agent1").
+		Return(nil, &tidcommon.InternalServerError)
+
+	resource, name, err := s.exporter.GetResourceByID(context.Background(), "agent1")
+
+	assert.Nil(s.T(), resource)
+	assert.Empty(s.T(), name)
+	s.Require().NotNil(err)
+	assert.Equal(s.T(), tidcommon.InternalServerError.Code, err.Code)
+}
+
+// agentVar is the variable an export names a credential of the agent these tests export: agent1.
+func agentVar(credential string) string {
+	return varname.DeriveVariableName("agent", "agent1", credential)
+}
+
+// Each credential the agent holds is exported as a placeholder named after the agent, never as its
+// stored hash.
+func (s *AgentExporterTestSuite) TestGetResourceByID_ExportsHeldCredentialsAsPlaceholders() {
+	s.mockService.EXPECT().GetAgent(mock.Anything, "agent1", true).
+		Return(&model.AgentGetResponse{ID: "agent1", Display: "My Agent"}, nil)
+	s.mockEntity.EXPECT().GetHeldCredentialTypes(mock.Anything, "agent1").Return([]string{"password"}, nil)
+	s.mockSharing.EXPECT().ExportPolicies(mock.Anything, sharing.ResourceType("agent"), "agent1").Return(nil, nil)
+
+	resource, _, err := s.exporter.GetResourceByID(context.Background(), "agent1")
+
+	assert.Nil(s.T(), err)
+	assert.Equal(s.T(), map[string]interface{}{"password": "{{." + agentVar("password") + "}}"},
+		resource.(*model.AgentGetResponse).Credentials)
+}
+
+// A control plane's export writes each credential as a reference to the secret the gateway holds.
+func (s *AgentExporterTestSuite) TestGetResourceByID_WritesCredentialReferences() {
+	writer, ok := s.exporter.(declarativeresource.ReferenceWriter)
+	s.Require().True(ok, "the exporter writes its credential placeholders itself")
+	writer.WriteValueReferences(true)
+	s.mockService.EXPECT().GetAgent(mock.Anything, "agent1", true).
+		Return(&model.AgentGetResponse{ID: "agent1", Display: "My Agent"}, nil)
+	s.mockEntity.EXPECT().GetHeldCredentialTypes(mock.Anything, "agent1").Return([]string{"password"}, nil)
+	s.mockSharing.EXPECT().ExportPolicies(mock.Anything, sharing.ResourceType("agent"), "agent1").Return(nil, nil)
+
+	resource, _, err := s.exporter.GetResourceByID(context.Background(), "agent1")
+
+	assert.Nil(s.T(), err)
+	assert.Equal(s.T(), map[string]interface{}{"password": "sec:" + agentVar("password")},
+		resource.(*model.AgentGetResponse).Credentials)
+}
+
+func (s *AgentExporterTestSuite) TestGetResourceByID_CredentialReadFailure() {
+	s.mockService.EXPECT().GetAgent(mock.Anything, "agent1", true).
+		Return(&model.AgentGetResponse{ID: "agent1", Display: "My Agent"}, nil)
+	s.mockEntity.EXPECT().GetHeldCredentialTypes(mock.Anything, "agent1").Return(nil, assert.AnError)
+
+	resource, name, err := s.exporter.GetResourceByID(context.Background(), "agent1")
+
+	assert.Nil(s.T(), resource)
+	assert.Empty(s.T(), name)
+	s.Require().NotNil(err)
+	assert.Equal(s.T(), tidcommon.InternalServerError.Code, err.Code)
+}
+
+// An agent whose type is gone fails its export as a client error, as a write of it would.
+func (s *AgentExporterTestSuite) TestGetResourceByID_TypeGoneFailsAsSchemaValidation() {
+	s.mockService.EXPECT().GetAgent(mock.Anything, "agent1", true).
+		Return(&model.AgentGetResponse{ID: "agent1", Display: "My Agent"}, nil)
+	s.mockEntity.EXPECT().GetHeldCredentialTypes(mock.Anything, "agent1").
+		Return(nil, entity.ErrSchemaValidationFailed)
+
+	_, _, err := s.exporter.GetResourceByID(context.Background(), "agent1")
+
+	s.Require().NotNil(err)
+	assert.Equal(s.T(), tidcommon.ClientErrorType, err.Type)
+}
+
+func (s *AgentExporterTestSuite) TestSecretFieldsNameTheCredentials() {
+	lister, ok := s.exporter.(declarativeresource.SecretFieldLister)
+	s.Require().True(ok)
+	assert.ElementsMatch(s.T(), []string{"inboundAuthConfig[].config.clientSecret", "credentials.*"},
+		lister.SecretFields())
+}
+
+// An unbounded lifespan is exported as its sentinel, so importing it onto an agent with a bound
+// removes the bound instead of leaving it in place.
+func (s *AgentExporterTestSuite) TestGetResourceByID_ExportsUnboundedLifespan() {
+	s.mockService.EXPECT().GetAgent(mock.Anything, "agent1", true).Return(&model.AgentGetResponse{
+		ID: "agent1", Lifespan: &model.Lifespan{Phase: model.LifespanPhaseUnbounded},
+	}, nil)
+	s.mockEntity.EXPECT().GetHeldCredentialTypes(mock.Anything, "agent1").Return(nil, nil)
+	s.mockSharing.EXPECT().ExportPolicies(mock.Anything, sharing.ResourceType("agent"), "agent1").Return(nil, nil)
+
+	resource, _, err := s.exporter.GetResourceByID(context.Background(), "agent1")
+
+	assert.Nil(s.T(), err)
+	assert.Equal(s.T(), "9999-12-31T23:59:59Z", resource.(*model.AgentGetResponse).ValidUntil)
+}
+
+// An exported agent keeps its project, so an import places it in the same project.
+func (s *AgentExporterTestSuite) TestGetResourceByID_ExportsProject() {
+	s.mockService.EXPECT().GetAgent(mock.Anything, "agent1", true).Return(
+		&model.AgentGetResponse{ID: "agent1", ProjectID: "project-1"}, nil)
+	s.mockEntity.EXPECT().GetHeldCredentialTypes(mock.Anything, "agent1").Return(nil, nil)
+	s.mockSharing.EXPECT().ExportPolicies(mock.Anything, sharing.ResourceType("agent"), "agent1").Return(nil, nil)
+
+	resource, _, err := s.exporter.GetResourceByID(context.Background(), "agent1")
+	s.Require().Nil(err)
+
+	document, marshalErr := yaml.Marshal(resource)
+	s.Require().NoError(marshalErr)
+	assert.Contains(s.T(), string(document), "projectId: project-1")
 }
 
 func (s *AgentExporterTestSuite) TestGetResourceByID_Error() {
@@ -252,6 +402,37 @@ func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_ConfidentialCli
 	assert.Empty(s.T(), rules.ArrayVariables, "M2M agents have no redirect URIs")
 }
 
+func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_ClientWithoutSecret() {
+	pr, ok := s.exporter.(declarativeresource.PerResourceRuler)
+	assert.True(s.T(), ok, "exporter should implement PerResourceRuler")
+
+	for _, method := range []providers.TokenEndpointAuthMethod{
+		providers.TokenEndpointAuthMethodPrivateKeyJWT,
+		providers.TokenEndpointAuthMethodNone,
+	} {
+		s.Run(string(method), func() {
+			a := &model.AgentGetResponse{
+				ID:      "agent1",
+				Display: "Secretless Agent",
+				InboundAuthConfig: []providers.InboundAuthConfigWithSecret{
+					{
+						OAuthConfig: &providers.OAuthConfigWithSecret{
+							ClientID:                "client-id-1",
+							TokenEndpointAuthMethod: method,
+						},
+					},
+				},
+			}
+
+			rules := pr.GetResourceRulesForResource(a)
+
+			assert.NotNil(s.T(), rules)
+			assert.Contains(s.T(), rules.Variables, "InboundAuthConfig[].OAuthConfig.ClientID")
+			assert.Empty(s.T(), rules.SecretVariables)
+		})
+	}
+}
+
 func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_ConfidentialClientWithRedirectURIs() {
 	pr, ok := s.exporter.(declarativeresource.PerResourceRuler)
 	assert.True(s.T(), ok, "exporter should implement PerResourceRuler")
@@ -276,6 +457,7 @@ func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_ConfidentialCli
 	assert.Contains(s.T(), rules.Variables, "InboundAuthConfig[].OAuthConfig.ClientID")
 	assert.Contains(s.T(), rules.SecretVariables, "InboundAuthConfig[].OAuthConfig.ClientSecret")
 	assert.Contains(s.T(), rules.ArrayVariables, "InboundAuthConfig[].OAuthConfig.RedirectURIs")
+	assert.Equal(s.T(), []string{"Credentials"}, rules.DynamicPropertyFields)
 }
 
 func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_NoInboundAuthConfig() {
@@ -287,6 +469,8 @@ func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_NoInboundAuthCo
 	rules := pr.GetResourceRulesForResource(a)
 
 	assert.NotNil(s.T(), rules)
+	assert.Equal(s.T(), []string{"Credentials"}, rules.DynamicPropertyFields,
+		"a capture names the credentials of an agent without a client as the export does")
 	assert.Contains(s.T(), rules.Variables, "InboundAuthConfig[].OAuthConfig.ClientID")
 	assert.Contains(s.T(), rules.SecretVariables, "InboundAuthConfig[].OAuthConfig.ClientSecret")
 	assert.Empty(s.T(), rules.ArrayVariables)
@@ -312,6 +496,56 @@ func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_NilOAuthConfig(
 	assert.Empty(s.T(), rules.ArrayVariables)
 }
 
+// referencingRuler returns the exporter as a control plane's export uses it, writing references.
+func (s *AgentExporterTestSuite) referencingRuler() declarativeresource.PerResourceRuler {
+	writer, ok := s.exporter.(declarativeresource.ReferenceWriter)
+	s.Require().True(ok)
+	writer.WriteValueReferences(true)
+	pr, ok := s.exporter.(declarativeresource.PerResourceRuler)
+	s.Require().True(ok)
+	return pr
+}
+
+func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_OwnerIsNamedForEachDeployment() {
+	owner := &providers.AgentOwner{ID: "jane@example.com", IDType: providers.AgentOwnerIDTypeEmail,
+		IsLocal: providers.AgentOwnerExternal}
+
+	rules := s.referencingRuler().GetResourceRulesForResource(&model.AgentGetResponse{ID: "agent5", Owner: owner})
+
+	assert.Subset(s.T(), rules.Variables, []string{"Owner.ID", "Owner.IDType", "Owner.IsLocal"})
+}
+
+// A template export is filled in as text, so a free-text owner ID is written as it is.
+func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_TemplateExportKeepsTheOwner() {
+	pr, ok := s.exporter.(declarativeresource.PerResourceRuler)
+	s.Require().True(ok)
+	owner := &providers.AgentOwner{ID: "#team: ops", IDType: providers.AgentOwnerIDTypeUUID,
+		IsLocal: providers.AgentOwnerExternal}
+
+	rules := pr.GetResourceRulesForResource(&model.AgentGetResponse{ID: "agent8", Owner: owner})
+
+	assert.NotContains(s.T(), rules.Variables, "Owner.ID")
+}
+
+func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_NoOwnerNamesNone() {
+	pr := s.referencingRuler()
+
+	rules := pr.GetResourceRulesForResource(&model.AgentGetResponse{ID: "agent6"})
+
+	assert.NotContains(s.T(), rules.Variables, "Owner.ID")
+}
+
+func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_PersonalAgentKeepsItsOwner() {
+	pr := s.referencingRuler()
+	owner := &providers.AgentOwner{ID: "user-1", IDType: providers.AgentOwnerIDTypeUUID,
+		IsLocal: providers.AgentOwnerLocal}
+
+	rules := pr.GetResourceRulesForResource(&model.AgentGetResponse{ID: "agent7", Owner: owner,
+		Kind: providers.AgentKindPersonalAssistant})
+
+	assert.NotContains(s.T(), rules.Variables, "Owner.ID")
+}
+
 func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_NonAgentType() {
 	pr, ok := s.exporter.(declarativeresource.PerResourceRuler)
 	assert.True(s.T(), ok, "exporter should implement PerResourceRuler")
@@ -322,4 +556,5 @@ func (s *AgentExporterTestSuite) TestGetResourceRulesForResource_NonAgentType() 
 	assert.Contains(s.T(), rules.Variables, "InboundAuthConfig[].OAuthConfig.ClientID")
 	assert.Contains(s.T(), rules.SecretVariables, "InboundAuthConfig[].OAuthConfig.ClientSecret")
 	assert.Contains(s.T(), rules.ArrayVariables, "InboundAuthConfig[].OAuthConfig.RedirectURIs")
+	assert.Equal(s.T(), []string{"Credentials"}, rules.DynamicPropertyFields)
 }

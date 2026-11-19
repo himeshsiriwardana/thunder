@@ -78,6 +78,8 @@ log:
 
 If `log.level` is omitted, <ProductName /> defaults to `info`. An unrecognized value causes the server to exit at startup.
 
+On Kubernetes, set the logging properties under `configuration.log` in your Helm values rather than editing `deployment.yaml`. See [Logging](../deployment-paths/kubernetes#logging).
+
 ### Log Output
 
 By default <ProductName /> writes logs to the console (stdout) only. You can additionally, or instead, write them to a file. Console and file are independent outputs: enable either, both, or neither (with neither enabled, <ProductName /> falls back to the console so logs are never silently lost).
@@ -88,7 +90,7 @@ By default <ProductName /> writes logs to the console (stdout) only. You can add
 | `log.output.file.enabled` | `false` | Write logs to a file |
 | `log.output.file.path` | `logs` | Directory for the log file. A relative path resolves under the <ProductName /> home directory; an absolute path is used as-is |
 | `log.output.file.file_name` | `thunderid.log` | Name of the active log file |
-| `log.output.file.format` | `text` | Log line format: `text` or `json` |
+| `log.output.file.format` | `text` | Log line format: `text` or `json`. Despite its position under `file`, this setting applies to console output as well, so set it to `json` to emit JSON to stdout without enabling file output |
 | `log.output.file.rotation.size.enabled` | `false` | Roll the file over once it reaches `max_size_mb` |
 | `log.output.file.rotation.size.max_size_mb` | `10` | Size (in MB, fractional values allowed, e.g. `0.5`) at which the file is rotated |
 | `log.output.file.rotation.time.enabled` | `false` | Roll the file over on a time schedule |
@@ -185,7 +187,7 @@ Stores identity provider configurations, applications, and authentication flows.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `database.config.sqlite.path` | `database/configdb.db` | SQLite database file path |
-| `database.config.sqlite.options` | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` | SQLite connection options |
+| `database.config.sqlite.options` | `_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)` | SQLite connection options |
 | `database.config.sqlite.max_open_conns` | `500` | Maximum number of open connections |
 | `database.config.sqlite.max_idle_conns` | `100` | Maximum number of idle connections |
 | `database.config.sqlite.conn_max_lifetime` | `3600` | Maximum connection lifetime in seconds |
@@ -223,7 +225,7 @@ Stores short-lived runtime data such as authorization codes, authorization reque
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `database.runtime_transient.sqlite.path` | `database/runtime_transient.db` | SQLite database file path |
-| `database.runtime_transient.sqlite.options` | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` | SQLite connection options |
+| `database.runtime_transient.sqlite.options` | `_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)` | SQLite connection options |
 | `database.runtime_transient.sqlite.max_open_conns` | `500` | Maximum number of open connections |
 | `database.runtime_transient.sqlite.max_idle_conns` | `100` | Maximum number of idle connections |
 | `database.runtime_transient.sqlite.conn_max_lifetime` | `3600` | Maximum connection lifetime in seconds |
@@ -295,7 +297,7 @@ Stores user profiles and credentials.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `database.entity.sqlite.path` | `database/entitydb.db` | SQLite database file path |
-| `database.entity.sqlite.options` | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` | SQLite connection options |
+| `database.entity.sqlite.options` | `_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)` | SQLite connection options |
 | `database.entity.sqlite.max_open_conns` | `500` | Maximum number of open connections |
 | `database.entity.sqlite.max_idle_conns` | `100` | Maximum number of idle connections |
 | `database.entity.sqlite.conn_max_lifetime` | `3600` | Maximum connection lifetime in seconds |
@@ -333,7 +335,7 @@ Stores SSO sessions, revoked tokens, and consent records. This database is requi
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `database.runtime_persistent.sqlite.path` | `database/runtime_persistent.db` | SQLite database file path |
-| `database.runtime_persistent.sqlite.options` | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` | SQLite connection options |
+| `database.runtime_persistent.sqlite.options` | `_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)` | SQLite connection options |
 | `database.runtime_persistent.sqlite.max_open_conns` | `500` | Maximum number of open connections |
 | `database.runtime_persistent.sqlite.max_idle_conns` | `100` | Maximum number of idle connections |
 | `database.runtime_persistent.sqlite.conn_max_lifetime` | `3600` | Maximum connection lifetime in seconds |
@@ -452,16 +454,23 @@ OAuth 2.0 and OpenID Connect settings.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `oauth.refresh_token.renew_on_grant` | `false` | If `true`, issues a new refresh token on each access token grant |
+| `oauth.refresh_token.renew_on_grant` | `true` | If `true`, issues a new refresh token on each access token grant. Set to `false` to reuse the existing refresh token until it expires |
 | `oauth.refresh_token.revoke_previous_on_renew` | `true` | If `true`, revokes the consumed refresh token after a successful renewal. Applies when `renew_on_grant` is enabled |
 | `oauth.refresh_token.validity_period` | `86400` | Refresh token validity period in seconds (24 hours) |
+| `oauth.token_revocation.enabled` | `true` | If `true`, enables token revocation on the authorization server: the RFC 7009 endpoint (`/oauth2/revoke`), the implicit revocation triggers, and the check that rejects revoked tokens during introspection, the refresh grant, and token exchange. Setting it to `false` turns off all of them, not only the endpoint. See [Token Revocation](../../guides/protocols/oauth-oidc/token-revocation) |
+| `oauth.revocation.token_family.on_explicit_revoke` | `true` | If `true`, revoking a token through `/oauth2/revoke` also revokes every other token of the same authorization grant |
+| `oauth.revocation.token_family.on_refresh_replay` | `true` | If `true`, presenting a refresh token that has already been rotated out revokes every token of that grant. Requires `oauth.refresh_token.renew_on_grant`, since a refresh token can only be replayed once it has been rotated |
+| `oauth.revocation.token_family.on_code_replay` | `true` | If `true`, redeeming an authorization code a second time revokes every token issued from that code |
+| `oauth.token_exchange.token_family` | `none` | Whether an exchanged token joins the subject token's authorization grant. `none` issues an independent token; `inherit` copies the subject token's token family, so revoking the grant also revokes the exchanged token |
 | `oauth.authorization_code.validity_period` | `600` | Authorization code validity period in seconds (10 minutes) |
+| `oauth.authorization_request.validity_period` | `3600` | How long the authorization request context stays valid while the user completes the login flow, in seconds (60 minutes). A non-positive value falls back to the default |
 | `oauth.dcr.enabled` | `true` | If `true`, enables the Dynamic Client Registration endpoint |
 | `oauth.dcr.insecure` | `false` | If `true`, allows insecure dynamic client registration (development only) |
 | `oauth.allowed_auth_methods` | `["client_secret_basic", "client_secret_post", "private_key_jwt", "none"]` | Client token endpoint authentication methods allowed during client registration |
 | `oauth.allowed_response_types` | `["code"]` | OAuth response types allowed during client registration |
 | `oauth.allowed_grant_types` | `["client_credentials", "authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:token-exchange", "urn:openid:params:grant-type:ciba", "urn:ietf:params:oauth:grant-type:jwt-bearer"]` | OAuth grant types allowed during client registration |
 | `oauth.allow_wildcard_redirect_uri` | `false` | If `true`, allows wildcard patterns in registered redirect URIs: `*` and `**` in the path component, and `*` in the host component (label-internal, alphanumeric only). When `false`, only exact redirect URI matching is performed and registering a wildcard URI returns a `400 Bad Request` error. |
+| `oauth.send_server_errors_to_client` | `false` | If `true`, an authentication flow failure that maps to the OAuth `server_error` code is reported to the client, as RFC 6749 section 4.1.2.1 requires. If `false`, the authorization code flow shows the error page instead of redirecting to the client, and CIBA leaves the request pending so the polling client times out. Denials (`access_denied`) are always reported to the client and are not affected by this setting. |
 
 :::note
 Enabling `oauth.allow_wildcard_redirect_uri` affects all applications in the deployment. See [Use Wildcard Redirect URIs](../../guides/applications/application-settings#use-wildcard-redirect-uris) for pattern syntax and matching rules.
@@ -840,6 +849,8 @@ email:
 
 For the full property reference and provider-specific examples, see [Configure SMTP Server](../../guides/smtp-server/smtp-server-configuration).
 
+On Kubernetes, set these properties under `configuration.email.smtp` in your Helm values rather than editing `deployment.yaml`. The chart also sources the SMTP password from a Kubernetes Secret. See [Email](../deployment-paths/kubernetes#email).
+
 ## Notification Configuration
 
 Controls notification delivery behaviour, including OTP generation parameters.
@@ -1035,7 +1046,9 @@ Each flow type has two fields:
 | `<type>.defaultHandle` | Handle of the flow to use when the application and the organization unit do not pin a specific flow. Empty string means no server default, and the flow type is treated as not configured at the server level. |
 | `<type>.expirySeconds` | How long (in seconds) a started flow context remains valid before it expires. Must be a positive integer. |
 
-Supported flow types are `authFlow`, `registrationFlow`, `userOnboardingFlow`, `recoveryFlow`, and `signOutFlow`.
+Supported flow types are `authFlow`, `registrationFlow`, `userOnboardingFlow`, `recoveryFlow`, `signOutFlow`, and `userDeletionFlow`.
+
+`userDeletionFlow` is resolved differently from the others: it names an administration flow that runs when a user is deleted from the Console, rather than a flow an inbound request starts. Its shipped default revokes the user's tokens and terminates their sessions before the record is removed. Deleting a user through the `DELETE /users/{id}` API removes the record only and does not run this flow. See [Token Revocation](../../guides/protocols/oauth-oidc/token-revocation#user-deletion).
 
 **Resolution order:** When an inbound request starts a flow, the effective flow is resolved as follows:
 
@@ -1053,7 +1066,7 @@ Configure flow defaults in either of these ways:
   value:
     authFlow:
       defaultHandle: default-flow
-      expirySeconds: 1800
+      expirySeconds: 3600
     registrationFlow:
       expirySeconds: 3600
     recoveryFlow:
@@ -1067,7 +1080,7 @@ Configure flow defaults in either of these ways:
   Content-Type: application/json
 
   {
-    "authFlow": { "defaultHandle": "default-flow", "expirySeconds": 1800 },
+    "authFlow": { "defaultHandle": "default-flow", "expirySeconds": 3600 },
     "registrationFlow": { "expirySeconds": 3600 }
   }
   ```
@@ -1100,6 +1113,9 @@ Controls server-wide security behavior that is not specific to any single authen
 | `server.security.jwks_cache_ttl` | `300` | JWKS cache TTL in seconds. Applies to every JWKS consumer in the server (trusted issuer validation, federated OIDC authenticators such as Google, and so on). Fetched signing keys are reused from the in-process cache for this duration before being re-fetched. Plan external-server key rotations with at least this much overlap. Set to `0` to disable caching |
 | `server.security.system_permission_prefix` | `""` (empty) | Prefix for system permission strings used in API authorization. When empty, permissions use their base names (for example, `system`). When set, the prefix is prepended to every system permission (for example, `mgmt:system`). If you set a prefix, update the Console scopes to match. Changes require a server restart |
 | `server.security.direct_auth_secret` | `""` (empty) | Secret that gates the Direct API authentication endpoints (`/auth/**` and `/register/passkey/**`) and protected AuthZEN access endpoints (`/access/**`). AuthZEN discovery (`/.well-known/authzen-configuration`) remains public. The protected endpoints are **secure by default**. While this is empty they are blocked with `401`. When set, callers must send the value in the `Direct-Auth-Secret` header; a missing or incorrect value is rejected with `401`. See [Integration Models](../../key-concepts/authentication/integration-models#direct-api) |
+| `server.security.token_revocation.enabled` | `true` | If `true`, revoked tokens are rejected on requests to protected APIs. See [Token Revocation](../../guides/protocols/oauth-oidc/token-revocation) |
+| `server.security.token_revocation.source` | `db` | Where the revocation snapshot is read from. `db` is the only supported value; any other value fails startup validation |
+| `server.security.token_revocation.sync_interval_seconds` | `60` | How often the in-memory revocation snapshot refreshes, in seconds. This sets the normal propagation delay before a revoked token stops being accepted on protected API requests. Token introspection is unaffected and always reads current state |
 
 :::tip
 If you set a custom `system_permission_prefix`, update the Console scopes to match the new permission strings and restart the server.

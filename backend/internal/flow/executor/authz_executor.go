@@ -101,13 +101,16 @@ func (a *authorizationExecutor) Execute(ctx *providers.NodeContext) (*providers.
 		return execResp, nil
 	}
 
-	// Resolve the single resource server the permission scopes are evaluated against: the OAuth layer
-	// seeds it in runtime data; a direct /flow/execute request (which does not go through the
-	// authorization endpoint) may supply it as an input; otherwise fall back to the configured default
-	// resource server. Permission evaluation must be scoped to a resource server, so when none can be
-	// resolved the requested permission scopes are dropped rather than evaluated unscoped (which could
-	// authorize a permission the user only holds on a different resource server).
-	resourceServerID := a.resolveResourceServerID(ctx)
+	// Bind permission checks to the request's resource server.
+	// An unresolved binding produces no permission grant.
+	resourceServer := a.resolveResourceServer(ctx)
+
+	resourceServerID := ""
+	execResp.RuntimeData[common.RuntimeKeyResourceServerID] = ""
+	if resourceServer != nil {
+		resourceServerID = resourceServer.ID
+		execResp.RuntimeData[common.RuntimeKeyResourceServerID] = resourceServer.ID
+	}
 	if resourceServerID == "" {
 		logger.Debug(ctx.Context,
 			"No resource server bound to the request; dropping requested permission scopes",
@@ -164,7 +167,8 @@ func (a *authorizationExecutor) Execute(ctx *providers.NodeContext) (*providers.
 			providers.AccessEvaluationContextAuthorizationDetails: json.RawMessage(encoded)}
 	}
 	evaluationsRequest := a.buildAccessEvaluationsRequest(
-		userID, entityCategory, groupIDs, mappedRoleIDs, requestedPerms, resourceServerID, evaluationContext)
+		userID, entityCategory, groupIDs, mappedRoleIDs, requestedPerms, resourceServerID,
+		ctx.RuntimeData[ouIDKey], evaluationContext)
 	authzResp, svcErr := a.authzService.EvaluateAccessBatch(ctx.Context, evaluationsRequest)
 	if svcErr != nil {
 		logger.Error(ctx.Context, "Authorization service call failed",
@@ -185,33 +189,34 @@ func (a *authorizationExecutor) Execute(ctx *providers.NodeContext) (*providers.
 	return execResp, nil
 }
 
-// resolveResourceServerID determines the internal ID of the single resource server that permission
-// scopes are evaluated against. The binding is communicated as a resource server identifier: the OAuth
-// layer seeds it in runtime data, and a direct /flow/execute request (which does not go through the
-// authorization endpoint) may supply it as an input.
-func (a *authorizationExecutor) resolveResourceServerID(ctx *providers.NodeContext) string {
-	identifier := ctx.RuntimeData[common.RuntimeKeyResourceServerIdentifier]
+// resolveResourceServer returns the resource server the permission scopes are evaluated against, or
+// nil when none can be resolved.
+func (a *authorizationExecutor) resolveResourceServer(
+	ctx *providers.NodeContext,
+) *providers.ResourceServer {
+	identifier := common.RuntimeDataOrShared(ctx.RuntimeData, ctx.SharedRuntimeData,
+		common.RuntimeKeyResourceServerIdentifier)
 	if identifier == "" {
 		identifier = ctx.UserInputs[common.RuntimeKeyResourceServerIdentifier]
 	}
 	if a.resourceService == nil {
 		a.logger.Debug(ctx.Context,
 			"No resource server service available; dropping requested permission scopes")
-		return ""
+		return nil
 	}
 	rs, svcErr := a.resourceService.GetResourceServerByIdentifier(ctx.Context, identifier)
 	if svcErr != nil {
 		a.logger.Debug(ctx.Context,
 			"Resource server did not resolve; dropping requested permission scopes",
 			log.String("identifier", identifier))
-		return ""
+		return nil
 	}
-	return rs.ID
+	return rs
 }
 
 // extractRequestedPermissions extracts requested permissions from the context.
 func extractRequestedPermissions(ctx *providers.NodeContext) []string {
-	requestedPermissions := ctx.RuntimeData[requestedPermissionsKey]
+	requestedPermissions := common.RuntimeDataOrShared(ctx.RuntimeData, ctx.SharedRuntimeData, requestedPermissionsKey)
 	if requestedPermissions != "" {
 		return utils.ParseStringArray(requestedPermissions, " ")
 	}
@@ -224,7 +229,8 @@ func setAuthorizedPermissions(execResp *providers.ExecutorResponse, authorizedPe
 	execResp.RuntimeData[authorizedPermissionsKey] = utils.StringifyStringArray(authorizedPermissions, " ")
 }
 
-// buildAccessEvaluationsRequest builds the authorization service request for the requested permissions.
+// buildAccessEvaluationsRequest builds the authorization service request for the requested permissions. A
+// decided organization unit limits the evaluation to the role assignments made in it.
 func (a *authorizationExecutor) buildAccessEvaluationsRequest(
 	entityID string,
 	entityCategory string,
@@ -232,6 +238,7 @@ func (a *authorizationExecutor) buildAccessEvaluationsRequest(
 	roleIDs []string,
 	requestedPermissions []string,
 	resourceServerID string,
+	ouID string,
 	context map[string]interface{},
 ) providers.AccessEvaluationsRequest {
 	evaluations := make([]providers.AccessEvaluationRequest, 0, len(requestedPermissions))
@@ -245,6 +252,7 @@ func (a *authorizationExecutor) buildAccessEvaluationsRequest(
 			},
 			ResourceServer: providers.AccessEvaluationResourceServer{ID: resourceServerID},
 			Permission:     providers.Permission{Name: permission},
+			OUID:           ouID,
 			Context:        maps.Clone(context),
 		})
 	}
@@ -266,15 +274,32 @@ func extractMappedPermissions(ctx *providers.NodeContext, logger *log.Logger) []
 	return permissions
 }
 
-// filterAuthorizedPermissions returns the requested permissions that were allowed by the authorization service.
+// filterAuthorizedPermissions returns approved requests and held alternatives for denied parents.
+// Alternatives do not grant the denied parent.
 func (a *authorizationExecutor) filterAuthorizedPermissions(
 	requestedPermissions []string,
 	evaluations []providers.AccessEvaluationResponse,
 ) []string {
 	authorizedPermissions := make([]string, 0, len(evaluations))
+	seen := make(map[string]bool, len(evaluations))
+	appendPermission := func(permission string) {
+		if permission == "" || seen[permission] {
+			return
+		}
+		seen[permission] = true
+		authorizedPermissions = append(authorizedPermissions, permission)
+	}
+
 	for i, evaluation := range evaluations {
-		if evaluation.Decision && i < len(requestedPermissions) {
-			authorizedPermissions = append(authorizedPermissions, requestedPermissions[i])
+		if i >= len(requestedPermissions) {
+			continue
+		}
+		if evaluation.Decision {
+			appendPermission(requestedPermissions[i])
+			continue
+		}
+		for _, substituted := range evaluation.GrantedInstead {
+			appendPermission(substituted)
 		}
 	}
 	return authorizedPermissions
@@ -297,7 +322,7 @@ func (a *authorizationExecutor) extractGroupIDs(ctx *providers.NodeContext, user
 			"Groups not found in context, fetching transitive groups from entity provider",
 			log.MaskedString(log.LoggerKeyUserID, userID))
 
-		groups, err := a.entityProvider.GetTransitiveEntityGroups(userID)
+		groups, err := a.entityProvider.GetTransitiveEntityGroups(ctx.Context, userID)
 		if err != nil {
 			return nil, err
 		}
@@ -322,10 +347,10 @@ func (a *authorizationExecutor) expandMappedGroupAncestors(
 	}
 	expanded := mappedGroupIDs
 	for _, groupID := range mappedGroupIDs {
-		ancestors, err := a.entityProvider.GetTransitiveGroupAncestors(groupID)
+		ancestors, err := a.entityProvider.GetTransitiveGroupAncestors(ctx.Context, groupID)
 		if err != nil {
 			a.logger.Warn(ctx.Context, "Failed to resolve ancestors of a mapped group, continuing without them",
-				log.String("groupId", groupID), log.Error(err))
+				log.String("groupID", groupID), log.Error(err))
 			continue
 		}
 		expanded = utils.MergeUniqueStrings(expanded, ancestors)

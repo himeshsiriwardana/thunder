@@ -4,7 +4,7 @@ This model covers OpenID Connect Back-Channel Logout 1.0 in ThunderID: the `sid`
 
 ## Overview
 
-Back-channel logout turns a session termination at ThunderID into a server-to-server notification at every application that joined the session. Three mechanisms make it up. The SSO session's `SESSION_ID` is published as the `sid` claim so a relying party can name the session that ended. A listener registered through the session service's termination hook is called after the terminating transaction commits, carrying the session id, the subject id, and the participant list. A bounded in-process queue and worker pool then mint one logout token per participant that registered a `backchannel_logout_uri`, POST it, and record the outcome.
+Back-channel logout turns a session termination at ThunderID into a server-to-server notification at every application that joined the session. Three mechanisms make it up. The SSO session's `SESSION_ID` is published as the `sid` claim so a relying party can name the session that ended. A listener registered through the session service's termination hook is called after the terminating transaction commits, carrying the session id, the subject id, and the participant list. A bounded in-process queue and worker pool then mint one logout token per participating application that registered a `backchannel_logout_uri`, POST it, and record the outcome. An application signed in under several organization units has a participant row for each, and is still notified once.
 
 The security-relevant shift is direction. The OAuth surface a relying party touches today is inbound: a client calls, the server answers. This one is outbound. ThunderID dials a host named in a client's own registration, from inside the deployment's network, on a schedule an end user triggers. That single fact drives most of what follows: the address policy for the registered URI, the refusal to follow redirects, the bounds on concurrency and retry, and the residual risks at the end of this document.
 
@@ -53,7 +53,7 @@ flowchart LR
     MINT[logout token builder<br/>token service]
     DEL[delivery client<br/>timeout, no redirects, retry]
     CFG[(OAUTH_INBOUND_PROFILE)]
-    SESS[(SSO_SESSION<br/>SSO_SESSION_PARTICIPANT)]
+    SESS[(SESSION<br/>SESSION_PARTICIPANT)]
     OBS[observability bus and logs]
   end
   ADMIN -->|HTTPS: register backchannel_logout_uri| CFG
@@ -120,7 +120,7 @@ The trust boundary sits at the deployment edge. Everything inside it is ThunderI
 | System JOSE layer | `jwtService.GenerateJWT` for signing and `jweService.Encrypt` for encryption, including key selection and rotation. Owned by the JWT and key management area |
 | `syshttp` HTTP client | `NewHTTPClientWithoutRedirects`: transport, TLS minimum version from server configuration, the caller's timeout, and a redirect policy that returns 3xx instead of following it. While `reject_private_addresses` is on, which is the default, delivery dials through the package's SSRF-safe dialer; `IsPrivateHost` shares its range list with that dialer for the registration check |
 | Observability bus | Delivery of `BACKCHANNEL_LOGOUT_DELIVERED` and `BACKCHANNEL_LOGOUT_FAILED` events to whatever sink the operator configured. Retention and access control are the operator's |
-| Runtime persistent database | `SSO_SESSION_PARTICIPANT` is the notification set and `OAUTH_INBOUND_PROFILE` holds the registered URI. Both are reused without schema change |
+| Runtime persistent database | `SESSION_PARTICIPANT` is the notification set and `OAUTH_INBOUND_PROFILE` holds the registered URI. Both are reused without schema change |
 
 ## Threats and mitigations
 
@@ -244,7 +244,7 @@ sequenceDiagram
 
 | Initiator | Intermediate | Target |
 | --- | --- | --- |
-| Sign-out flow or administration flow | `session.Service`, `SSO_SESSION_PARTICIPANT` | `TerminationListener` and the dispatch queue |
+| Sign-out flow or administration flow | `session.Service`, `SESSION_PARTICIPANT` | `TerminationListener` and the dispatch queue |
 
 **Data flow**
 
@@ -533,3 +533,4 @@ The feature processes one personal identifier, the subject id, and one identifie
 |---|---|---|
 | 0.1 | 2026-09-16 | Initial threat model, from design discussion #5258 version 0.3. |
 | 0.2 | 2026-10-26 | Delivery classifies a 2xx other than 200 and 204 as rejected, as reviewed in #5777. |
+| 0.3 | 2026-10-31 | One logout token per participating application, now that participants are recorded per organization unit. |

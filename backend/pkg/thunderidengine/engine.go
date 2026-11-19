@@ -26,6 +26,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/flow/interceptor"
 	"github.com/thunder-id/thunderid/internal/oauth"
 	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/deviceauth"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/jti"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/revocation"
@@ -34,6 +35,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/cache"
 	systemconfig "github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/cors"
+	"github.com/thunder-id/thunderid/internal/system/eventbus"
 	"github.com/thunder-id/thunderid/internal/system/jose"
 	joseconfig "github.com/thunder-id/thunderid/internal/system/jose/config"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
@@ -102,7 +104,7 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 	}
 
 	if engineCtx.runtimeCryptoSvc == nil {
-		logger.Debug(ctx, "runtimeCryptoSvc is not set, Starting to Initialize ThunderID defaultkm")
+		logger.Debug(ctx, "runtimeCryptoSvc is not set, Starting to Initialize the default key manager")
 		// Load the server's private key for signing JWTs.
 		pkiService, err := pki.Initialize()
 		if err != nil {
@@ -133,15 +135,19 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 		engineCtx.runtimeCryptoSvc, systemconfig.GetServerRuntime().Config.AttributeCache.Encryption.Enabled)
 	engineCtx.authAssertGen = assert.Initialize()
 
+	// The engine subscribes nothing to its event bus, so the audit events of its services are dropped
+	// unwritten, no worker starts and the bus needs no stopping.
+	auditBus, _, _ := eventbus.Initialize()
+
 	authnProviderManager, err := authnprovidermgr.Initialize(
-		engineCtx.defaultAuthnProvider, engineCtx.customAuthnProviders)
+		engineCtx.defaultAuthnProvider, engineCtx.customAuthnProviders, auditBus)
 	if err != nil {
 		logger.Fatal(ctx, "Failed to initialize authn provider manager", log.Error(err))
 	}
 
 	// Initialize flow metadata service
 	_ = flowmeta.Initialize(mux, engineCtx.actorProvider, engineCtx.ouProvider,
-		engineCtx.designResolveProvider, engineCtx.i18nProvider)
+		engineCtx.designResolveProvider, engineCtx.i18nProvider, nil)
 
 	// Initialize flow core services.
 	flowConfig := flowconfig.Config{
@@ -159,12 +165,13 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 	if engineCtx.identityGovernance == nil {
 		logger.Debug(ctx, "No identity governance provider is set, so account suspensions and locks are not enforced")
 	}
+	oauthSettings := engineCtx.oauthConfig
 	oauthConfig := oauthconfig.Config{
 		DeploymentID:               engineCtx.serverConfig.Identifier,
 		RuntimeTransientDBType:     engineCtx.runtimeTransientDBType,
 		BaseURL:                    engineconfig.GetServerURL(&engineCtx.serverConfig),
 		JWT:                        engineCtx.jwtConfig,
-		OAuth:                      engineCtx.oauthConfig,
+		OAuth:                      oauthSettings,
 		GateClient:                 engineCtx.gateClientConfig,
 		EnableOUQualifiedEndpoints: engineCtx.serverConfig.EnableOUQualifiedEndpoints,
 	}
@@ -182,20 +189,22 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 			engineCtx.oauthConfig.AuthorizationDetails.ProcessorTimeoutOrDefault())
 	}
 	execDeps := executor.ExecutorDependencies{
-		FlowFactory:        engineCtx.flowFactory,
-		AttributeCacheSvc:  engineCtx.attributeCacheService,
-		AuthZService:       engineCtx.authzProvider,
-		ConsentEnforcer:    engineCtx.consentProvider,
-		AuthnProvider:      authnProviderManager,
-		OUService:          engineCtx.ouProvider,
-		IDPService:         engineCtx.idpProvider,
-		JWTService:         engineCtx.jwtService,
-		AuthAssertGen:      engineCtx.authAssertGen,
-		ResourceService:    engineCtx.resourceProvider,
-		UserMgtProvider:    engineCtx.userMgtProvider,
-		AgentMgtProvider:   engineCtx.agentMgtProvider,
-		ObservabilitySvc:   engineCtx.observabilitySvc,
-		IdentityGovernance: engineCtx.identityGovernance,
+		FlowFactory:           engineCtx.flowFactory,
+		AttributeCacheSvc:     engineCtx.attributeCacheService,
+		AuthZService:          engineCtx.authzProvider,
+		ConsentEnforcer:       engineCtx.consentProvider,
+		AuthnProvider:         authnProviderManager,
+		OUService:             engineCtx.ouProvider,
+		IDPService:            engineCtx.idpProvider,
+		JWTService:            engineCtx.jwtService,
+		AuthAssertGen:         engineCtx.authAssertGen,
+		ResourceService:       engineCtx.resourceProvider,
+		UserMgtProvider:       engineCtx.userMgtProvider,
+		AgentMgtProvider:      engineCtx.agentMgtProvider,
+		ObservabilitySvc:      engineCtx.observabilitySvc,
+		IdentityGovernance:    engineCtx.identityGovernance,
+		AttributeVerification: engineCtx.attributeVerification,
+		DeviceCodeVerifier:    deviceauth.NewUserCodeVerifier(engineCtx.runtimeStoreProvider),
 		ArtifactLifetime: func(client *providers.OAuthClient) time.Duration {
 			return tokenservice.ArtifactLifetime(oauthConfig, client)
 		},
@@ -227,11 +236,11 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 	engineCtx.graphBuilder = graphbuilder.Initialize(engineCtx.flowFactory, engineCtx.execRegistry,
 		engineCtx.interceptorRegistry, graphCache)
 
-	engineCtx.flowExecService, err = flowexec.Initialize(mux, engineCtx.flowProvider, engineCtx.actorProvider,
-		engineCtx.execRegistry, engineCtx.interceptorRegistry, engineCtx.observabilitySvc,
+	engineCtx.flowExecService, err = flowexec.Initialize(mux, nil, engineCtx.flowProvider, engineCtx.actorProvider,
+		engineCtx.ouProvider, engineCtx.execRegistry, engineCtx.interceptorRegistry, engineCtx.observabilitySvc,
 		engineCtx.runtimeCryptoSvc, engineCtx.attestationProvider, engineCtx.graphBuilder,
 		engineCtx.jwtService, engineCtx.runtimeStoreProvider, engineCtx.transactioner, nil, nil,
-		engineCtx.identityGovernance, nil, flowConfig)
+		engineCtx.identityGovernance, nil, nil, engineCtx.permissionProvider, flowConfig)
 	if err != nil {
 		logger.Fatal(ctx, "Failed to initialize flow execution service", log.Error(err))
 	}
@@ -267,7 +276,7 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 		// The embedded engine has no SSO session store or SSO handle transport, so prompt=none keeps
 		// answering login_required rather than consulting a session.
 		nil, nil, engineCtx.flowProvider, engineCtx.identityGovernance, engineCtx.authzDetailProvider,
-		engineCtx.authorizationDetailTypes, oauthConfig)
+		engineCtx.authorizationDetailTypes, oauthConfig, auditBus)
 	if err != nil {
 		logger.Fatal(ctx, "Failed to initialize OAuth services", log.Error(err))
 	}
@@ -364,7 +373,7 @@ func buildOriginReader(cfg engineconfig.OriginConfig) (cors.ServerConfigReader, 
 	if err != nil {
 		return nil, fmt.Errorf("thunderidengine: invalid origin configuration: %w", err)
 	}
-	if err := (cors.OriginHandler{}).Validate(decoded, nil, nil); err != nil {
+	if err := (cors.OriginHandler{}).Validate(context.Background(), decoded, nil, nil); err != nil {
 		return nil, fmt.Errorf("thunderidengine: invalid origin configuration: %w", err)
 	}
 	return staticOriginReader{config: decoded.(cors.OriginConfig)}, nil
@@ -435,6 +444,8 @@ type engineContext struct {
 	attestationProvider       providers.AttestationProvider
 	captchaValidationProvider providers.CaptchaValidationProvider
 	identityGovernance        providers.IdentityGovernanceProvider
+	attributeVerification     providers.AttributeVerificationProvider
+	permissionProvider        providers.PermissionProvider
 
 	transactioner        providers.Transactioner
 	runtimeStoreProvider providers.RuntimeStoreProvider
@@ -565,6 +576,18 @@ func WithDesignResolveProvider(provider providers.DesignProvider) Option {
 // WithFlowProvider supplies the flow provider.
 func WithFlowProvider(provider providers.FlowProvider) Option {
 	return func(c *engineContext) { c.flowProvider = provider }
+}
+
+// WithAttributeVerificationProvider supplies the attribute verification provider. Without it, a flow
+// node that verifies a contact attribute fails.
+func WithAttributeVerificationProvider(provider providers.AttributeVerificationProvider) Option {
+	return func(c *engineContext) { c.attributeVerification = provider }
+}
+
+// WithPermissionProvider supplies the permission provider. Without it, a flow step that continues
+// without a token, as the caller who started the flow, is refused.
+func WithPermissionProvider(provider providers.PermissionProvider) Option {
+	return func(c *engineContext) { c.permissionProvider = provider }
 }
 
 // WithI18nProvider supplies the i18n provider.

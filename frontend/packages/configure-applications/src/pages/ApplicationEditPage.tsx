@@ -8,10 +8,12 @@ import {
   PageLoadingAnimation,
   QueryErrorNotice,
   ResourceAvatar,
+  ResourceDeployStatus,
   UnsavedChangesBar,
 } from '@thunderid/components';
+import {FlowType, useGetFlows} from '@thunderid/configure-flows';
 import {useOrganizationAccess} from '@thunderid/configure-resource-sharing';
-import {useConfig} from '@thunderid/contexts';
+import {useCapabilitiesContext, useConfig, useHiddenResources, useProjectScope} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger/react';
 import {isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
@@ -62,7 +64,7 @@ import getTemplateFieldConstraints from '../utils/getTemplateFieldConstraints';
 import getTemplateMetadata from '../utils/getTemplateMetadata';
 import isSystemConsoleClient from '../utils/isSystemConsoleClient';
 import isValidRedirectUriFormat from '../utils/isValidRedirectUriFormat';
-import {hasClientAccess, hasUserAccess} from '../utils/oauth2Rules';
+import {hasUserAccess} from '../utils/oauth2Rules';
 import validateBackchannelLogoutUri from '../utils/validateBackchannelLogoutUri';
 
 interface TabConfig {
@@ -104,29 +106,32 @@ export default function ApplicationEditPage() {
   const logger = useLogger('ApplicationEditPage');
   const {t} = useTranslation();
   const {config} = useConfig();
+  const {can} = useCapabilitiesContext();
   const navigate = useNavigate();
   const location = useLocation();
   const {applicationId} = useParams<{applicationId: string}>();
 
   const {data: application, isLoading, error, refetch} = useGetApplication(applicationId ?? '');
+  const {projectId} = useProjectScope();
+  // Another project's application is not shown in the selected one: a deep link, a stale tab or a
+  // switch of project goes to the selected project's applications instead.
+  const isOtherProject = Boolean(projectId && application && application.projectId !== projectId);
+  // A hidden application is not shown either: a deep link goes to the applications instead.
+  const {isHiddenApplication} = useHiddenResources();
+  const isHidden = isHiddenApplication(
+    application?.inboundAuthConfig?.find((auth) => auth.type === 'oauth2')?.config?.clientId,
+  );
+  useEffect(() => {
+    if (isOtherProject || isHidden) void navigate(routes.applications.list(), {replace: true});
+  }, [isOtherProject, isHidden, navigate, routes]);
   const updateApplication = useUpdateApplication();
   const handleStatusChanged = useCallback((): void => {
     void refetch();
   }, [refetch]);
-  // TODO: Offer Organization Access to every application once sharing an application that signs
-  // users in is supported, by removing this check. Until then a granted unit can only request tokens
-  // through the application, so only applications with the client credentials grant get the tab,
-  // whatever other grants they also have. Read from the saved application, so the tab does not
-  // appear or vanish while grant types are being edited.
-  const offersOrganizationAccess = useMemo(
-    () =>
-      hasClientAccess(application?.inboundAuthConfig?.find((config) => config.type === 'oauth2')?.config.grantTypes),
-    [application],
-  );
   // Held here rather than in its tab, because inactive tabs unmount and the draft must survive them.
   const organizationAccess = useOrganizationAccess({
     resourcePath: `applications/${applicationId}`,
-    enabled: Boolean(applicationId) && offersOrganizationAccess,
+    enabled: Boolean(applicationId),
     // The tab's sentences say what access means for an application: `applications:organizationAccess.*`.
     wordingNamespace: 'applications',
   });
@@ -154,6 +159,16 @@ export default function ApplicationEditPage() {
 
   const [activeTabKey, setActiveTabKey] = useState('overview');
   const [editedApp, setEditedApp] = useState<Partial<Application>>({});
+  const draftInboundAuthConfig = editedApp.inboundAuthConfig ?? application?.inboundAuthConfig;
+  const deviceGrantEnabled = draftInboundAuthConfig?.some(
+    ({type, config: authConfig}) => type === 'oauth2' && authConfig.grantTypes?.includes(OAuth2GrantTypes.DEVICE_CODE),
+  );
+  const {data: deviceGrantFlowList, isLoading: isLoadingDeviceGrantFlows} = useGetFlows({
+    flowType: FlowType.DEVICE_GRANT,
+    limit: 100,
+    fetchAllPages: true,
+    enabled: Boolean(deviceGrantEnabled && !editedApp.deviceGrantFlowId && !application?.deviceGrantFlowId),
+  });
   // Bumped on Save/Reset to force AccessSection/McpAccessSection/UrlsSection to remount with a
   // clean form — they keep local state (redirect URI list, react-hook-form defaults) that a
   // `setEditedApp({})` alone wouldn't reset.
@@ -199,6 +214,31 @@ export default function ApplicationEditPage() {
     },
     [updateApplication],
   );
+
+  useEffect(() => {
+    const defaultDeviceGrantFlow = deviceGrantFlowList?.flows.find(
+      (flow) => flow.handle === 'default-device-grant-flow',
+    );
+
+    if (
+      !deviceGrantEnabled ||
+      editedApp.deviceGrantFlowId ||
+      application?.deviceGrantFlowId ||
+      !defaultDeviceGrantFlow ||
+      application?.isReadOnly
+    ) {
+      return;
+    }
+
+    handleFieldChange('deviceGrantFlowId', defaultDeviceGrantFlow.id);
+  }, [
+    application?.deviceGrantFlowId,
+    application?.isReadOnly,
+    deviceGrantEnabled,
+    deviceGrantFlowList,
+    editedApp.deviceGrantFlowId,
+    handleFieldChange,
+  ]);
 
   const commitName = useCallback(
     (value: string): void => {
@@ -275,7 +315,7 @@ export default function ApplicationEditPage() {
 
   const resourceTypeTitle = t('navigation:pages.applications', 'Applications');
 
-  if (isLoading) {
+  if (isLoading || isOtherProject || isHidden) {
     return (
       <>
         <DocumentTitle title={resourceTypeTitle} />
@@ -354,6 +394,8 @@ export default function ApplicationEditPage() {
   // MCP clients validate their redirect URIs via McpConnectTab, so that check is skipped there. The
   // certificate check applies to every client with a Credentials tab, which a CIMD MCP client lacks.
   const grantTypes = oauth2Config?.grantTypes ?? [];
+  const deviceGrantFlowId = editedApp.deviceGrantFlowId ?? application.deviceGrantFlowId;
+  const isMissingDeviceGrantFlow = Boolean(deviceGrantEnabled && !deviceGrantFlowId);
   const hasAuthorizationCodeGrant = grantTypes.includes(OAuth2GrantTypes.AUTHORIZATION_CODE);
   const hasValidRedirectUri = (oauth2Config?.redirectUris ?? []).some((uri) => isValidRedirectUriFormat(uri));
   const isMissingRedirectUri = !isMcpClient && hasAuthorizationCodeGrant && !hasValidRedirectUri;
@@ -375,6 +417,19 @@ export default function ApplicationEditPage() {
   }
   if (isMissingCertificate) {
     validationIssues.push(t('applications:edit.page.validation.missingCertificate', 'A certificate is required.'));
+  }
+  if (isMissingDeviceGrantFlow) {
+    validationIssues.push(
+      isLoadingDeviceGrantFlows
+        ? t(
+            'applications:edit.page.validation.loadingDeviceGrantFlow',
+            'The default Device Grant flow is loading. Please wait before saving.',
+          )
+        : t(
+            'applications:edit.page.validation.missingDeviceGrantFlow',
+            'Select a Device Grant flow in the Flows tab before saving.',
+          ),
+    );
   }
   if (isInvalidBackchannelLogoutUri) {
     validationIssues.push(
@@ -459,7 +514,6 @@ export default function ApplicationEditPage() {
             key: 'organizationAccess',
             label: t('applications:edit.page.tabs.organizationAccess', 'Organization Access'),
             panel: <EditOrganizationAccessSettings application={application} access={organizationAccess} />,
-            hidden: !offersOrganizationAccess,
           },
           {
             key: 'advanced',
@@ -619,7 +673,6 @@ export default function ApplicationEditPage() {
           key: 'organizationAccess',
           label: t('applications:edit.page.tabs.organizationAccess', 'Organization Access'),
           panel: <EditOrganizationAccessSettings application={application} access={organizationAccess} />,
-          hidden: !offersOrganizationAccess,
         },
         {
           key: 'advanced',
@@ -640,7 +693,7 @@ export default function ApplicationEditPage() {
             />
           ),
         },
-      ].filter((tab) => !tab.hidden)
+      ]
     : [];
 
   const activeTabs = isMcpClient ? mcpTabs : standardTabs;
@@ -658,6 +711,7 @@ export default function ApplicationEditPage() {
         </Alert>
       )}
       <AccessStatusBanner status={application.status} category="application" sx={{mb: 2}} />
+      <ResourceDeployStatus resourceType="application" id={application.id} variant="notice" sx={{mb: 2}} />
       {/* Header */}
       <PageTitle>
         <PageTitle.BackButton component={<Link to={routes.applications.list()} />}>
@@ -861,9 +915,11 @@ export default function ApplicationEditPage() {
             accessSettingsInvalid ||
             credentialsSettingsInvalid ||
             isMissingRedirectUri ||
+            isMissingDeviceGrantFlow ||
             isInvalidBackchannelLogoutUri ||
             isMissingCertificate ||
-            application.isReadOnly === true
+            application.isReadOnly === true ||
+            !can('app', 'update')
           }
           error={
             (updateApplication.error

@@ -10,14 +10,14 @@ import {describe, it, expect, vi, beforeEach} from 'vitest';
 import type {Agent} from '../../../../models/agent';
 import EditAgentAttributes from '../EditAgentAttributes';
 
-const {mockUseGetAgentTypes, mockUseGetAgentType} = vi.hoisted(() => ({
-  mockUseGetAgentTypes: vi.fn(),
+const {mockUseGetAllAgentTypes, mockUseGetAgentType} = vi.hoisted(() => ({
+  mockUseGetAllAgentTypes: vi.fn(),
   mockUseGetAgentType: vi.fn(),
 }));
 
 vi.mock('@thunderid/configure-agent-types', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@thunderid/configure-agent-types')>()),
-  useGetAgentTypes: () => mockUseGetAgentTypes(),
+  useGetAllAgentTypes: () => mockUseGetAllAgentTypes(),
   useGetAgentType: (id?: string) => mockUseGetAgentType(id),
 }));
 
@@ -62,8 +62,8 @@ describe('EditAgentAttributes', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseGetAgentTypes.mockReturnValue({
-      data: {types: [{id: 'schema-1', handle: 'default', displayName: 'Default', ouId: 'ou-1'}]},
+    mockUseGetAllAgentTypes.mockReturnValue({
+      data: [{id: 'schema-1', handle: 'default', displayName: 'Default', ouId: 'ou-1'}],
     });
     mockUseGetAgentType.mockReturnValue({
       data: {
@@ -95,6 +95,42 @@ describe('EditAgentAttributes', () => {
     expect(screen.getByTestId('field-email')).toBeInTheDocument();
     expect(screen.getByTestId('field-count')).toBeInTheDocument();
     expect(screen.queryByTestId('field-password')).not.toBeInTheDocument();
+  });
+
+  it('orders the editable fields in the shared order', () => {
+    mockUseGetAgentType.mockReturnValue({
+      data: {
+        id: 'schema-1',
+        handle: 'default',
+        displayName: 'Default',
+        ouId: 'ou-1',
+        systemAttributes: {display: 'label'},
+        schema: {
+          model: {type: 'string'},
+          environment: {type: 'string', required: true},
+          apiKey: {type: 'string', required: true, credential: true},
+          function: {type: 'string'},
+          label: {type: 'string', required: true},
+        },
+      },
+      isLoading: false,
+    });
+    render(<EditAgentAttributes agent={baseAgent} editedAgent={{}} onFieldChange={mockOnFieldChange} />);
+
+    // The credential is not editable here, so it is left out.
+    expect(screen.getAllByTestId(/^field-/).map((element) => element.getAttribute('data-testid'))).toEqual([
+      'field-environment',
+      'field-label',
+      'field-function',
+      'field-model',
+    ]);
+  });
+
+  it('shows the lifespan beside the attributes, as the add form asks for it', () => {
+    render(<EditAgentAttributes agent={baseAgent} editedAgent={{}} onFieldChange={mockOnFieldChange} />);
+
+    expect(screen.getByText('Lifespan')).toBeInTheDocument();
+    expect(screen.getByText('Valid Until')).toBeInTheDocument();
   });
 
   it('has no local Save/Cancel controls — the page-level Save bar is the only save path', () => {
@@ -232,6 +268,19 @@ describe('EditAgentAttributes', () => {
       expect(screen.getByText('email')).toBeInTheDocument();
       expect(screen.getByText('a@b.com')).toBeInTheDocument();
       expect(screen.queryByTestId('field-email')).not.toBeInTheDocument();
+    });
+
+    it('still shows the lifespan, without letting it be changed', () => {
+      render(
+        <EditAgentAttributes
+          agent={{...baseAgent, isReadOnly: true}}
+          editedAgent={{}}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      expect(screen.getByText('Lifespan')).toBeInTheDocument();
+      expect(screen.getByRole('button', {name: /choose date/i})).toBeDisabled();
     });
   });
 });

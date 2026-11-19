@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {QueryErrorNotice, SettingsCard} from '@thunderid/components';
-import {useGetAgentType, useGetAgentTypes} from '@thunderid/configure-agent-types';
+import {useGetAgentType, useGetAllAgentTypes} from '@thunderid/configure-agent-types';
 import {useResolveDisplayName} from '@thunderid/hooks';
+import {orderAttributes} from '@thunderid/utils';
 import {Box, Chip, CircularProgress, Stack, Typography} from '@wso2/oxygen-ui';
 import {Tag} from '@wso2/oxygen-ui-icons-react';
 import {useCallback, type JSX} from 'react';
@@ -38,11 +39,11 @@ export default function AttributesSummarySection({
   agent,
   variant = 'settings',
 }: AttributesSummarySectionProps): JSX.Element {
-  const {t} = useTranslation();
+  const {t, i18n} = useTranslation();
   const {resolveDisplayName} = useResolveDisplayName({handlers: {t}});
 
-  const {data: agentTypesData} = useGetAgentTypes();
-  const matchedSchema = agentTypesData?.types?.find((s) => s.handle === agent.type);
+  const {data: agentTypes} = useGetAllAgentTypes();
+  const matchedSchema = agentTypes?.find((s) => s.handle === agent.type);
   const {data: schemaDetails, isLoading, error, refetch} = useGetAgentType(matchedSchema?.id);
 
   // Resolves an error through the `agents` catalog. `t` defaults to the `common` namespace, so
@@ -54,6 +55,18 @@ export default function AttributesSummarySection({
   );
 
   const attributes = agent.attributes ?? {};
+  // Attributes follow the agent type's schema order. Any the schema does not hold keep their place after them.
+  const schemaOrder = orderAttributes(schemaDetails?.schema ?? {}).map(([name]) => name);
+  const position = (key: string): number => {
+    const index = schemaOrder.indexOf(key);
+    return index >= 0 ? index : schemaOrder.length;
+  };
+  const orderedAttributes = Object.entries(attributes).sort(([a], [b]) => position(a) - position(b));
+  // The lifespan is not a schema attribute, but the Overview previews it beside them once one is set.
+  const validUntil =
+    variant === 'bare' && agent.validUntil
+      ? new Date(agent.validUntil).toLocaleString(i18n?.language, {dateStyle: 'medium', timeStyle: 'short'})
+      : undefined;
 
   const labelFor = (key: string): string => {
     const fieldDef = schemaDetails?.schema?.[key];
@@ -76,10 +89,10 @@ export default function AttributesSummarySection({
     </Box>
   ) : error ? (
     <QueryErrorNotice error={error} t={tForErrors} variant="inline" onRetry={() => void refetch()} />
-  ) : Object.keys(attributes).length > 0 ? (
+  ) : Object.keys(attributes).length > 0 || validUntil ? (
     variant === 'bare' ? (
       <Box sx={{display: 'flex', flexWrap: 'wrap', gap: 1}}>
-        {Object.entries(attributes).map(([key, value]) => (
+        {orderedAttributes.map(([key, value]) => (
           <Chip
             key={key}
             label={`${labelFor(key)}: ${formatChipValue(value)}`}
@@ -88,10 +101,18 @@ export default function AttributesSummarySection({
             sx={{fontWeight: 500}}
           />
         ))}
+        {validUntil && (
+          <Chip
+            label={`${t('agents:edit.attributes.lifespan.label', 'Valid Until')}: ${validUntil}`}
+            size="small"
+            variant="outlined"
+            sx={{fontWeight: 500}}
+          />
+        )}
       </Box>
     ) : (
       <Stack spacing={2}>
-        {Object.entries(attributes).map(([key, value]) => (
+        {orderedAttributes.map(([key, value]) => (
           <Box key={key}>
             <Typography variant="caption" color="text.secondary">
               {labelFor(key)}

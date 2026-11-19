@@ -61,7 +61,7 @@ func (suite *TokenServiceTestSuite) SetupTest() {
 // newService builds a fresh tokenService using the suite's mocks.
 func (suite *TokenServiceTestSuite) newService() TokenServiceInterface {
 	return newTokenService(suite.mockGrantProvider, suite.mockScopeValidator, suite.mockObsSvc,
-		suite.mockDPoPVerifier, "https://example.test/oauth2/token", false)
+		suite.mockDPoPVerifier, "https://example.test/oauth2/token", false, discardingBus{})
 }
 
 // defaultApp returns an OAuthClient that allows the authorization_code grant.
@@ -469,6 +469,7 @@ func (suite *TokenServiceTestSuite) TestProcessTokenRequest_DPoPProof_VerifyFail
 
 	assert.NotNil(suite.T(), errResp)
 	assert.Equal(suite.T(), constants.ErrorInvalidDPoPProof, errResp.Error)
+	assert.Equal(suite.T(), "Invalid DPoP proof", errResp.ErrorDescription)
 }
 
 func (suite *TokenServiceTestSuite) TestProcessTokenRequest_NoDPoPProof_VerifierNotInvoked() {
@@ -545,7 +546,7 @@ func (suite *TokenServiceTestSuite) TestProcessTokenRequest_NoDPoPProof_GlobalRe
 	suite.mockScopeValidator.On("ValidateScopes", mock.Anything, "openid", "test-client-id").Return("openid", nil)
 
 	svc := newTokenService(suite.mockGrantProvider, suite.mockScopeValidator, suite.mockObsSvc,
-		suite.mockDPoPVerifier, "https://example.test/oauth2/token", true)
+		suite.mockDPoPVerifier, "https://example.test/oauth2/token", true, discardingBus{})
 	_, errResp := svc.ProcessTokenRequest(context.Background(), req, app)
 
 	assert.NotNil(suite.T(), errResp)
@@ -1029,7 +1030,7 @@ func (suite *TokenEventsTestSuite) SetupTest() {
 }
 
 func (suite *TokenEventsTestSuite) newService() *tokenService {
-	return &tokenService{observabilitySvc: suite.mockObsSvc}
+	return &tokenService{observabilitySvc: suite.mockObsSvc, bus: discardingBus{}}
 }
 
 func (suite *TokenEventsTestSuite) ctx() context.Context {
@@ -1254,6 +1255,45 @@ func (suite *TokenEventsTestSuite) TestIssued_SubjectTypeOmittedWhenTokenHasNoCa
 	evt := suite.lastEvent()
 	assert.Equal(suite.T(), "user-1", evt.Data[event.DataKey.Subject])
 	assert.NotContains(suite.T(), evt.Data, event.DataKey.SubjectType)
+}
+
+func (suite *TokenEventsTestSuite) TestPublishGrantError() {
+	cases := []struct {
+		name        string
+		code        string
+		wantStatus  string
+		wantMessage string
+	}{
+		{"a server error publishes 500 and hides its description", constants.ErrorServerError, "500",
+			"Failed to process token request"},
+		{"a client error publishes 400 and keeps its description", constants.ErrorInvalidGrant, "400",
+			"grant rejected"},
+	}
+	for _, tc := range cases {
+		suite.Run(tc.name, func() {
+			suite.published = nil
+			errResp := &model.ErrorResponse{Error: tc.code, ErrorDescription: "grant rejected"}
+
+			suite.newService().publishGrantError(suite.ctx(), appClient(), "app-client-id",
+				"authorization_code", "", errResp, 0)
+
+			errData, ok := suite.lastEvent().Data[event.DataKey.Error].(map[string]interface{})
+			suite.Require().True(ok)
+			suite.Equal(tc.wantStatus, errData["code"])
+			suite.Equal("grant rejected", errData["message"])
+			suite.Equal(tc.wantMessage, errResp.ErrorDescription)
+		})
+	}
+}
+
+func (suite *TokenEventsTestSuite) TestPublishGrantError_NoCodePublishesNothing() {
+	errResp := &model.ErrorResponse{ErrorDescription: "grant rejected"}
+
+	suite.newService().publishGrantError(suite.ctx(), appClient(), "app-client-id",
+		"authorization_code", "", errResp, 0)
+
+	suite.Empty(suite.published)
+	suite.Equal("grant rejected", errResp.ErrorDescription)
 }
 
 // AccessingOUResponsesTestSuite covers the two answers this endpoint hands the accessing-OU

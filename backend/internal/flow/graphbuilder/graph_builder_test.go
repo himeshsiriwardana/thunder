@@ -182,7 +182,8 @@ func (s *GraphBuilderTestSuite) TestGetGraph_BuildFailure() {
 	s.Nil(graph)
 	s.NotNil(err)
 	s.Equal(errorGraphBuildFailure.Code, err.Code)
-	s.Contains(err.ErrorDescription.DefaultValue, "node creation error")
+	s.Equal(errorGraphBuildFailure.ErrorDescription.DefaultValue, err.ErrorDescription.DefaultValue)
+	s.NotContains(err.ErrorDescription.DefaultValue, "node creation error")
 }
 
 func (s *GraphBuilderTestSuite) TestGetGraph_CacheSetError() {
@@ -408,6 +409,46 @@ func (s *GraphBuilderTestSuite) TestBuildGraph_WithOnFailure() {
 	s.Nil(err)
 }
 
+func (s *GraphBuilderTestSuite) TestConfigureNodeNavigation_VariablesNodeOnFailure() {
+	nodeDef := &providers.NodeDefinition{
+		ID:        "vars",
+		Type:      "VARIABLES",
+		OnSuccess: "end",
+		OnFailure: "retry-prompt",
+	}
+	allNodes := []providers.NodeDefinition{
+		*nodeDef,
+		{ID: "retry-prompt", Type: "PROMPT"},
+		{ID: "end", Type: "END"},
+	}
+	mockVariablesNode := coremock.NewVariablesNodeInterfaceMock(s.T())
+	mockVariablesNode.EXPECT().SetOnSuccess("end")
+	mockVariablesNode.EXPECT().SetOnFailure("retry-prompt")
+	edges := map[string][]string{}
+
+	err := s.builder.configureNodeNavigation(nodeDef, allNodes, mockVariablesNode, edges)
+
+	s.Nil(err)
+	s.Equal([]string{"end", "retry-prompt"}, edges["vars"])
+}
+
+func (s *GraphBuilderTestSuite) TestConfigureNodeNavigation_VariablesNodeOnFailureNotPromptNode() {
+	nodeDef := &providers.NodeDefinition{
+		ID:        "vars",
+		Type:      "VARIABLES",
+		OnSuccess: "end",
+		OnFailure: "end",
+	}
+	allNodes := []providers.NodeDefinition{*nodeDef, {ID: "end", Type: "END"}}
+	mockVariablesNode := coremock.NewVariablesNodeInterfaceMock(s.T())
+	mockVariablesNode.EXPECT().SetOnSuccess("end")
+
+	err := s.builder.configureNodeNavigation(nodeDef, allNodes, mockVariablesNode, map[string][]string{})
+
+	s.NotNil(err)
+	s.Contains(err.Error(), "onFailure must point to a PROMPT node")
+}
+
 func (s *GraphBuilderTestSuite) TestBuildGraph_OnFailureNotPromptNode() {
 	flow := &providers.CompleteFlowDefinition{
 		ID:       "flow-1",
@@ -493,6 +534,10 @@ func (s *GraphBuilderTestSuite) TestBuildGraph_WithInputs() {
 					Inputs: []providers.InputDefinition{
 						{Ref: "username", Type: "string", Identifier: "user", Required: true},
 						{Ref: "password", Type: "string", Identifier: "pass", Required: true},
+						{
+							Ref: "locale", Type: "TEXT_INPUT", Identifier: "locale",
+							DefaultValue: "en-US", Constant: true,
+						},
 					},
 				},
 			},
@@ -517,6 +562,9 @@ func (s *GraphBuilderTestSuite) TestBuildGraph_WithInputs() {
 	mockTaskNode.EXPECT().SetInputs([]providers.Input{
 		{Ref: "username", Type: "string", Identifier: "user", Required: true},
 		{Ref: "password", Type: "string", Identifier: "pass", Required: true},
+		{
+			Ref: "locale", Type: "TEXT_INPUT", Identifier: "locale", DefaultValue: "en-US", Constant: true,
+		},
 	})
 
 	mockGraph.EXPECT().AddNode(mockStartNode).Return(nil)
@@ -1650,6 +1698,36 @@ func (s *GraphBuilderTestSuite) TestConfigureNodePrompts_ValidationRulesCompiled
 		}
 		rule := prompts[0].Inputs[0].Validation[0]
 		return rule.Type == providers.ValidationTypeRegex && rule.CompiledRegex != nil
+	}))
+
+	err := s.builder.configureNodePrompts(context.Background(), nodeDef, mockPromptNode, map[string][]string{})
+	s.Nil(err)
+}
+
+// Prompt inputs carry their default and constant settings to the runtime.
+func (s *GraphBuilderTestSuite) TestConfigureNodePrompts_DefaultAndConstantCopied() {
+	nodeDef := &providers.NodeDefinition{
+		ID:   "prompt-1",
+		Type: "PROMPT",
+		Prompts: []providers.PromptDefinition{
+			{
+				Inputs: []providers.InputDefinition{
+					{Identifier: "department", Type: "TEXT_INPUT", DefaultValue: "Computer Science"},
+					{Identifier: "faculty", Type: "TEXT_INPUT", DefaultValue: "Engineering", Constant: true},
+				},
+				Action: &providers.ActionDefinition{Ref: "submit", NextNode: "next"},
+			},
+		},
+	}
+
+	mockPromptNode := coremock.NewPromptNodeInterfaceMock(s.T())
+	mockPromptNode.EXPECT().SetPrompts(mock.MatchedBy(func(prompts []common.Prompt) bool {
+		if len(prompts) != 1 || len(prompts[0].Inputs) != 2 {
+			return false
+		}
+		department, faculty := prompts[0].Inputs[0], prompts[0].Inputs[1]
+		return department.DefaultValue == "Computer Science" && !department.Constant &&
+			faculty.DefaultValue == "Engineering" && faculty.Constant
 	}))
 
 	err := s.builder.configureNodePrompts(context.Background(), nodeDef, mockPromptNode, map[string][]string{})

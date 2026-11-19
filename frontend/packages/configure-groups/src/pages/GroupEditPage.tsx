@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {DocumentTitle, PageLoadingAnimation, QueryErrorNotice, UnsavedChangesBar} from '@thunderid/components';
+import {useCapabilitiesContext, useProjectScope} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger/react';
 import {getErrorMessage, isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
@@ -18,7 +19,7 @@ import {
   PageTitle,
 } from '@wso2/oxygen-ui';
 import {ArrowLeft, Edit} from '@wso2/oxygen-ui-icons-react';
-import {useState, useCallback, useMemo} from 'react';
+import {useState, useCallback, useEffect, useMemo} from 'react';
 import type {ReactNode, SyntheticEvent, JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import {Link, useNavigate, useParams} from 'react-router';
@@ -29,6 +30,7 @@ import EditGeneralSettings from '../components/edit-group/general-settings/EditG
 import EditMembersSettings from '../components/edit-group/members-settings/EditMembersSettings';
 import GroupDeleteDialog from '../components/GroupDeleteDialog';
 import GroupConstraints from '../constants/group-constraints';
+import useGroupRoutes from '../hooks/useGroupRoutes';
 import type {Group} from '../models/group';
 
 interface TabPanelProps {
@@ -56,8 +58,17 @@ export default function GroupEditPage(): JSX.Element {
   const navigate = useNavigate();
   const {t} = useTranslation('groups');
   const logger = useLogger('GroupEditPage');
+  const {can} = useCapabilitiesContext();
 
   const {data: group, isLoading, error: fetchError, refetch} = useGetGroup(groupId ?? '');
+  const routes = useGroupRoutes();
+  const {projectId} = useProjectScope();
+  // Inside a project, a group of another project or of the organization is not shown: the page returns to
+  // the list.
+  const isOtherProject = Boolean(projectId && group && group.projectId !== projectId);
+  useEffect(() => {
+    if (isOtherProject) void navigate(routes.groups.list(), {replace: true});
+  }, [isOtherProject, navigate, routes]);
   const updateGroup = useUpdateGroup();
 
   const [activeTab, setActiveTab] = useState(0);
@@ -67,7 +78,7 @@ export default function GroupEditPage(): JSX.Element {
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [tempName, setTempName] = useState('');
   const [tempDescription, setTempDescription] = useState('');
-  const listUrl = '/groups';
+  const listUrl = routes.groups.list();
 
   const handleBack = async (): Promise<void> => {
     await navigate(listUrl);
@@ -142,7 +153,7 @@ export default function GroupEditPage(): JSX.Element {
 
   const resourceTypeTitle = t('navigation:pages.groups', 'Groups');
 
-  if (isLoading) {
+  if (isLoading || isOtherProject) {
     return (
       <>
         <DocumentTitle title={resourceTypeTitle} />
@@ -354,7 +365,9 @@ export default function GroupEditPage(): JSX.Element {
         </TabPanel>
 
         <TabPanel value={activeTab} index={2}>
-          <EditAdvancedSettings onDeleteClick={group.isReadOnly ? undefined : () => setDeleteDialogOpen(true)} />
+          <EditAdvancedSettings
+            onDeleteClick={group.isReadOnly || !can('group', 'delete') ? undefined : () => setDeleteDialogOpen(true)}
+          />
         </TabPanel>
       </>
 
@@ -374,7 +387,7 @@ export default function GroupEditPage(): JSX.Element {
           saveLabel={t('edit.page.save', 'Save changes')}
           savingLabel={t('edit.page.saving', 'Saving...')}
           isSaving={updateGroup.isPending}
-          saveDisabled={group.isReadOnly === true}
+          saveDisabled={group.isReadOnly === true || !can('group', 'update')}
           error={
             updateGroup.error
               ? getErrorMessage(updateGroup.error, t, 'update.error', 'Failed to update group. Please try again.')

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -353,6 +354,28 @@ func (s *ModelTestSuite) TestContextRoundTrip() {
 			s.Equal(len(tc.runtime), len(resultCtx.RuntimeData))
 		})
 	}
+}
+
+func (s *ModelTestSuite) TestContextRoundTrip_KeepsExpiry() {
+	mockGraph := coremock.NewGraphInterfaceMock(s.T())
+	mockGraph.On("GetID").Return("test-graph-id").Maybe()
+	mockGraph.On("GetType").Return(providers.FlowTypeAuthentication).Maybe()
+	expiresAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+
+	dbModel := &FlowContextDB{}
+	s.Require().NoError(dbModel.FromEngineContext(EngineContext{
+		ExecutionID: "test-flow-id",
+		AuthenticatedUser: authncm.AuthenticatedUser{
+			Attributes: map[string]interface{}{},
+		},
+		Graph:     mockGraph,
+		expiresAt: expiresAt,
+	}))
+	s.True(expiresAt.Equal(dbModel.ExpiryTime))
+
+	resultCtx, err := dbModel.ToEngineContext(context.Background(), mockGraph, nil)
+	s.Require().NoError(err)
+	s.True(expiresAt.Equal(resultCtx.expiresAt))
 }
 
 func (s *ModelTestSuite) TestFromEngineContext_PreservesOtherFields() {
@@ -1167,6 +1190,37 @@ func (s *ModelTestSuite) TestToEngineContext_WithSharedRuntimeData_RoundTrip() {
 	s.Equal("shared-value", val)
 }
 
+func (s *ModelTestSuite) TestBoundSubject_RoundTrip() {
+	mockGraph := coremock.NewGraphInterfaceMock(s.T())
+	mockGraph.On("GetID").Return("self-graph")
+	mockGraph.On("GetType").Return(providers.FlowTypeSelf)
+	ctx := EngineContext{
+		Context: context.Background(), ExecutionID: "exec-bound", FlowType: providers.FlowTypeSelf,
+		Graph: mockGraph, UserInputs: map[string]string{}, RuntimeData: map[string]string{},
+		ExecutionHistory: map[string]*providers.NodeExecutionRecord{}, boundSubject: "user-1",
+	}
+
+	dbModel := &FlowContextDB{}
+	s.Require().NoError(dbModel.FromEngineContext(ctx))
+	s.Equal("user-1", s.getContextContent(dbModel).BoundSubject)
+	resultCtx, err := dbModel.ToEngineContext(context.Background(), mockGraph, nil)
+
+	s.Require().NoError(err)
+	s.Equal("user-1", resultCtx.boundSubject)
+	s.False(resultCtx.AuthUser.IsAuthenticated())
+	s.Empty(resultCtx.AuthenticatedUser.UserID)
+}
+
+func (s *ModelTestSuite) TestBoundSubject_OmittedWhenUnset() {
+	mockGraph := coremock.NewGraphInterfaceMock(s.T())
+	mockGraph.On("GetID").Return("auth-graph")
+	dbModel := &FlowContextDB{}
+
+	s.Require().NoError(dbModel.FromEngineContext(EngineContext{ExecutionID: "exec", Graph: mockGraph}))
+
+	s.NotContains(dbModel.Context, "boundSubject")
+}
+
 func (s *ModelTestSuite) TestToEngineContext_WithFrameStack_NilResolver_Empty() {
 	mockGraph := coremock.NewGraphInterfaceMock(s.T())
 	mockGraph.On("GetID").Return("callee-graph-id")
@@ -1444,4 +1498,51 @@ func (s *ModelTestSuite) TestDeserializeFrameStack_NodeIDNotInGraph() {
 	s.NoError(err)
 	s.Len(result, 1)
 	s.Nil(result[0].currentNode)
+}
+
+func (s *ModelTestSuite) TestSignInBounded_RoundTrips() {
+	for _, bounded := range []bool{true, false} {
+		mockGraph := coremock.NewGraphInterfaceMock(s.T())
+		mockGraph.On("GetID").Return("test-graph-id")
+		mockGraph.On("GetType").Return(providers.FlowTypeAuthentication)
+
+		ctx := EngineContext{
+			Context:          context.Background(),
+			ExecutionID:      "test-flow-id",
+			AppID:            "test-app-id",
+			FlowType:         providers.FlowTypeAuthentication,
+			SignInBounded:    bounded,
+			UserInputs:       map[string]string{},
+			RuntimeData:      map[string]string{},
+			ExecutionHistory: map[string]*providers.NodeExecutionRecord{},
+			Graph:            mockGraph,
+		}
+
+		dbModel := &FlowContextDB{}
+		s.NoError(dbModel.FromEngineContext(ctx))
+		s.Equal(bounded, s.getContextContent(dbModel).SignInBounded)
+
+		resultCtx, err := dbModel.ToEngineContext(context.Background(), mockGraph, nil)
+		s.NoError(err)
+		s.Equal(bounded, resultCtx.SignInBounded)
+	}
+}
+
+func (s *ModelTestSuite) TestFrameStack_SignInBoundedSurvivesPersistence() {
+	mockGraph := coremock.NewGraphInterfaceMock(s.T())
+	mockGraph.On("GetID").Return("graph-1")
+	mockGraph.On("GetType").Return(providers.FlowTypeAuthentication)
+
+	dbModel := &FlowContextDB{}
+	serialized, err := dbModel.serializeFrameStack([]*frame{{graph: mockGraph, signInBounded: true}})
+	s.NoError(err)
+
+	resolver := graphResolverFunc(func(_ context.Context, _ string) (core.GraphInterface, error) {
+		return mockGraph, nil
+	})
+	frames, err := dbModel.deserializeFrameStack(context.Background(), flowContextContent{FrameStack: serialized},
+		resolver)
+	s.NoError(err)
+	s.Require().Len(frames, 1)
+	s.True(frames[0].signInBounded)
 }

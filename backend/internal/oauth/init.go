@@ -17,6 +17,7 @@ import (
 	oauth2authz "github.com/thunder-id/thunderid/internal/oauth/oauth2/authz"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/callback"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/ciba"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/deviceauth"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/discovery"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/granthandlers"
@@ -31,13 +32,15 @@ import (
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/tokenservice"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/userinfo"
 	"github.com/thunder-id/thunderid/internal/oauth/scope"
+	"github.com/thunder-id/thunderid/internal/system/eventbus"
 	syshttp "github.com/thunder-id/thunderid/internal/system/http"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
-// Initialize initializes all OAuth-related services and registers their routes.
+// Initialize initializes all OAuth-related services and registers their routes. bus is required: every
+// token request, every revocation request and every refused client authentication is audited on it.
 func Initialize(
 	mux *http.ServeMux,
 	actorProvider providers.ActorProvider,
@@ -65,7 +68,11 @@ func Initialize(
 	authzDetails providers.AuthorizationDetailProvider,
 	authzDetailTypes providers.AuthorizationDetailTypeProvider,
 	cfg oauthconfig.Config,
+	bus eventbus.EventBusInterface,
 ) (tokenservice.TokenValidatorInterface, backchannel.DispatcherInterface, error) {
+	if bus == nil {
+		return nil, nil, errNilEventBus
+	}
 	jwks.Initialize(mux, runtimeCrypto)
 	httpClient := syshttp.NewHTTPClientWithCheckRedirect(func(req *http.Request, _ []*http.Request) error {
 		return syshttp.IsSSRFSafeURL(req.URL.String())
@@ -79,16 +86,16 @@ func Initialize(
 	// RFC 7009 routes against the already-built service.
 	if cfg.OAuth.TokenRevocation.IsEnabled() {
 		revocation.RegisterRoutes(mux, jwtService, actorProvider, authnProvider, discoveryService,
-			revocationSvc, jtiStore, governance, cfg.OAuth.ClientAssertion, cfg.JWT.Leeway)
+			revocationSvc, jtiStore, governance, cfg.OAuth.ClientAssertion, cfg.JWT.Leeway, bus)
 	} else {
 		enforcementService = nil
 		revocationSvc = nil
 	}
 
 	tokenBuilder, tokenValidator := tokenservice.Initialize(
-		cfg, jwtService, jweService, resolver, idpService, enforcementService, jtiStore, actorProvider)
+		cfg, jwtService, jweService, resolver, idpService, enforcementService, jtiStore, actorProvider, governance)
 	parService := par.Initialize(mux, actorProvider, authnProvider, jwtService, discoveryService,
-		resourceService, dpopVerifier, cfg, runtimeStore, jtiStore, governance, authzDetails)
+		resourceService, dpopVerifier, cfg, runtimeStore, jtiStore, governance, authzDetails, bus)
 	oauth2AuthzService, err := oauth2authz.Initialize(mux, actorProvider, resourceService,
 		jwtService, flowExecService, parService, revocationSvc, ssoSession, ssoTransport, flowProvider,
 		governance, cfg, runtimeStore, transactioner, jtiStore, authzDetails)
@@ -100,7 +107,13 @@ func Initialize(
 	if len(cfg.OAuth.AllowedGrantTypes) == 0 ||
 		slices.Contains(cfg.OAuth.AllowedGrantTypes, string(providers.GrantTypeCIBA)) {
 		cibaService = ciba.Initialize(mux, jwtService, actorProvider, authnProvider, flowExecService,
-			discoveryService, resourceService, runtimeStore, jtiStore, governance, authzDetails, cfg)
+			discoveryService, resourceService, runtimeStore, jtiStore, governance, authzDetails, cfg, bus)
+	}
+	var deviceAuthService deviceauth.DeviceAuthServiceInterface
+	if len(cfg.OAuth.AllowedGrantTypes) == 0 ||
+		slices.Contains(cfg.OAuth.AllowedGrantTypes, string(providers.GrantTypeDeviceCode)) {
+		deviceAuthService = deviceauth.Initialize(mux, jwtService, actorProvider, authnProvider, discoveryService,
+			resourceService, runtimeStore, jtiStore, governance, cfg, bus)
 	}
 
 	// A device secret lasts as long as an SSO session can. The embedded engine has no session service,
@@ -112,17 +125,17 @@ func Initialize(
 	grantHandlerProvider := granthandlers.Initialize(
 		jwtService, oauth2AuthzService, tokenBuilder, tokenValidator,
 		attributeCacheSvc, ouService, authzService, actorProvider, resourceService,
-		cibaService, revocationSvc, revocationSvc, enforcementService, governance, authzDetails,
-		deviceSecretValidity, cfg)
+		cibaService, deviceAuthService, revocationSvc, revocationSvc, enforcementService, governance, authzDetails,
+		deviceSecretValidity, ssoSession, cfg)
 
 	token.Initialize(mux, jwtService, actorProvider, authnProvider, grantHandlerProvider,
-		scopeValidator, observabilitySvc, discoveryService, dpopVerifier, jtiStore, ouService, governance, cfg)
+		scopeValidator, observabilitySvc, discoveryService, dpopVerifier, jtiStore, ouService, governance, cfg, bus)
 	introspect.Initialize(mux, jwtService, actorProvider, authnProvider, discoveryService, tokenValidator,
-		jtiStore, governance, cfg.OAuth.ClientAssertion, cfg.JWT.Leeway)
+		jtiStore, governance, cfg.OAuth.ClientAssertion, cfg.JWT.Leeway, bus)
 	userinfo.Initialize(mux, jwtService, jweService, resolver,
 		tokenValidator, actorProvider, attributeCacheSvc,
 		discoveryService, dpopVerifier, governance, cfg)
-	callback.Initialize(mux, oauth2AuthzService, cibaService, cfg)
+	callback.Initialize(mux, oauth2AuthzService, cibaService, deviceAuthService, cfg)
 
 	if cfg.OAuth.Logout.IsEnabled() {
 		oauth2logout.Initialize(mux, jwtService, actorProvider, flowExecService, runtimeStore, cfg)

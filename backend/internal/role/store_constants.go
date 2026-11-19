@@ -5,7 +5,6 @@ package role
 
 import (
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
@@ -15,20 +14,21 @@ import (
 var (
 	// queryCreateRole creates a new role.
 	queryCreateRole = dbmodel.DBQuery{
-		ID:    "RLQ-ROLE_MGT-01",
-		Query: `INSERT INTO "ROLE" (ID, OU_ID, NAME, DESCRIPTION, DEPLOYMENT_ID) VALUES ($1, $2, $3, $4, $5)`,
+		ID: "RLQ-ROLE_MGT-01",
+		Query: `INSERT INTO "ROLE" (ID, OU_ID, PROJECT_ID, NAME, DESCRIPTION, DEPLOYMENT_ID) ` +
+			`VALUES ($1, $2, $3, $4, $5, $6)`,
 	}
 
 	// queryGetRoleByID retrieves a role by ID.
 	queryGetRoleByID = dbmodel.DBQuery{
 		ID:    "RLQ-ROLE_MGT-02",
-		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION FROM "ROLE" WHERE ID = $1 AND DEPLOYMENT_ID = $2`,
+		Query: `SELECT ID, OU_ID, PROJECT_ID, NAME, DESCRIPTION FROM "ROLE" WHERE ID = $1 AND DEPLOYMENT_ID = $2`,
 	}
 
 	// queryGetRoleList retrieves a list of roles with pagination.
 	queryGetRoleList = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-03",
-		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION FROM "ROLE" ` +
+		Query: `SELECT ID, OU_ID, PROJECT_ID, NAME, DESCRIPTION FROM "ROLE" ` +
 			`WHERE DEPLOYMENT_ID = $3 ORDER BY CREATED_AT DESC LIMIT $1 OFFSET $2`,
 	}
 
@@ -40,8 +40,9 @@ var (
 
 	// queryUpdateRole updates a role.
 	queryUpdateRole = dbmodel.DBQuery{
-		ID:    "RLQ-ROLE_MGT-05",
-		Query: `UPDATE "ROLE" SET OU_ID = $1, NAME = $2, DESCRIPTION = $3 WHERE ID = $4 AND DEPLOYMENT_ID = $5`,
+		ID: "RLQ-ROLE_MGT-05",
+		Query: `UPDATE "ROLE" SET OU_ID = $1, PROJECT_ID = $2, NAME = $3, DESCRIPTION = $4 ` +
+			`WHERE ID = $5 AND DEPLOYMENT_ID = $6`,
 	}
 
 	// queryDeleteRole deletes a role.
@@ -89,15 +90,17 @@ var (
 	// queryCreateRoleAssignment creates a new role assignment.
 	queryCreateRoleAssignment = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-10",
-		Query: `INSERT INTO "ROLE_ASSIGNMENT" (ROLE_ID, ASSIGNMENT_OU_ID, ASSIGNEE_TYPE, ASSIGNEE_ID, DEPLOYMENT_ID)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (ROLE_ID, DEPLOYMENT_ID, ASSIGNMENT_OU_ID, ASSIGNEE_TYPE, ASSIGNEE_ID) DO NOTHING`,
+		Query: `INSERT INTO "ROLE_ASSIGNMENT"
+			(ROLE_ID, ASSIGNMENT_OU_ID, ASSIGNEE_TYPE, ASSIGNEE_ID, SHARING_POLICY_ID, DEPLOYMENT_ID)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (ROLE_ID, DEPLOYMENT_ID, ASSIGNMENT_OU_ID, ASSIGNEE_TYPE, ASSIGNEE_ID, SHARING_POLICY_ID)
+			DO NOTHING`,
 	}
 
 	// queryGetRoleAssignments retrieves all assignments for a role with pagination.
 	queryGetRoleAssignments = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-11",
-		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID FROM "ROLE_ASSIGNMENT"
+		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID, SHARING_POLICY_ID FROM "ROLE_ASSIGNMENT"
 			WHERE ROLE_ID = $1 AND DEPLOYMENT_ID = $4 ORDER BY CREATED_AT LIMIT $2 OFFSET $3`,
 	}
 
@@ -107,18 +110,20 @@ var (
 		Query: `SELECT COUNT(*) as total FROM "ROLE_ASSIGNMENT" WHERE ROLE_ID = $1 AND DEPLOYMENT_ID = $2`,
 	}
 
-	// queryDeleteRoleAssignmentsByIDs deletes specific assignments for a role.
+	// queryDeleteRoleAssignmentsByIDs deletes specific direct assignments for a role.
 	queryDeleteRoleAssignmentsByIDs = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-13",
 		Query: `DELETE FROM "ROLE_ASSIGNMENT" ` +
 			`WHERE ROLE_ID = $1 AND ASSIGNMENT_OU_ID = $2 AND ASSIGNEE_TYPE = $3 AND ASSIGNEE_ID = $4 ` +
-			`AND DEPLOYMENT_ID = $5`,
+			`AND SHARING_POLICY_ID = '' AND DEPLOYMENT_ID = $5`,
 	}
 
-	// queryDeleteAllRoleAssignments deletes all assignments for a role (used for cascade delete).
+	// queryDeleteAllRoleAssignments deletes all assignments for a role (used for cascade delete) and returns
+	// the rows it removed.
 	queryDeleteAllRoleAssignments = dbmodel.DBQuery{
-		ID:    "RLQ-ROLE_MGT-19",
-		Query: `DELETE FROM "ROLE_ASSIGNMENT" WHERE ROLE_ID = $1 AND DEPLOYMENT_ID = $2`,
+		ID: "RLQ-ROLE_MGT-19",
+		Query: `DELETE FROM "ROLE_ASSIGNMENT" WHERE ROLE_ID = $1 AND DEPLOYMENT_ID = $2 ` +
+			`RETURNING ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID, SHARING_POLICY_ID`,
 	}
 
 	// queryDeleteRoleAssignmentsByAssignee deletes all assignments for a given assignee across roles
@@ -151,7 +156,7 @@ var (
 	// queryGetRoleAssignmentsByType retrieves assignments for a role filtered by assignee type with pagination.
 	queryGetRoleAssignmentsByType = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-17",
-		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID FROM "ROLE_ASSIGNMENT"
+		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID, SHARING_POLICY_ID FROM "ROLE_ASSIGNMENT"
 			WHERE ROLE_ID = $1 AND ASSIGNEE_TYPE = $5 AND DEPLOYMENT_ID = $4 ORDER BY CREATED_AT LIMIT $2 OFFSET $3`,
 	}
 
@@ -165,7 +170,7 @@ var (
 	// queryGetRoleListByOUID retrieves a list of roles belonging to an organization unit with pagination.
 	queryGetRoleListByOUID = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-23",
-		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION FROM "ROLE" ` +
+		Query: `SELECT ID, OU_ID, PROJECT_ID, NAME, DESCRIPTION FROM "ROLE" ` +
 			`WHERE OU_ID = $1 AND DEPLOYMENT_ID = $4 ORDER BY CREATED_AT DESC LIMIT $2 OFFSET $3`,
 	}
 
@@ -175,10 +180,40 @@ var (
 		Query: `SELECT COUNT(*) as total FROM "ROLE" WHERE OU_ID = $1 AND DEPLOYMENT_ID = $2`,
 	}
 
+	// queryGetRoleListByProject retrieves the roles of a project with pagination.
+	queryGetRoleListByProject = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-44",
+		Query: `SELECT ID, OU_ID, PROJECT_ID, NAME, DESCRIPTION FROM "ROLE" ` +
+			`WHERE PROJECT_ID = $1 AND DEPLOYMENT_ID = $4 ORDER BY CREATED_AT DESC, ID DESC LIMIT $2 OFFSET $3`,
+	}
+
+	// queryGetRoleListCountByProject retrieves the total count of the roles of a project.
+	queryGetRoleListCountByProject = dbmodel.DBQuery{
+		ID:    "RLQ-ROLE_MGT-45",
+		Query: `SELECT COUNT(*) as total FROM "ROLE" WHERE PROJECT_ID = $1 AND DEPLOYMENT_ID = $2`,
+	}
+
+	// queryGetRoleListByProjectAndOUID retrieves the roles of a project that an organization unit owns,
+	// with pagination.
+	queryGetRoleListByProjectAndOUID = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-46",
+		Query: `SELECT ID, OU_ID, PROJECT_ID, NAME, DESCRIPTION FROM "ROLE" ` +
+			`WHERE PROJECT_ID = $1 AND OU_ID = $2 AND DEPLOYMENT_ID = $5 ` +
+			`ORDER BY CREATED_AT DESC, ID DESC LIMIT $3 OFFSET $4`,
+	}
+
+	// queryGetRoleListCountByProjectAndOUID retrieves the total count of the roles of a project that an
+	// organization unit owns.
+	queryGetRoleListCountByProjectAndOUID = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-47",
+		Query: `SELECT COUNT(*) as total FROM "ROLE" ` +
+			`WHERE PROJECT_ID = $1 AND OU_ID = $2 AND DEPLOYMENT_ID = $3`,
+	}
+
 	// queryGetRoleAssignmentsInOU retrieves the assignments made in one organization unit for a role.
 	queryGetRoleAssignmentsInOU = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-30",
-		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID FROM "ROLE_ASSIGNMENT"
+		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID, SHARING_POLICY_ID FROM "ROLE_ASSIGNMENT"
 			WHERE ROLE_ID = $1 AND ASSIGNMENT_OU_ID = $2 AND DEPLOYMENT_ID = $5
 			ORDER BY CREATED_AT LIMIT $3 OFFSET $4`,
 	}
@@ -194,7 +229,7 @@ var (
 	// organization unit for a role.
 	queryGetRoleAssignmentsByTypeInOU = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-32",
-		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID FROM "ROLE_ASSIGNMENT"
+		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID, SHARING_POLICY_ID FROM "ROLE_ASSIGNMENT"
 			WHERE ROLE_ID = $1 AND ASSIGNEE_TYPE = $2 AND ASSIGNMENT_OU_ID = $3 AND DEPLOYMENT_ID = $6
 			ORDER BY CREATED_AT LIMIT $4 OFFSET $5`,
 	}
@@ -211,6 +246,73 @@ var (
 	queryDeleteRoleAssignmentsInOU = dbmodel.DBQuery{
 		ID:    "RLQ-ROLE_MGT-34",
 		Query: `DELETE FROM "ROLE_ASSIGNMENT" WHERE ROLE_ID = $1 AND ASSIGNMENT_OU_ID = $2 AND DEPLOYMENT_ID = $3`,
+	}
+
+	// queryGetMandatedAssignmentsByPolicy lists the assignments a sharing policy mandates.
+	queryGetMandatedAssignmentsByPolicy = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-36",
+		Query: `SELECT ROLE_ID, ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID, SHARING_POLICY_ID FROM "ROLE_ASSIGNMENT"
+			WHERE SHARING_POLICY_ID = $1 AND DEPLOYMENT_ID = $2 ORDER BY CREATED_AT`,
+	}
+
+	// queryDeleteMandatedAssignmentsByPolicy deletes every assignment a sharing policy mandates.
+	queryDeleteMandatedAssignmentsByPolicy = dbmodel.DBQuery{
+		ID:    "RLQ-ROLE_MGT-37",
+		Query: `DELETE FROM "ROLE_ASSIGNMENT" WHERE SHARING_POLICY_ID = $1 AND DEPLOYMENT_ID = $2`,
+	}
+
+	// queryDeleteMandatedAssignmentsByPolicyInOU deletes the assignments a sharing policy mandates in one
+	// organization unit.
+	queryDeleteMandatedAssignmentsByPolicyInOU = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-38",
+		Query: `DELETE FROM "ROLE_ASSIGNMENT" ` +
+			`WHERE SHARING_POLICY_ID = $1 AND ASSIGNMENT_OU_ID = $2 AND DEPLOYMENT_ID = $3`,
+	}
+
+	// queryGetMandatedAssignmentsByRole lists the assignments sharing policies mandate for a role.
+	queryGetMandatedAssignmentsByRole = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-39",
+		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID, SHARING_POLICY_ID FROM "ROLE_ASSIGNMENT"
+			WHERE ROLE_ID = $1 AND SHARING_POLICY_ID <> '' AND DEPLOYMENT_ID = $2`,
+	}
+
+	// queryGetMandatedAssignmentsByRoleInOU lists the assignments sharing policies mandate for a role in
+	// one organization unit.
+	queryGetMandatedAssignmentsByRoleInOU = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-40",
+		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID, SHARING_POLICY_ID FROM "ROLE_ASSIGNMENT"
+			WHERE ROLE_ID = $1 AND ASSIGNMENT_OU_ID = $2 AND SHARING_POLICY_ID <> '' AND DEPLOYMENT_ID = $3`,
+	}
+
+	// queryGetMandatedRoleUnits lists each role a sharing policy mandates in an organization unit, once.
+	queryGetMandatedRoleUnits = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-41",
+		Query: `SELECT DISTINCT SHARING_POLICY_ID, ROLE_ID, ASSIGNMENT_OU_ID FROM "ROLE_ASSIGNMENT"
+			WHERE SHARING_POLICY_ID <> '' AND DEPLOYMENT_ID = $1
+			ORDER BY SHARING_POLICY_ID, ROLE_ID, ASSIGNMENT_OU_ID`,
+	}
+
+	// queryDeleteMandatedAssignmentsByPolicyRoleInOU deletes the assignments a sharing policy mandates for one role in
+	// one organization unit.
+	queryDeleteMandatedAssignmentsByPolicyRoleInOU = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-42",
+		Query: `DELETE FROM "ROLE_ASSIGNMENT" ` +
+			`WHERE SHARING_POLICY_ID = $1 AND ASSIGNMENT_OU_ID = $2 AND ROLE_ID = $3 AND DEPLOYMENT_ID = $4`,
+	}
+
+	// queryCountAssigneeAssignments counts an assignee's role assignments.
+	queryCountAssigneeAssignments = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-43",
+		Query: `SELECT COUNT(*) as count FROM "ROLE_ASSIGNMENT" ` +
+			`WHERE ASSIGNEE_TYPE = $1 AND ASSIGNEE_ID = $2 AND DEPLOYMENT_ID = $3`,
+	}
+
+	// queryGetRolesByPermission retrieves the roles that grant a permission on a resource server.
+	queryGetRolesByPermission = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-44",
+		Query: `SELECT DISTINCT R.ID, R.OU_ID, R.NAME, R.DESCRIPTION FROM "ROLE" R ` +
+			`JOIN "ROLE_PERMISSION" P ON P.ROLE_ID = R.ID AND P.DEPLOYMENT_ID = R.DEPLOYMENT_ID ` +
+			`WHERE P.RESOURCE_SERVER_ID = $1 AND P.PERMISSION = $2 AND R.DEPLOYMENT_ID = $3 ORDER BY R.NAME`,
 	}
 )
 
@@ -234,7 +336,7 @@ func buildGetRolesInQuery(queryID, column string, count int) dbmodel.DBQuery {
 	}
 
 	deploymentPlaceholder := fmt.Sprintf("$%d", count+1)
-	baseQuery := `SELECT ID, OU_ID, NAME, DESCRIPTION FROM "ROLE" WHERE ` + column +
+	baseQuery := `SELECT ID, OU_ID, PROJECT_ID, NAME, DESCRIPTION FROM "ROLE" WHERE ` + column +
 		` IN (%s) AND DEPLOYMENT_ID = %s`
 	postgresQuery := fmt.Sprintf(baseQuery, strings.Join(postgresPlaceholders, ","), deploymentPlaceholder)
 	sqliteQuery := fmt.Sprintf(baseQuery, strings.Join(sqlitePlaceholders, ","), "?")
@@ -380,17 +482,19 @@ func buildAuthorizedPermissionsQuery(
 
 	// Construct PostgreSQL query: AND together the subject block, the optional
 	// resource-server scope, and the permission block.
-	postgresConditions := slices.Concat(
-		[]string{"(" + strings.Join(postgresWhere, " OR ") + ")"},
-		postgresScopeWhere,
-		[]string{fmt.Sprintf("rp.PERMISSION IN (%s)", strings.Join(permPlaceholdersPostgres, ","))})
+	postgresConditions := append([]string{"(" + strings.Join(postgresWhere, " OR ") + ")"}, postgresScopeWhere...)
+	if len(requestedPermissions) > 0 {
+		postgresConditions = append(postgresConditions,
+			fmt.Sprintf("rp.PERMISSION IN (%s)", strings.Join(permPlaceholdersPostgres, ",")))
+	}
 	postgresQuery := baseQuery + strings.Join(postgresConditions, " AND ") + " ORDER BY rp.PERMISSION"
 
 	// Construct SQLite query
-	sqliteConditions := slices.Concat(
-		[]string{"(" + strings.Join(sqliteWhere, " OR ") + ")"},
-		sqliteScopeWhere,
-		[]string{fmt.Sprintf("rp.PERMISSION IN (%s)", strings.Join(permPlaceholdersSqlite, ","))})
+	sqliteConditions := append([]string{"(" + strings.Join(sqliteWhere, " OR ") + ")"}, sqliteScopeWhere...)
+	if len(requestedPermissions) > 0 {
+		sqliteConditions = append(sqliteConditions,
+			fmt.Sprintf("rp.PERMISSION IN (%s)", strings.Join(permPlaceholdersSqlite, ",")))
+	}
 	sqliteQuery := baseQuery + strings.Join(sqliteConditions, " AND ") + " ORDER BY rp.PERMISSION"
 
 	query := dbmodel.DBQuery{
@@ -647,6 +751,39 @@ func buildGetRolesByIDsQuery(ids []string, deploymentID string) (dbmodel.DBQuery
 		return dbmodel.DBQuery{}, nil, fmt.Errorf("ids list cannot be empty")
 	}
 	return buildGetRolesInQuery("RLQ-ROLE_MGT-35", "ID", len(ids)), toArgs(ids, deploymentID), nil
+}
+
+// buildGetDirectAssignmentsQuery constructs a query selecting the direct assignments of the role in the
+// organization unit to any of the assignee IDs.
+func buildGetDirectAssignmentsQuery(roleID, ouID string, assigneeIDs []string, deploymentID string) (
+	dbmodel.DBQuery, []interface{}, error) {
+	if len(assigneeIDs) == 0 {
+		return dbmodel.DBQuery{}, nil, fmt.Errorf("assignee ids list cannot be empty")
+	}
+	postgresPlaceholders := make([]string, len(assigneeIDs))
+	sqlitePlaceholders := make([]string, len(assigneeIDs))
+	args := make([]interface{}, 0, len(assigneeIDs)+3)
+	args = append(args, roleID, ouID)
+	for i, assigneeID := range assigneeIDs {
+		postgresPlaceholders[i] = fmt.Sprintf("$%d", i+3)
+		sqlitePlaceholders[i] = "?"
+		args = append(args, assigneeID)
+	}
+	args = append(args, deploymentID)
+
+	baseQuery := `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID, SHARING_POLICY_ID FROM "ROLE_ASSIGNMENT" ` +
+		`WHERE ROLE_ID = %s AND ASSIGNMENT_OU_ID = %s AND SHARING_POLICY_ID = '' ` +
+		`AND ASSIGNEE_ID IN (%s) AND DEPLOYMENT_ID = %s`
+	postgresQuery := fmt.Sprintf(baseQuery, "$1", "$2", strings.Join(postgresPlaceholders, ","),
+		fmt.Sprintf("$%d", len(assigneeIDs)+3))
+	sqliteQuery := fmt.Sprintf(baseQuery, "?", "?", strings.Join(sqlitePlaceholders, ","), "?")
+
+	return dbmodel.DBQuery{
+		ID:            "RLQ-ROLE_MGT-48",
+		Query:         postgresQuery,
+		PostgresQuery: postgresQuery,
+		SQLiteQuery:   sqliteQuery,
+	}, args, nil
 }
 
 // resourcePermissionsFromMap converts a resource-server-keyed map into []ResourcePermissions,

@@ -9,26 +9,44 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
-// applyToDefaultGateway applies the latest version to the default gateway when gateway.auto_apply
-// is on, so a change made on this control plane reaches that gateway once it is captured. It never
-// fails the capture: a refused apply is logged, and the operator resolves it as any other apply.
-func (s *versionService) applyToDefaultGateway(ctx context.Context) {
-	if !s.autoApply {
+// applyToFirstGateway applies the version a capture answered with to the first gateway of the
+// pipeline when auto apply is on, so a change made on this control plane reaches it once it is
+// captured. Without a configured pipeline that is the default gateway. It never fails the capture: a
+// refused apply is logged, and the operator resolves it as any other apply.
+func (s *versionService) applyToFirstGateway(ctx context.Context, captured *Version) {
+	if s.autoApply == nil || !s.autoApply.enabled(ctx) {
 		return
 	}
+	ref := s.autoApplyRef(ctx, captured)
 	gateways, err := s.gateways.List(ctx)
 	if err != nil {
-		s.logger.Warn(ctx, "Failed to list the gateways to apply the latest version to", log.Error(err))
+		s.logger.Warn(ctx, "Failed to list the gateways to apply the captured version to", log.Error(err))
 		return
 	}
-	for _, gw := range gateways {
-		if !gw.IsDefault {
-			continue
-		}
-		if _, svcErr := s.Apply(ctx, gw.ID, ApplyRequest{Version: latestVersion}); svcErr != nil {
-			s.logger.Warn(ctx, "Failed to apply the latest version to the default gateway",
-				log.String("gatewayId", gw.ID), log.String("code", svcErr.Code))
-		}
+	gw, ok := s.pipeline.first(ctx, gateways)
+	if !ok {
 		return
 	}
+	if _, svcErr := s.Apply(ctx, gw.ID, ApplyRequest{Version: ref}); svcErr != nil {
+		s.logger.Warn(ctx, "Failed to apply the captured version to the first gateway",
+			log.String("gatewayId", gw.ID), log.String("code", svcErr.Code))
+	}
+}
+
+// autoApplyRef names the version to apply. A capture answers with the latest version, so "latest" is
+// asked for, which a burst of changes folds into the apply already running; should another capture
+// have come in between, the captured version is named by its hash.
+func (s *versionService) autoApplyRef(ctx context.Context, captured *Version) string {
+	if captured == nil || captured.Hash == "" {
+		return latestVersion
+	}
+	latest, err := s.versions.Latest(ctx)
+	if err != nil {
+		s.logger.Warn(ctx, "Failed to read the latest version", log.Error(err))
+		return captured.Hash
+	}
+	if captured.Seq == latest {
+		return latestVersion
+	}
+	return captured.Hash
 }

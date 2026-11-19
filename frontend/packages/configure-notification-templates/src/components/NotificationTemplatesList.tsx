@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {QueryErrorNotice} from '@thunderid/components';
+import {useCapabilitiesContext, useProjectScope} from '@thunderid/contexts';
 import {useDataGridLocaleText} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
-import {Box, DataGrid, IconButton, ListingTable, Tooltip} from '@wso2/oxygen-ui';
-import {Mail, MessageSquare, Pencil, Trash2} from '@wso2/oxygen-ui-icons-react';
+import {Box, DataGrid, IconButton, ListingTable, Tooltip, Typography} from '@wso2/oxygen-ui';
+import {Pencil, Trash2} from '@wso2/oxygen-ui-icons-react';
 import {useCallback, useMemo, useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
@@ -38,11 +39,14 @@ export default function NotificationTemplatesList({channel}: NotificationTemplat
   const logger = useLogger('NotificationTemplatesList');
   const routes = useNotificationTemplateRoutes();
   const dataGridLocaleText = useDataGridLocaleText();
+  const {can} = useCapabilitiesContext();
 
   const [paginationModel, setPaginationModel] = useState<DataGrid.GridPaginationModel>({pageSize: 10, page: 0});
+  const {projectId} = useProjectScope();
   const {data, isLoading, error, refetch} = useGetNotificationTemplates(channel, {
     limit: paginationModel.pageSize,
     offset: paginationModel.page * paginationModel.pageSize,
+    projectId,
   });
 
   const rows = useMemo(() => data?.templates ?? [], [data?.templates]);
@@ -72,12 +76,7 @@ export default function NotificationTemplatesList({channel}: NotificationTemplat
         flex: 1,
         minWidth: 280,
         renderCell: (params: DataGrid.GridRenderCellParams<TemplateSummary>): JSX.Element => (
-          <ListingTable.CellIcon
-            sx={{width: '100%'}}
-            icon={channel === 'sms' ? <MessageSquare size={20} /> : <Mail size={20} />}
-            primary={params.row.displayName}
-            secondary={params.row.description}
-          />
+          <Typography variant="body2">{params.row.displayName}</Typography>
         ),
       },
       {
@@ -91,36 +90,40 @@ export default function NotificationTemplatesList({channel}: NotificationTemplat
         hideable: false,
         renderCell: (params: DataGrid.GridRenderCellParams<TemplateSummary>): JSX.Element => (
           <ListingTable.RowActions>
-            <Tooltip title={t('common:actions.edit', 'Edit')}>
-              <IconButton
-                size="small"
-                aria-label={t('common:actions.edit', 'Edit')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleEditClick(params.row.id);
-                }}
-              >
-                <Pencil size={16} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={t('common:actions.delete', 'Delete')}>
-              <IconButton
-                size="small"
-                color="error"
-                aria-label={t('common:actions.delete', 'Delete')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteClick(params.row);
-                }}
-              >
-                <Trash2 size={16} />
-              </IconButton>
-            </Tooltip>
+            {can('notificationtemplate', 'update') && (
+              <Tooltip title={t('common:actions.edit', 'Edit')}>
+                <IconButton
+                  size="small"
+                  aria-label={t('common:actions.edit', 'Edit')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleEditClick(params.row.id);
+                  }}
+                >
+                  <Pencil size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
+            {can('notificationtemplate', 'delete') && (
+              <Tooltip title={t('common:actions.delete', 'Delete')}>
+                <IconButton
+                  size="small"
+                  color="error"
+                  aria-label={t('common:actions.delete', 'Delete')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteClick(params.row);
+                  }}
+                >
+                  <Trash2 size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
           </ListingTable.RowActions>
         ),
       },
     ],
-    [channel, handleDeleteClick, handleEditClick, t],
+    [can, handleDeleteClick, handleEditClick, t],
   );
 
   if (error) {
@@ -136,8 +139,8 @@ export default function NotificationTemplatesList({channel}: NotificationTemplat
 
   return (
     <Box data-testid="notification-templates-list">
-      <ListingTable.Provider variant="data-grid" loading={isLoading}>
-        <ListingTable.Container>
+      <ListingTable.Provider variant="data-grid-card" loading={isLoading}>
+        <ListingTable.Container disablePaper>
           <ListingTable.DataGrid
             rows={rows}
             columns={columns}
@@ -150,7 +153,7 @@ export default function NotificationTemplatesList({channel}: NotificationTemplat
             paginationModel={paginationModel}
             onPaginationModelChange={setPaginationModel}
             pageSizeOptions={[5, 10, 25, 50]}
-            rowHeight={64}
+            rowHeight={56}
             disableRowSelectionOnClick
             // Filtering is not wired end to end, so the column filter panel stays hidden.
             disableColumnFilter

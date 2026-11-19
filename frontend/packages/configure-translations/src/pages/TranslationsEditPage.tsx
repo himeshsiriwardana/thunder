@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {DocumentTitle, QueryErrorNotice, UnsavedChangesBar} from '@thunderid/components';
-import {useToast} from '@thunderid/contexts';
+import {useCapabilitiesContext, useToast} from '@thunderid/contexts';
 import {
   getDisplayNameForCode,
   useGetTranslations,
@@ -56,6 +56,7 @@ export default function TranslationsEditPage(): JSX.Element {
   const {language: languageParam} = useParams<{language: string}>();
   const selectedLanguage = languageParam ?? null;
   const routes = useTranslationRoutes();
+  const {can} = useCapabilitiesContext();
 
   const {mode, systemMode} = useColorScheme();
   const colorMode: 'light' | 'dark' =
@@ -174,6 +175,8 @@ export default function TranslationsEditPage(): JSX.Element {
     );
 
     const firstRejected = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+    // Load the saved values before clearing local changes so the editor never shows the old ones.
+    if (!firstRejected) await refetchTranslations();
     setIsSaving(false);
 
     if (firstRejected) {
@@ -324,6 +327,7 @@ export default function TranslationsEditPage(): JSX.Element {
               saveLabel={t('actions.saveChanges', 'Save changes')}
               savingLabel={t('common:status.saving', {ns: 'common', defaultValue: 'Saving...'})}
               isSaving={isSaving}
+              saveDisabled={!can('i18n', 'update')}
               onReset={handleDiscard}
               onSave={() => {
                 handleSave().catch((_error: unknown) => logger.error('Failed to save translations', {error: _error}));

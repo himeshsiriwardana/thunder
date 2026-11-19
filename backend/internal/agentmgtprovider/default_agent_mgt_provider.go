@@ -9,7 +9,6 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/agent"
 	"github.com/thunder-id/thunderid/internal/agent/model"
-	"github.com/thunder-id/thunderid/internal/system/security"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
@@ -33,7 +32,7 @@ func (p *defaultAgentMgtProvider) CreateAgent(
 		return nil, &ErrorInvalidRequestFormat
 	}
 
-	created, svcErr := p.agentSvc.CreateAgent(security.WithRuntimeContext(ctx), agent)
+	created, svcErr := p.agentSvc.CreateAgent(ctx, agent)
 	if svcErr != nil {
 		return nil, svcErr
 	}
@@ -47,6 +46,10 @@ func toProviderAgent(resp *model.AgentCompleteResponse) *providers.Agent {
 	if resp == nil {
 		return nil
 	}
+	var validUntil *string
+	if resp.ValidUntil != "" {
+		validUntil = &resp.ValidUntil
+	}
 	return &providers.Agent{
 		ID:          resp.ID,
 		OUID:        resp.OUID,
@@ -56,6 +59,7 @@ func toProviderAgent(resp *model.AgentCompleteResponse) *providers.Agent {
 		LogoURL:     resp.LogoURL,
 		Owner:       resp.Owner,
 		Attributes:  resp.Attributes,
+		ValidUntil:  validUntil,
 		InboundAuthProfile: providers.InboundAuthProfile{
 			AuthFlowID:                resp.AuthFlowID,
 			AuthFlowHandle:            resp.AuthFlowHandle,

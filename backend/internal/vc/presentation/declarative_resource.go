@@ -93,12 +93,10 @@ func (e *definitionExporter) ValidateResource(ctx context.Context,
 }
 
 // GetResourceRules returns the parameterization rules for presentation definitions.
-// The claim/value constraint blobs (ClaimValues) and the trusted-authority list are
-// the free-form, deployment-specific fields treated as dynamic property fields and
-// array variables respectively.
+// The claim/value constraint blob (ClaimValues) is the free-form, deployment-specific
+// field treated as a dynamic property field.
 func (e *definitionExporter) GetResourceRules() *declarativeresource.ResourceRules {
 	return &declarativeresource.ResourceRules{
-		ArrayVariables:        []string{"TrustedAuthorities"},
 		DynamicPropertyFields: []string{"ClaimValues"},
 	}
 }
@@ -118,6 +116,7 @@ type definitionRequestWithID struct {
 	Handle               string              `yaml:"handle"`
 	OUID                 string              `yaml:"ouId"`
 	OUHandle             string              `yaml:"ouHandle"`
+	ProjectID            string              `yaml:"projectId"`
 	Name                 string              `yaml:"name"`
 	Description          string              `yaml:"description"`
 	VCT                  string              `yaml:"vct"`
@@ -127,7 +126,7 @@ type definitionRequestWithID struct {
 	OptionalClaims       []string            `yaml:"optionalClaims"`
 	ClaimValues          map[string][]string `yaml:"claimValues"`
 	EnforceTrustedIssuer *bool               `yaml:"enforceTrustedIssuer"`
-	TrustedAuthorities   []string            `yaml:"trustedAuthorities"`
+	TrustedAuthorities   []TrustedAuthority  `yaml:"trustedAuthorities"`
 }
 
 // loadDeclarativeResources loads declarative presentation-definition resources from YAML files
@@ -179,6 +178,7 @@ func buildDefinitionDTOFromRequest(req definitionRequestWithID) *PresentationDef
 		Handle:               req.Handle,
 		OUID:                 req.OUID,
 		OUHandle:             req.OUHandle,
+		ProjectID:            req.ProjectID,
 		Name:                 req.Name,
 		Description:          req.Description,
 		VCT:                  req.VCT,
@@ -211,6 +211,13 @@ func validateDefinitionWrapper(
 	}
 	if service != nil {
 		if svcErr := service.ResolvePresentationDefinitionOUHandle(context.Background(), def); svcErr != nil {
+			if svcErr.Code == ErrorDefinitionProjectRequired.Code {
+				return fmt.Errorf("presentation definition '%s' is missing the required projectId", def.Handle)
+			}
+			if def.ProjectID != "" && def.OUID == "" && strings.TrimSpace(def.OUHandle) == "" {
+				return fmt.Errorf("failed to place presentation definition '%s' in the system organization unit",
+					def.Handle)
+			}
 			if def.OUID != "" {
 				return fmt.Errorf("organization unit '%s' does not exist for presentation definition '%s'",
 					def.OUID, def.Handle)

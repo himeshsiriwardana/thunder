@@ -2,18 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Effective access status, with precedence `SUSPENDED` > `LOCKED` > `ACTIVE`. Applications are never `LOCKED`.
+ * Effective access status, with precedence `SUSPENDED` > `EXPIRED` > `LOCKED` > `ACTIVE`. Applications are never
+ * `LOCKED`. `EXPIRED` means the identity's lifespan has ended.
  *
  * @public
  */
-export type AccessStatus = 'ACTIVE' | 'LOCKED' | 'SUSPENDED';
+export type AccessStatus = 'ACTIVE' | 'LOCKED' | 'SUSPENDED' | 'EXPIRED';
 
 /**
  * What put an identity into the status it reports. Reported on a management read only.
  *
  * @public
  */
-export type AccessHoldReason = 'FAILED_ATTEMPTS' | 'SUSPENSION_RELEASE_LOCK' | 'ADMINISTRATIVE_SUSPENSION';
+export type AccessHoldReason =
+  | 'FAILED_ATTEMPTS'
+  | 'SUSPENSION_RELEASE_LOCK'
+  | 'ADMINISTRATIVE_SUSPENSION'
+  | 'LIFESPAN_ENDED'
+  | 'OWNER_SUSPENSION'
+  | 'CASCADED_SUSPENSION';
+
+/**
+ * Who placed a suspension: an administrator of the organization, the identity's owner, or a cascade from the
+ * identity it depends on.
+ *
+ * @public
+ */
+export type SuspensionAppliedBy = 'organization' | 'owner' | 'cascade';
 
 /**
  * One live automatic lock: the authentication method it holds, and when it lifts.
@@ -42,13 +57,17 @@ export interface AccessStatusDetails {
    */
   reason?: AccessHoldReason;
   /**
-   * When an administrative hold was placed. Absent for an automatic lock.
+   * When an administrative hold was placed, or when the lifespan ended. Absent for an automatic lock.
    */
   since?: string;
   /**
    * The operator's optional note on the hold. Render as text, never as markup.
    */
   operatorNote?: string;
+  /**
+   * Who placed the suspensions in force. Absent for a status that is not a suspension.
+   */
+  appliedBy?: SuspensionAppliedBy[];
   /**
    * Every live automatic lock. Absent for a status that is not a lock.
    */

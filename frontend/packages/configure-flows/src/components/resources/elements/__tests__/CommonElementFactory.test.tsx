@@ -47,6 +47,14 @@ vi.mock('../adapters/input/OTPInputAdapter', () => ({
   ),
 }));
 
+vi.mock('../adapters/input/DateTimeInputAdapter', () => ({
+  default: ({resource}: {resource: Element}) => (
+    <div data-testid="date-time-input-adapter" data-resource-id={resource.id}>
+      Date Time Input Adapter
+    </div>
+  ),
+}));
+
 vi.mock('../adapters/input/DefaultInputAdapter', () => ({
   default: ({resource}: {resource: Element}) => (
     <div data-testid="default-input-adapter" data-resource-id={resource.id} data-type={resource.type}>
@@ -175,6 +183,14 @@ vi.mock('../adapters/KeyValueListAdapter', () => ({
   ),
 }));
 
+vi.mock('../adapters/input/UserSelectAdapter', () => ({
+  default: ({resource}: {resource: Element}) => (
+    <div data-testid="user-select-adapter" data-resource-id={resource.id}>
+      User Select Adapter
+    </div>
+  ),
+}));
+
 vi.mock('../adapters/CopyableTextAdapter', () => ({
   default: ({resource}: {resource: Element}) => (
     <div data-testid="copyable-text-adapter" data-resource-id={resource.id}>
@@ -276,6 +292,19 @@ describe('CommonElementFactory', () => {
     });
   });
 
+  describe('Date Time Input Element', () => {
+    it('should render DateTimeInputAdapter for DateTimeInput type', () => {
+      const dateTimeElement = createMockElement({
+        type: ElementTypes.DateTimeInput,
+      });
+
+      render(<CommonElementFactory stepId="step-1" resource={dateTimeElement} />);
+
+      expect(screen.getByTestId('date-time-input-adapter')).toBeInTheDocument();
+      expect(screen.queryByTestId('default-input-adapter')).not.toBeInTheDocument();
+    });
+  });
+
   describe('Default Input Elements', () => {
     it('should render DefaultInputAdapter for TextInput type', () => {
       const textInputElement = createMockElement({
@@ -330,6 +359,19 @@ describe('CommonElementFactory', () => {
 
       expect(screen.getByTestId('default-input-adapter')).toBeInTheDocument();
       expect(screen.getByTestId('default-input-adapter')).toHaveAttribute('data-type', ElementTypes.DateInput);
+    });
+  });
+
+  describe('User Select Element', () => {
+    it('should render UserSelectAdapter for UserSelect type', () => {
+      const userSelectElement = createMockElement({
+        type: ElementTypes.UserSelect,
+      });
+
+      render(<CommonElementFactory stepId="step-1" resource={userSelectElement} />);
+
+      expect(screen.getByTestId('user-select-adapter')).toBeInTheDocument();
+      expect(screen.getByTestId('user-select-adapter')).toHaveAttribute('data-resource-id', 'element-1');
     });
   });
 

@@ -1,54 +1,42 @@
 // Copyright 2026 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import {render, screen, within} from '@thunderid/test-utils';
+import userEvent from '@testing-library/user-event';
+import {CapabilitiesProvider, ProjectScopeProvider} from '@thunderid/contexts';
+import {render, screen} from '@thunderid/test-utils';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
 import type {VerifiablePresentationSummary} from '../../models/vp';
 import VerifiablePresentationsList from '../VerifiablePresentationsList';
 
-vi.mock('../../api/useGetVerifiablePresentations', () => ({
-  default: vi.fn(),
-}));
-vi.mock('../VerificationDialog', () => ({
-  default: () => null,
-}));
-vi.mock('../VerifiablePresentationDeleteDialog', () => ({
-  default: () => null,
-}));
+vi.mock('../../api/useGetVerifiablePresentations');
 vi.mock('@thunderid/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@thunderid/hooks')>()),
-  useDataGridLocaleText: () => ({}),
+  useDataGridLocaleText: vi.fn(),
 }));
-
-interface MockColumn {
-  field: string;
-  renderCell?: (params: {row: VerifiablePresentationSummary}) => React.ReactNode;
-}
 
 vi.mock('@wso2/oxygen-ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@wso2/oxygen-ui')>();
   return {
     ...actual,
+    OxygenUIThemeProvider: ({children}: {children: React.ReactNode}) => children,
     ListingTable: {
-      ...actual.ListingTable,
-      Provider: ({children, variant = undefined}: {children: React.ReactNode; variant?: string}) => (
-        <div data-testid="listing-table-provider" data-variant={variant}>
-          {children}
-        </div>
-      ),
-      Container: ({children, disablePaper = false}: {children: React.ReactNode; disablePaper?: boolean}) => (
-        <div data-testid="listing-table-container" data-disable-paper={disablePaper ? 'true' : undefined}>
-          {children}
-        </div>
-      ),
-      DataGrid: ({rows, columns}: {rows: VerifiablePresentationSummary[]; columns: MockColumn[]}) => (
+      Provider: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
+      Container: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
+      RowActions: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
+      DataGrid: ({
+        rows,
+        columns,
+        getRowId,
+      }: {
+        rows: Record<string, unknown>[];
+        columns: {field: string; renderCell?: (params: {row: Record<string, unknown>}) => React.ReactElement}[];
+        getRowId: (row: Record<string, unknown>) => string;
+      }) => (
         <div role="grid">
-          {rows.map((row) => (
-            <div key={row.id} role="row">
+          {rows.map((row: Record<string, unknown>) => (
+            <div key={getRowId(row)} role="row">
               {columns.map((col) => (
-                <div key={col.field} role="gridcell">
-                  {col.renderCell?.({row})}
-                </div>
+                <div key={col.field}>{col.renderCell?.({row})}</div>
               ))}
             </div>
           ))}
@@ -58,57 +46,85 @@ vi.mock('@wso2/oxygen-ui', async (importOriginal) => {
   };
 });
 
+vi.mock('../VerificationDialog', () => ({
+  default: ({open, handle, onClose}: {open: boolean; handle: string | null; onClose: () => void}) => (
+    <div data-testid="verification-dialog" data-open={open} data-handle={handle ?? ''}>
+      <button type="button" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock('../VerifiablePresentationDeleteDialog', () => ({
+  default: () => null,
+}));
+
 const {default: useGetVerifiablePresentations} = await import('../../api/useGetVerifiablePresentations');
 
-const rows: VerifiablePresentationSummary[] = [
-  {id: 'a', handle: 'alpha', name: 'Alpha', ouId: 'ou-1', ouHandle: 'engineering', vct: 'vct-a', format: 'dc+sd-jwt'},
-  {id: 'b', handle: 'beta', name: 'Beta', ouId: 'ou-2', ouHandle: 'sales', vct: 'vct-b', format: 'dc+sd-jwt'},
-  {id: 'c', handle: 'gamma', name: 'Gamma', ouId: 'ou-3', vct: 'vct-c', format: 'dc+sd-jwt'},
-];
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
 
 describe('VerifiablePresentationsList', () => {
+  const definitions: VerifiablePresentationSummary[] = [
+    {id: 'vp-1', handle: 'skyline-lounge', ouId: 'ou-1', ouHandle: 'default', name: 'Skyline', vct: 'v', format: 'f'},
+  ];
+
   beforeEach(() => {
     vi.mocked(useGetVerifiablePresentations).mockReturnValue({
-      data: rows,
+      data: definitions,
       isLoading: false,
       error: null,
+      refetch: vi.fn(),
     } as unknown as ReturnType<typeof useGetVerifiablePresentations>);
   });
 
-  it('should use the data grid variant inside a paper container', () => {
-    render(<VerifiablePresentationsList />);
+  it("lists only the selected project's presentation definitions", () => {
+    render(
+      <ProjectScopeProvider project={{id: 'project-1'}}>
+        <VerifiablePresentationsList />
+      </ProjectScopeProvider>,
+    );
 
-    expect(screen.getByTestId('listing-table-provider')).toHaveAttribute('data-variant', 'data-grid');
-    expect(screen.getByTestId('listing-table-container')).not.toHaveAttribute('data-disable-paper');
+    expect(useGetVerifiablePresentations).toHaveBeenCalledWith('project-1');
   });
 
-  it('should show the handle under the name', async () => {
-    render(<VerifiablePresentationsList />);
+  it('hides the edit and delete row actions when the admin may only view', () => {
+    render(
+      <CapabilitiesProvider capabilities={viewOnly}>
+        <VerifiablePresentationsList />
+      </CapabilitiesProvider>,
+    );
 
-    const [firstRow] = await screen.findAllByRole('row');
-    expect(within(firstRow).getByText('Alpha')).toBeInTheDocument();
-    expect(within(firstRow).getByText('alpha')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Edit'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Delete'})).not.toBeInTheDocument();
   });
 
-  it('should show a dash when the name is missing', async () => {
-    vi.mocked(useGetVerifiablePresentations).mockReturnValue({
-      data: [{...rows[0], name: undefined}],
-      isLoading: false,
-      error: null,
-    } as unknown as ReturnType<typeof useGetVerifiablePresentations>);
-
+  it('hides the verify action and does not mount the verification dialog by default', () => {
     render(<VerifiablePresentationsList />);
 
-    const [firstRow] = await screen.findAllByRole('row');
-    expect(within(firstRow).getByText('-')).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: 'Edit'})).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Verify'})).not.toBeInTheDocument();
+    expect(screen.queryByTestId('verification-dialog')).not.toBeInTheDocument();
   });
 
-  it('should name the row actions', async () => {
-    render(<VerifiablePresentationsList />);
+  it('shows the verify action and opens and closes the verification dialog for the row when showWalletQr is set', async () => {
+    const user = userEvent.setup();
+    render(<VerifiablePresentationsList showWalletQr />);
 
-    const [firstRow] = await screen.findAllByRole('row');
-    expect(within(firstRow).getByRole('button', {name: 'Verify'})).toBeInTheDocument();
-    expect(within(firstRow).getByRole('button', {name: 'Edit'})).toBeInTheDocument();
-    expect(within(firstRow).getByRole('button', {name: 'Delete'})).toBeInTheDocument();
+    const dialog = screen.getByTestId('verification-dialog');
+    expect(dialog).toHaveAttribute('data-open', 'false');
+
+    await user.click(screen.getByRole('button', {name: 'Verify'}));
+
+    expect(dialog).toHaveAttribute('data-open', 'true');
+    expect(dialog).toHaveAttribute('data-handle', 'skyline-lounge');
+
+    await user.click(screen.getByRole('button', {name: 'Close'}));
+
+    expect(dialog).toHaveAttribute('data-open', 'false');
+    expect(dialog).toHaveAttribute('data-handle', '');
   });
 });

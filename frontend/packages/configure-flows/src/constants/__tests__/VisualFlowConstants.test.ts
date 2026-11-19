@@ -4,26 +4,28 @@
 import {describe, it, expect} from 'vitest';
 import widgets from '../../data/widgets.json';
 import {ElementTypes} from '../../models/elements';
+import {StaticStepTypes} from '../../models/steps';
 import {WidgetTypes} from '../../models/widget';
 import VisualFlowConstants from '../VisualFlowConstants';
 
 describe('VisualFlowConstants', () => {
-  describe('SELECT droppable targets', () => {
-    it('should allow SELECT on the canvas, a view and a form', () => {
-      expect(VisualFlowConstants.FLOW_BUILDER_CANVAS_ALLOWED_RESOURCE_TYPES).toContain(ElementTypes.Select);
-      expect(VisualFlowConstants.FLOW_BUILDER_VIEW_ALLOWED_RESOURCE_TYPES).toContain(ElementTypes.Select);
-      expect(VisualFlowConstants.FLOW_BUILDER_FORM_ALLOWED_RESOURCE_TYPES).toContain(ElementTypes.Select);
+  describe.each([
+    {name: 'SELECT', type: ElementTypes.Select, follows: ElementTypes.Dropdown},
+    {name: 'USER_SELECT', type: ElementTypes.UserSelect, follows: ElementTypes.Select},
+  ])('$name droppable targets', ({name, type, follows}) => {
+    it(`should allow ${name} on the canvas, a view and a form`, () => {
+      expect(VisualFlowConstants.FLOW_BUILDER_CANVAS_ALLOWED_RESOURCE_TYPES).toContain(type);
+      expect(VisualFlowConstants.FLOW_BUILDER_VIEW_ALLOWED_RESOURCE_TYPES).toContain(type);
+      expect(VisualFlowConstants.FLOW_BUILDER_FORM_ALLOWED_RESOURCE_TYPES).toContain(type);
     });
 
-    it('should not allow SELECT in stack or display only containers', () => {
-      expect(VisualFlowConstants.FLOW_BUILDER_STACK_ALLOWED_RESOURCE_TYPES).not.toContain(ElementTypes.Select);
-      expect(VisualFlowConstants.FLOW_BUILDER_FLOW_COMPLETION_VIEW_ALLOWED_RESOURCE_TYPES).not.toContain(
-        ElementTypes.Select,
-      );
-      expect(VisualFlowConstants.FLOW_BUILDER_STATIC_CONTENT_ALLOWED_RESOURCE_TYPES).not.toContain(ElementTypes.Select);
+    it(`should not allow ${name} in stack or display only containers`, () => {
+      expect(VisualFlowConstants.FLOW_BUILDER_STACK_ALLOWED_RESOURCE_TYPES).not.toContain(type);
+      expect(VisualFlowConstants.FLOW_BUILDER_FLOW_COMPLETION_VIEW_ALLOWED_RESOURCE_TYPES).not.toContain(type);
+      expect(VisualFlowConstants.FLOW_BUILDER_STATIC_CONTENT_ALLOWED_RESOURCE_TYPES).not.toContain(type);
     });
 
-    it('should allow SELECT wherever DROPDOWN is allowed', () => {
+    it(`should allow ${name} wherever ${follows} is allowed`, () => {
       const lists = [
         VisualFlowConstants.FLOW_BUILDER_CANVAS_ALLOWED_RESOURCE_TYPES,
         VisualFlowConstants.FLOW_BUILDER_VIEW_ALLOWED_RESOURCE_TYPES,
@@ -34,8 +36,16 @@ describe('VisualFlowConstants', () => {
       ];
 
       lists.forEach((list) => {
-        expect(list.includes(ElementTypes.Select)).toBe(list.includes(ElementTypes.Dropdown));
+        expect(list.includes(type)).toBe(list.includes(follows));
       });
+    });
+  });
+
+  describe('VARIABLES droppable targets', () => {
+    it('should allow the variables step to be dropped on the canvas, and nowhere else', () => {
+      expect(VisualFlowConstants.FLOW_BUILDER_CANVAS_ALLOWED_RESOURCE_TYPES).toContain(StaticStepTypes.Variables);
+      expect(VisualFlowConstants.FLOW_BUILDER_VIEW_ALLOWED_RESOURCE_TYPES).not.toContain(StaticStepTypes.Variables);
+      expect(VisualFlowConstants.FLOW_BUILDER_FORM_ALLOWED_RESOURCE_TYPES).not.toContain(StaticStepTypes.Variables);
     });
   });
 

@@ -39,9 +39,6 @@ const (
 	// cibaMaxBindingMessageLength mirrors ciba.cibaMaxBindingMessageLength (the maximum number of
 	// characters allowed in a binding_message).
 	cibaMaxBindingMessageLength = 256
-	// cibaMockNotificationServerPort is the port for this suite's mock notification server. It must
-	// not collide with other integration suites (the SMS auth suite uses 8098).
-	cibaMockNotificationServerPort = 8099
 
 	cibaClientID     = "ciba_test_client_123"
 	cibaClientSecret = "ciba_test_secret_123"
@@ -108,9 +105,8 @@ func (ts *CIBATestSuite) SetupSuite() {
 
 	// Mock notification server captures the CIBA notification (which carries the invite link with
 	// the executionId). It is a plain HTTP server; the sender below is pointed at it via the API.
-	ts.mockServer = testutils.NewMockNotificationServer(cibaMockNotificationServerPort)
-	ts.Require().NoError(ts.mockServer.Start(), "Failed to start mock notification server")
-	time.Sleep(100 * time.Millisecond)
+	ts.mockServer, err = testutils.NewMockNotificationServer()
+	ts.Require().NoError(err, "Failed to create mock notification server")
 
 	// A custom notification sender that POSTs rendered messages to the mock server. This is a DB
 	// resource created via the API, so no server restart is required.
@@ -515,18 +511,18 @@ func (ts *CIBATestSuite) TestCIBAFlowFailureDeniesRequest() {
 
 // TestCIBAExpiredRequestRejectsPolling verifies that a request whose requested_expiry has elapsed is
 // rejected by the token endpoint with expired_token (repeatedly, once the request is marked EXPIRED),
-// and that resolveExpiresIn only clamps the upper bound: a below-max value like 1 is honored verbatim,
+// and that resolveExpiresIn only clamps the upper bound: a below-max value like 2 is honored verbatim,
 // while an above-max value like 9999 clamps down to the server maximum.
 func (ts *CIBATestSuite) TestCIBAExpiredRequestRejectsPolling() {
 	form := url.Values{}
 	form.Set("login_hint", cibaTestUsername)
 	form.Set("scope", "openid")
-	form.Set("requested_expiry", "1")
+	form.Set("requested_expiry", "2")
 	status, bcResp := ts.cibaBackchannelAuthorizeForm(form, cibaClientID, cibaClientSecret)
 	ts.Require().Equal(http.StatusOK, status)
-	ts.Require().Equal(int64(1), bcResp.ExpiresIn, "a requested_expiry below the max must be honored")
+	ts.Require().Equal(int64(2), bcResp.ExpiresIn, "a requested_expiry below the max must be honored")
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	expired := ts.cibaPollToken(bcResp.AuthReqID, "")
 	ts.Require().Equal(http.StatusBadRequest, expired.statusCode)
@@ -832,10 +828,10 @@ func (ts *CIBATestSuite) TestCIBACallbackNegatives() {
 				form := url.Values{}
 				form.Set("login_hint", cibaTestUsername)
 				form.Set("scope", "openid")
-				form.Set("requested_expiry", "1")
+				form.Set("requested_expiry", "2")
 				status, bcResp := ts.cibaBackchannelAuthorizeForm(form, cibaClientID, cibaClientSecret)
 				ts.Require().Equal(http.StatusOK, status)
-				time.Sleep(2 * time.Second)
+				time.Sleep(3 * time.Second)
 				return bcResp.AuthReqID, "some-assertion"
 			},
 			wantErrorCode: "expired_token",

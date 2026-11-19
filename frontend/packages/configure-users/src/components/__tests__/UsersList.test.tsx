@@ -1,6 +1,7 @@
 // Copyright 2025-2026 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
+import {CapabilitiesProvider, ProjectScopeProvider} from '@thunderid/contexts';
 import {render, screen, waitFor, userEvent} from '@thunderid/test-utils';
 import type * as OxygenUI from '@wso2/oxygen-ui';
 import {DataGrid} from '@wso2/oxygen-ui';
@@ -42,16 +43,8 @@ vi.mock('@wso2/oxygen-ui', async () => {
       GridRenderCellParams: {} as never,
     },
     ListingTable: {
-      Provider: ({children, variant = undefined}: {children: React.ReactNode; variant?: string}) => (
-        <div data-testid="listing-provider" data-variant={variant}>
-          {children}
-        </div>
-      ),
-      Container: ({children, disablePaper = undefined}: {children: React.ReactNode; disablePaper?: boolean}) => (
-        <div data-testid="listing-container" data-disable-paper={disablePaper}>
-          {children}
-        </div>
-      ),
+      Provider: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
+      Container: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
       DataGrid: ({
         rows = [],
         columns = [],
@@ -176,10 +169,10 @@ interface UseGetUsersReturn {
   error: Error | null;
 }
 
-const mockUseGetUsers = vi.fn<() => UseGetUsersReturn>();
+const mockUseGetUsers = vi.fn<(params?: {projectId?: string}) => UseGetUsersReturn>();
 
 vi.mock('@/api/useGetUsers', () => ({
-  default: () => mockUseGetUsers(),
+  default: (params?: {projectId?: string}) => mockUseGetUsers(params),
 }));
 
 // The delete flow lives in UserDeleteDialog (covered by its own test). Stub it here so these
@@ -195,6 +188,11 @@ vi.mock('@/components/UserDeleteDialog', () => ({
       </div>
     ) : null,
 }));
+
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
 
 describe('UsersList', () => {
   const mockUsersData: UserListResponse = {
@@ -238,6 +236,22 @@ describe('UsersList', () => {
     });
   });
 
+  it('lists the users of the selected project', () => {
+    render(
+      <ProjectScopeProvider project={{id: 'project-1'}}>
+        <UsersList />
+      </ProjectScopeProvider>,
+    );
+
+    expect(mockUseGetUsers).toHaveBeenCalledWith(expect.objectContaining({projectId: 'project-1'}));
+  });
+
+  it('lists every user without a selected project', () => {
+    render(<UsersList />);
+
+    expect(mockUseGetUsers).toHaveBeenCalledWith(expect.objectContaining({projectId: undefined}));
+  });
+
   it('renders DataGrid with users', async () => {
     render(<UsersList />);
 
@@ -271,20 +285,6 @@ describe('UsersList', () => {
     const indicators = await screen.findAllByRole('img', {name: 'Active'});
     expect(indicators.length).toBeGreaterThan(0);
     indicators.forEach((indicator) => expect(indicator).toHaveAttribute('tabindex', '-1'));
-  });
-
-  it('renders the listing as a papered data grid', () => {
-    render(<UsersList />);
-
-    expect(screen.getByTestId('listing-provider')).toHaveAttribute('data-variant', 'data-grid');
-    expect(screen.getByTestId('listing-container')).not.toHaveAttribute('data-disable-paper');
-  });
-
-  it('gives each row action button an accessible name', () => {
-    render(<UsersList />);
-
-    expect(screen.getAllByRole('button', {name: 'Edit'})).toHaveLength(2);
-    expect(screen.getAllByRole('button', {name: 'Delete'})).toHaveLength(2);
   });
 
   it('displays user avatars with initials', async () => {
@@ -332,6 +332,21 @@ describe('UsersList', () => {
 
     const deleteButtons = screen.getAllByRole('button', {name: /delete/i});
     expect(deleteButtons.length).toBeGreaterThan(0);
+  });
+
+  it('hides the edit and delete row actions when the admin may only view users', async () => {
+    render(
+      <CapabilitiesProvider capabilities={viewOnly}>
+        <UsersList />
+      </CapabilitiesProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('row-user1')).toHaveTextContent('John Doe');
+    });
+
+    expect(screen.queryByRole('button', {name: /delete/i})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: /edit/i})).not.toBeInTheDocument();
   });
 
   it('navigates to view page when row is clicked', async () => {

@@ -9,12 +9,12 @@ import {
   CircularProgress,
   Collapse,
   IconButton,
-  ListingTable,
   Paper,
   Stack,
   Table,
   TableBody,
   TableCell,
+  TableHead,
   TableRow,
   TextField,
   Tooltip,
@@ -24,9 +24,11 @@ import {Check, ChevronRight, Pencil, Trash2, X} from '@wso2/oxygen-ui-icons-reac
 import {Fragment, useMemo, useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useDeleteStoredValue, useSetStoredValue} from '../api/useStoredValues';
+import useGatewayValueAccess from '../hooks/useGatewayValueAccess';
 import type {StoredValue, ValueKind, ValueReference} from '../models/deploy';
 import groupByResource, {humanize, type ResourceGroup, type TypeGroup} from '../utils/groupByResource';
 import {fromListText, toListText} from '../utils/listValue';
+import {fieldLabel, parseValueName} from '../utils/valueLabels';
 
 /** One name a gateway holds or is asked to hold, with what refers to it. */
 export interface ValueRow {
@@ -35,6 +37,11 @@ export interface ValueRow {
   stored?: StoredValue;
   /** The places the running version refers to it. */
   references: ValueReference[];
+  /**
+   * The places the configuration as it stands refers to it, kept only for a name the running version does
+   * not refer to, so that it can be shown with the resource it belongs to.
+   */
+  current: ValueReference[];
 }
 
 export interface ValuesTableProps {
@@ -62,6 +69,9 @@ const TYPE_LABELS: Record<string, string> = {
   user_type: 'User types',
 };
 
+/** Where a row's value is used: by the running version if it is, otherwise by the current configuration. */
+const placesOf = (row: ValueRow): ValueReference[] => (row.references.length > 0 ? row.references : row.current);
+
 const isHeld = (row: ValueRow, secret: boolean): boolean =>
   secret ? Boolean(row.stored) && row.stored?.exists !== false : row.stored?.value !== undefined;
 
@@ -76,6 +86,9 @@ const countOf = (resources: ResourceGroup[]): number =>
  */
 export default function ValuesTable({gatewayId, kind, rows}: ValuesTableProps): JSX.Element {
   const {t} = useTranslation('deploy');
+  const {canValue} = useGatewayValueAccess();
+  const canSet = canValue(kind, 'update');
+  const canDelete = canValue(kind, 'delete');
   const setValue = useSetStoredValue(gatewayId, kind);
   const deleteValue = useDeleteStoredValue(gatewayId, kind);
   const [editing, setEditing] = useState<string | null>(null);
@@ -98,16 +111,14 @@ export default function ValuesTable({gatewayId, kind, rows}: ValuesTableProps): 
     resourceType
       ? t(`values.types.${resourceType}`, {defaultValue: TYPE_LABELS[resourceType] ?? humanize(resourceType)})
       : t('values.other', 'Not used by the version this gateway runs');
-  const fieldLabel = (field: string | undefined): string =>
-    field ? t(`values.fields.${field}`, {defaultValue: humanize(field)}) : t('values.value', 'Value');
+  const labelOf = (field: string | undefined): string => fieldLabel(t, field);
 
   const start = (row: ValueRow): void => {
     setError(null);
     setEditing(row.name);
     setDraft(secret ? '' : toListText(row.stored?.value ?? ''));
   };
-  const isList = (row: ValueRow): boolean =>
-    row.references.some((reference: ValueReference) => reference.list === true);
+  const isList = (row: ValueRow): boolean => placesOf(row).some((reference: ValueReference) => reference.list === true);
   const save = async (row: ValueRow): Promise<void> => {
     setError(null);
     try {
@@ -149,12 +160,23 @@ export default function ValuesTable({gatewayId, kind, rows}: ValuesTableProps): 
   }
 
   const nameCell = (row: ValueRow): JSX.Element => {
+    const places = placesOf(row);
+    // The running version does not use it: the current configuration does, or nothing does.
+    const notRunning = row.references.length === 0;
+    // A name the server derived reads back as a type and a field, which says more than the name does.
+    const derived = places.length === 0 ? parseValueName(row.name) : null;
+    let title = row.name;
+    if (places.length > 0) {
+      title = labelOf(places[0].field);
+    } else if (derived) {
+      title = `${t(`values.typeNames.${derived.resourceType}`, {defaultValue: humanize(derived.resourceType)})} · ${labelOf(derived.field)}`;
+    }
     const others = [
       ...new Set(
-        row.references
+        places
           .slice(1)
           .map((reference: ValueReference) =>
-            [reference.resourceName ?? reference.resourceId, fieldLabel(reference.field)].filter(Boolean).join(' · '),
+            [reference.resourceName ?? reference.resourceId, labelOf(reference.field)].filter(Boolean).join(' · '),
           ),
       ),
     ];
@@ -162,8 +184,11 @@ export default function ValuesTable({gatewayId, kind, rows}: ValuesTableProps): 
       <Box>
         <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="body2" sx={{fontWeight: 500}}>
-            {row.references.length > 0 ? fieldLabel(row.references[0].field) : row.name}
+            {title}
           </Typography>
+          {notRunning && places.length > 0 && (
+            <Chip size="small" variant="outlined" label={t('values.notRunning', 'Not used by the running version')} />
+          )}
           {others.length > 0 && (
             <Tooltip title={others.join(', ')}>
               <Typography component="span" variant="body2" color="text.secondary">
@@ -172,7 +197,7 @@ export default function ValuesTable({gatewayId, kind, rows}: ValuesTableProps): 
             </Tooltip>
           )}
         </Stack>
-        {row.references.length > 0 && (
+        {(places.length > 0 || derived) && (
           <Typography variant="caption" color="text.secondary" sx={{fontFamily: 'monospace'}}>
             {row.name}
           </Typography>
@@ -213,7 +238,8 @@ export default function ValuesTable({gatewayId, kind, rows}: ValuesTableProps): 
     );
   };
 
-  const actionsCell = (row: ValueRow): JSX.Element => {
+  const actionsCell = (row: ValueRow): JSX.Element | null => {
+    if (!canSet && !canDelete) return null;
     const held = isHeld(row, secret);
     if (editing === row.name) {
       return (
@@ -240,16 +266,18 @@ export default function ValuesTable({gatewayId, kind, rows}: ValuesTableProps): 
     }
     return (
       <>
-        <Button
-          size="small"
-          variant="text"
-          startIcon={<Pencil size={14} />}
-          onClick={() => start(row)}
-          aria-label={t('values.setLabel', 'Set {{name}}', {name: row.name})}
-        >
-          {held ? (secret ? t('values.replace', 'Replace') : t('values.edit', 'Edit')) : t('values.set', 'Set')}
-        </Button>
-        {held && (
+        {canSet && (
+          <Button
+            size="small"
+            variant="text"
+            startIcon={<Pencil size={14} />}
+            onClick={() => start(row)}
+            aria-label={t('values.setLabel', 'Set {{name}}', {name: row.name})}
+          >
+            {held ? (secret ? t('values.replace', 'Replace') : t('values.edit', 'Edit')) : t('values.set', 'Set')}
+          </Button>
+        )}
+        {held && canDelete && (
           <Tooltip title={t('values.delete', 'Remove')}>
             <IconButton
               size="small"
@@ -269,41 +297,41 @@ export default function ValuesTable({gatewayId, kind, rows}: ValuesTableProps): 
   const valuesTable = (resources: ResourceGroup[]): JSX.Element => (
     <Box sx={{bgcolor: 'background.default', px: 2, py: 1.5}}>
       <Paper variant="outlined" sx={{overflow: 'hidden'}}>
-        <ListingTable density="compact">
-          <ListingTable.Head>
-            <ListingTable.Row>
-              <ListingTable.Cell>{t('values.name', 'Name')}</ListingTable.Cell>
-              <ListingTable.Cell>{t('values.value', 'Value')}</ListingTable.Cell>
-              <ListingTable.Cell align="right" />
-            </ListingTable.Row>
-          </ListingTable.Head>
-          <ListingTable.Body>
+        <Table size="small">
+          <TableHead>
+            <TableRow sx={{'& th': {bgcolor: 'action.hover'}}}>
+              <TableCell>{t('values.name', 'Name')}</TableCell>
+              <TableCell>{t('values.value', 'Value')}</TableCell>
+              <TableCell align="right" />
+            </TableRow>
+          </TableHead>
+          <TableBody>
             {resources.map((resource: ResourceGroup) => (
               <Fragment key={resource.key}>
                 {resource.label && (
-                  <ListingTable.Row>
-                    <ListingTable.Cell colSpan={3}>
+                  <TableRow>
+                    <TableCell colSpan={3} sx={{py: 0.75}}>
                       <Typography component="h4" variant="subtitle2">
                         {resource.label}
                       </Typography>
-                    </ListingTable.Cell>
-                  </ListingTable.Row>
+                    </TableCell>
+                  </TableRow>
                 )}
                 {resource.rows.map((row: ValueRow) => (
-                  <ListingTable.Row key={row.name} data-testid={`value-row-${row.name}`}>
-                    <ListingTable.Cell sx={{verticalAlign: 'top', width: '40%'}}>
-                      <Box sx={{pl: resource.label ? 1 : 0}}>{nameCell(row)}</Box>
-                    </ListingTable.Cell>
-                    <ListingTable.Cell sx={{verticalAlign: 'top', minWidth: 280}}>{valueCell(row)}</ListingTable.Cell>
-                    <ListingTable.Cell align="right" sx={{verticalAlign: 'top', whiteSpace: 'nowrap'}}>
+                  <TableRow key={row.name} data-testid={`value-row-${row.name}`}>
+                    <TableCell sx={{pl: resource.label ? 3 : 2, verticalAlign: 'top', width: '40%'}}>
+                      {nameCell(row)}
+                    </TableCell>
+                    <TableCell sx={{verticalAlign: 'top', minWidth: 280}}>{valueCell(row)}</TableCell>
+                    <TableCell align="right" sx={{verticalAlign: 'top', whiteSpace: 'nowrap'}}>
                       {actionsCell(row)}
-                    </ListingTable.Cell>
-                  </ListingTable.Row>
+                    </TableCell>
+                  </TableRow>
                 ))}
               </Fragment>
             ))}
-          </ListingTable.Body>
-        </ListingTable>
+          </TableBody>
+        </Table>
       </Paper>
     </Box>
   );

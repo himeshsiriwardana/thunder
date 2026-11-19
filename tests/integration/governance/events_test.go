@@ -34,6 +34,7 @@ const (
 	eventKeySubjectType   = "sub_type"
 	eventKeyActorSub      = "act_sub"
 	eventKeyNoteRecorded  = "operator_note_recorded"
+	eventKeyAppliedBy     = "applied_by"
 	eventKeyError         = "error"
 	eventKeyConfigName    = "config_name"
 	eventKeyLockMethod    = "lock_method"
@@ -92,6 +93,7 @@ func (ts *GovernanceEventsTestSuite) TestLifecycleOperationsArePublishedWithTheO
 	ts.Equal("user", suspended.Str(eventKeySubjectType), "the target's category must be published")
 	ts.Equal("success", suspended.Status)
 	ts.Equal(true, suspended.Data[eventKeyNoteRecorded], "whether a note was given is published")
+	ts.Equal("organization", suspended.Str(eventKeyAppliedBy), "an operator's suspension is the organization's")
 
 	runAdministrationFlow(ts.T(), unsuspendFlowHandle, userID)
 	unsuspended := ts.awaitEvent(eventIdentityUnsuspended, userID)
@@ -232,7 +234,7 @@ func (ts *GovernanceEventsTestSuite) TestAnOverLongOperatorNoteIsRefusedBeforeCo
 // holderStatus signs the account in and returns a probe of the status /users/me answers its token with.
 func (ts *GovernanceEventsTestSuite) holderStatus(username, password string) func() int {
 	ts.T().Helper()
-	holder, err := testutils.GetHTTPClientForUser(username, password)
+	holder, err := testutils.GetHTTPClientForOUUser(ts.fixture.signInClientID, username, password)
 	ts.Require().NoError(err, "the holder must sign in")
 	probe := func() int {
 		status, _ := getWith(ts.T(), holder, "/users/me")
@@ -306,7 +308,9 @@ func (ts *GovernanceEventsTestSuite) TestASectionWriteIsPublishedWithoutItsValue
 		[]byte(fmt.Sprintf(`{"user":{"lastLoginResolutionSeconds":%d}}`, marker))))
 	updated := ts.awaitEvent(eventServerConfigUpdated, "")
 	ts.Equal(accountAccessSection, updated.Str(eventKeyConfigName), "the section must be published")
-	ts.Equal(ts.adminSub, updated.Str(eventKeyActorSub), "the operator must be published")
+	// A data plane takes server configuration only from an import with the management API key, which
+	// writes as its own principal.
+	ts.Equal("management-api-key", updated.Str(eventKeyActorSub), "the operator must be published")
 	ts.NotContains(updated.Raw, fmt.Sprint(marker), "the written value must never be published")
 
 	status, body, err := testutils.PutWritableServerConfigWithStatus(accountAccessSection,
@@ -341,4 +345,19 @@ func (ts *GovernanceEventsTestSuite) countEvents(eventType, subject string) int 
 		}
 	}
 	return matched
+}
+
+func (ts *GovernanceEventsTestSuite) TestConcurrentFailuresPublishOneLockEpisode() {
+	userID, username, _ := ts.fixture.newUser(ts.T(), "concurrent_events", nil)
+
+	failAuthenticationConcurrently(ts.T(), "username", username, shippedUserLockThreshold*4)
+
+	locked := ts.awaitEvent(eventIdentityLocked, userID)
+	ts.Equal(float64(1), locked.Data[eventKeyLockCount], "the burst must publish the first episode")
+	ts.Equal("credential", locked.Str(eventKeyLockMethod))
+	failHeldAuthentication(ts.T(), "username", username, shippedUserLockThreshold, statedLockCode)
+	// This later event is the barrier for every lock event the completed burst published.
+	runAdministrationFlow(ts.T(), unlockFlowHandle, userID)
+	ts.awaitEvent(eventIdentityUnlocked, userID)
+	ts.Equal(1, ts.countEvents(eventIdentityLocked, userID), "one episode must publish one lock event")
 }

@@ -23,6 +23,12 @@ func (suite *ConstantsTestSuite) TestNodeVariant_String() {
 	assert.Equal(suite.T(), "CUSTOM", NodeVariant("CUSTOM").String())
 }
 
+func (suite *ConstantsTestSuite) TestAgentKind_IsValid() {
+	assert.True(suite.T(), AgentKindPersonalAssistant.IsValid())
+	assert.True(suite.T(), AgentKind("").IsValid(), "the empty kind is an ordinary agent")
+	assert.False(suite.T(), AgentKind("personal_assistant").IsValid())
+}
+
 func (suite *ConstantsTestSuite) TestGrantType_IsValid() {
 	valid := []GrantType{
 		GrantTypeAuthorizationCode,
@@ -30,6 +36,7 @@ func (suite *ConstantsTestSuite) TestGrantType_IsValid() {
 		GrantTypeRefreshToken,
 		GrantTypeTokenExchange,
 		GrantTypeCIBA,
+		GrantTypeDeviceCode,
 	}
 	for _, gt := range valid {
 		assert.True(suite.T(), gt.IsValid(), "expected %q to be valid", gt)
@@ -41,6 +48,7 @@ func (suite *ConstantsTestSuite) TestGrantType_IsValid() {
 func (suite *ConstantsTestSuite) TestGrantType_IssuesRefreshToken() {
 	assert.True(suite.T(), GrantTypeAuthorizationCode.IssuesRefreshToken())
 	assert.True(suite.T(), GrantTypeCIBA.IssuesRefreshToken())
+	assert.True(suite.T(), GrantTypeDeviceCode.IssuesRefreshToken())
 	assert.False(suite.T(), GrantTypeClientCredentials.IssuesRefreshToken())
 	assert.False(suite.T(), GrantTypeRefreshToken.IssuesRefreshToken())
 	assert.False(suite.T(), GrantTypeTokenExchange.IssuesRefreshToken())
@@ -50,6 +58,7 @@ func (suite *ConstantsTestSuite) TestGrantType_IssuesRefreshToken() {
 func (suite *ConstantsTestSuite) TestAnyIssuesRefreshToken() {
 	assert.True(suite.T(), AnyIssuesRefreshToken([]string{"client_credentials", "authorization_code"}))
 	assert.True(suite.T(), AnyIssuesRefreshToken([]string{string(GrantTypeCIBA)}))
+	assert.True(suite.T(), AnyIssuesRefreshToken([]string{string(GrantTypeDeviceCode)}))
 	assert.False(suite.T(), AnyIssuesRefreshToken([]string{"client_credentials", "refresh_token"}))
 	assert.False(suite.T(), AnyIssuesRefreshToken([]string{}))
 }

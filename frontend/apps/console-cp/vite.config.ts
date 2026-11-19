@@ -15,7 +15,7 @@ import svgr from 'vite-plugin-svgr';
 import {defineConfig} from 'vitest/config';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT ? Number(process.env.PORT) : 5192;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 5193;
 const HOST = process.env.HOST ?? 'localhost';
 const BASE_URL = process.env.BASE_URL ?? '/console';
 
@@ -53,6 +53,16 @@ const DEV_SERVER_URL = process.env.THUNDERID_DEV_SERVER_URL?.trim();
 // Dev gate app URL, from THUNDERID_DEV_GATE_URL (default https://localhost:5190). Injected into
 // __DEV_GATE_URL__ only for the dev server; production builds receive an empty string.
 const DEV_GATE_URL = process.env.THUNDERID_DEV_GATE_URL?.trim();
+
+// Dev URL of the issuer the console signs in through, from THUNDERID_DEV_TRUSTED_ISSUER_URL (unset
+// by default, which signs in at the server itself). Injected into __DEV_TRUSTED_ISSUER_URL__ only
+// for the dev server; production builds receive an empty string.
+const DEV_TRUSTED_ISSUER_URL = process.env.THUNDERID_DEV_TRUSTED_ISSUER_URL?.trim();
+
+// Dev Administrator role, from THUNDERID_DEV_ADMINISTRATOR_ROLE_ID (unset by default, which keeps
+// config.js's). Injected into __DEV_ADMINISTRATOR_ROLE_ID__ only for the dev server; production
+// builds receive an empty string.
+const DEV_ADMINISTRATOR_ROLE_ID = process.env.THUNDERID_DEV_ADMINISTRATOR_ROLE_ID?.trim();
 
 // https://vite.dev/config/
 export default defineConfig(({command}) => ({
@@ -101,6 +111,8 @@ export default defineConfig(({command}) => ({
     __DEV_GATE_URL__: JSON.stringify(
       command === 'serve' ? (DEV_GATE_URL && DEV_GATE_URL.length > 0 ? DEV_GATE_URL : 'https://localhost:5190') : '',
     ),
+    __DEV_TRUSTED_ISSUER_URL__: JSON.stringify(command === 'serve' ? (DEV_TRUSTED_ISSUER_URL ?? '') : ''),
+    __DEV_ADMINISTRATOR_ROLE_ID__: JSON.stringify(command === 'serve' ? (DEV_ADMINISTRATOR_ROLE_ID ?? '') : ''),
   },
   plugins: [
     linkWorkspaceSource(),

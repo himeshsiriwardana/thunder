@@ -38,9 +38,21 @@ interface Asset {
 }
 
 /**
+ * A product zip, with the version captured. Only Data Plane packs (`thunderid-gateway-*`) are product
+ * zips, so the quickstart pack (`thunderid-<version>-*`) that shares target/dist is not read as one.
+ */
+const PRODUCT_ZIP = /^thunderid-gateway-(\d.*)-(?:macos|linux|win)-(?:x64|arm64)\.zip$/;
+
+/**
+ * A 1.x product zip. A 1.x release ships only the Data Plane, under the product's name, so with no
+ * gateway pack in dir the `thunderid-<version>-*` zips are the product zips, as the CLI reads them.
+ */
+const SINGLE_PACK_PRODUCT_ZIP = /^thunderid-(1\..*)-(?:macos|linux|win)-(?:x64|arm64)\.zip$/;
+
+/**
  * Builds a manifest from the zips present in dir.
  *
- * Naming is the contract: build.sh emits `thunderid-<version>-<platform>-<arch>.zip` and
+ * Naming is the contract: build.sh emits `thunderid-gateway-<version>-<platform>-<arch>.zip` and
  * `sample-app-<name>-<version>.zip`, which is exactly what release.PlatformAssetName and
  * release.SampleAssetName look for. The version is taken from the product zips, and the sample
  * zips are attached to the same release so `try` resolves against it.
@@ -48,18 +60,22 @@ interface Asset {
 export function buildManifest(dir: string, baseUrl: string): { version: string; manifest: unknown } {
   const zips = fs.readdirSync(dir).filter(name => name.endsWith(".zip"));
 
-  const productZips = zips.filter(name => /^thunderid-.+-(macos|linux|win)-(x64|arm64)\.zip$/.test(name));
+  const gatewayZips = zips.filter(name => PRODUCT_ZIP.test(name));
+  const singlePackZips = zips.filter(name => SINGLE_PACK_PRODUCT_ZIP.test(name));
+  const productZips = gatewayZips.length > 0 ? gatewayZips : singlePackZips;
   if (productZips.length === 0) {
     throw new Error(
-      `No product zips in ${dir}. Expected something like thunderid-1.0.1-linux-x64.zip; found: ${
+      `No product zips in ${dir}. Expected something like thunderid-gateway-1.0.1-linux-x64.zip; found: ${
         zips.join(", ") || "(nothing)"
       }`
     );
   }
 
-  const versions = new Set(
-    productZips.map(name => /^thunderid-(.+)-(?:macos|linux|win)-(?:x64|arm64)\.zip$/.exec(name)![1])
-  );
+  // A single pack left beside a gateway pack is a product of another version, not one to ignore.
+  const versions = new Set([
+    ...gatewayZips.map(name => PRODUCT_ZIP.exec(name)![1]),
+    ...singlePackZips.map(name => SINGLE_PACK_PRODUCT_ZIP.exec(name)![1]),
+  ]);
   if (versions.size > 1) {
     throw new Error(`${dir} holds more than one product version: ${[...versions].join(", ")}`);
   }

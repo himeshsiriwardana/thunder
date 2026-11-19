@@ -403,6 +403,47 @@ var (
 			DefaultValue: "A rule for this field must state editable and nothing else",
 		},
 	}
+	// ErrorChildUnitWithheld is returned when the owner's blanket policy leaves the target child unit out.
+	ErrorChildUnitWithheld = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "SHR-1029",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.sharingservice.child_unit_withheld",
+			DefaultValue: "Sharing to this organization unit is withheld",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.sharingservice.child_unit_withheld_description",
+			DefaultValue: "The owner's policy reaches its child units as a whole and leaves this one out",
+		},
+	}
+	// ErrorTargetNotDirectChild is returned when a share into a child unit targets a unit that is not a direct child
+	// of the owner.
+	ErrorTargetNotDirectChild = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "SHR-1030",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.sharingservice.target_not_direct_child",
+			DefaultValue: "Organization unit is not a direct child",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.sharingservice.target_not_direct_child_description",
+			DefaultValue: "A resource can be shared this way only into a direct child of the organization unit " +
+				"that owns it",
+		},
+	}
+	// ErrorResourceTypeNotShareable is returned when a resource type does not authorize sharing into a child unit.
+	ErrorResourceTypeNotShareable = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "SHR-1031",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.sharingservice.resource_type_not_shareable",
+			DefaultValue: "Resource type cannot be shared into a child unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.sharingservice.resource_type_not_shareable_description",
+			DefaultValue: "The resource type does not authorize sharing into an organization unit",
+		},
+	}
 )
 
 // errPolicyNotFound is the store's own signal that no row carries an id, kept unexported because
@@ -500,3 +541,21 @@ var errOverlayReplaceRefused = errors.New("overlay replacement refused")
 // errPolicyPurgeRefused rolls back a resource's policy purge. The refusal itself travels out
 // separately, so the caller sees which policy could not be removed.
 var errPolicyPurgeRefused = errors.New("sharing policy purge refused")
+
+// ResourceTypeError carries a resource type's error out of the sharing change it rolls back.
+type ResourceTypeError struct {
+	svcErr *tidcommon.ServiceError
+}
+
+// NewResourceTypeError wraps a resource type's error so a capability can stop a sharing change with it.
+func NewResourceTypeError(svcErr *tidcommon.ServiceError) error {
+	if svcErr == nil {
+		return nil
+	}
+	return &ResourceTypeError{svcErr: svcErr}
+}
+
+// Error names the resource type's error code.
+func (e *ResourceTypeError) Error() string {
+	return "resource type stopped the sharing change: code=" + e.svcErr.Code
+}

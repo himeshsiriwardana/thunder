@@ -5,12 +5,15 @@ package declarativeresource
 
 import (
 	"context"
+	"fmt"
 
 	"gopkg.in/yaml.v3"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/valueref"
+	"github.com/thunder-id/thunderid/internal/system/varname"
 )
 
 // ResourceRules defines variables and array variables to parameterize for a resource type.
@@ -63,6 +66,16 @@ type PerResourceRuler interface {
 	GetResourceRulesForResource(resource interface{}) *ResourceRules
 }
 
+// ResourceIdentifier is implemented by an exporter whose export names values, so that the ID a name is
+// derived from can be read from a resource the exporter was handed rather than looked up.
+//
+// A value captured as the resource is written is named from the resource itself, and must get the
+// same name an export of that resource writes.
+type ResourceIdentifier interface {
+	// GetResourceID returns the ID of the resource, or "" when the value is not one the exporter reads.
+	GetResourceID(resource interface{}) string
+}
+
 // SecretFieldLister names the fields of an exported document that hold a credential: the only
 // places an import may put the value a "sec:" reference names.
 //
@@ -93,6 +106,28 @@ func SecretFieldsOf(exporters []ResourceExporter) map[string][]string {
 // "{{.NAME}}" where it writes templates.
 type ReferenceWriter interface {
 	WriteValueReferences(references bool)
+}
+
+// CredentialPlaceholders returns the placeholder an export writes for each credential a resource
+// holds, keyed by the credential: a secret reference where the export writes references, and a
+// template placeholder where it writes templates.
+//
+// A stored credential is a one-way hash, so its value never leaves. The placeholder names it instead,
+// and the importing deployment fills it from its own secrets or variables. An exporter whose
+// credentials sit in a map writes these itself, since the parameterizer only rewrites a slice of
+// properties and would export a map's values as they are.
+func CredentialPlaceholders(resourceType, resourceID string, credentials []string,
+	references bool) map[string]interface{} {
+	placeholders := make(map[string]interface{}, len(credentials))
+	for _, credential := range credentials {
+		name := varname.DeriveVariableName(resourceType, resourceID, credential)
+		if references {
+			placeholders[credential] = valueref.SecretReference(name)
+			continue
+		}
+		placeholders[credential] = fmt.Sprintf("{{.%s}}", name)
+	}
+	return placeholders
 }
 
 // ValueCapturer keeps the values a resource's export refers to by name, so that whatever later

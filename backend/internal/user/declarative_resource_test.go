@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"gopkg.in/yaml.v3"
 
 	entitypkg "github.com/thunder-id/thunderid/internal/entity"
 	"github.com/thunder-id/thunderid/internal/sharing"
@@ -23,7 +24,6 @@ import (
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/entitymock"
-	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 	"github.com/thunder-id/thunderid/tests/mocks/sharingmock"
 )
 
@@ -173,8 +173,7 @@ func (suite *DeclarativeResourceTestSuite) TestParseToUserWrapper() {
 
 func (suite *DeclarativeResourceTestSuite) TestUserExporter_Metadata() {
 	exporter := newUserExporter(
-		NewUserServiceInterfaceMock(suite.T()), entitymock.NewEntityServiceInterfaceMock(suite.T()),
-		entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T()), nil)
+		NewUserServiceInterfaceMock(suite.T()), entitymock.NewEntityServiceInterfaceMock(suite.T()), nil)
 
 	suite.Equal(resourceTypeUser, exporter.GetResourceType())
 	suite.Equal(paramTypeUser, exporter.GetParameterizerType())
@@ -185,7 +184,7 @@ func (suite *DeclarativeResourceTestSuite) TestUserExporter_GetAllResourceIDs() 
 	mockSvc := NewUserServiceInterfaceMock(suite.T())
 	entityServiceMock := entitymock.NewEntityServiceInterfaceMock(suite.T())
 	exporter := newUserExporter(
-		mockSvc, entityServiceMock, entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T()), nil)
+		mockSvc, entityServiceMock, nil)
 
 	users := []providers.User{{ID: "user-1"}, {ID: "user-2"}}
 	mockSvc.On("GetUserList", ctx, serverconst.MaxPageSize, 0, mock.Anything, false).
@@ -231,29 +230,64 @@ func (suite *DeclarativeResourceTestSuite) TestMakeUserParser_ParsesYAMLToEntity
 	suite.NotEmpty(systemCreds)
 }
 
+func (suite *DeclarativeResourceTestSuite) TestMakeUserParser_ReadsTheProject() {
+	userYAML := []byte("" +
+		"id: user-1\n" +
+		"type: person\n" +
+		"ouId: ou-1\n" +
+		"projectId: project-1\n" +
+		"attributes:\n" +
+		"  username: alice\n")
+
+	e, _, _, err := makeUserParser(nil)(userYAML)
+
+	suite.NoError(err)
+	suite.Equal("project-1", e.ProjectID)
+}
+
 func (suite *DeclarativeResourceTestSuite) TestGetResourceRules_IncludesCredentials() {
 	exporter := newUserExporter(
-		NewUserServiceInterfaceMock(suite.T()), entitymock.NewEntityServiceInterfaceMock(suite.T()),
-		entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T()), nil)
+		NewUserServiceInterfaceMock(suite.T()), entitymock.NewEntityServiceInterfaceMock(suite.T()), nil)
 
 	rules := exporter.GetResourceRules()
 	suite.Contains(rules.DynamicPropertyFields, "Credentials")
 }
 
-func (suite *DeclarativeResourceTestSuite) TestValidateResource_MissingUsername() {
+// A user whose type has no username, such as one known only by email, is exported under its ID.
+func (suite *DeclarativeResourceTestSuite) TestValidateResource_MissingUsernameNamesTheFileAfterTheID() {
 	exporter := newUserExporter(
-		NewUserServiceInterfaceMock(suite.T()), entitymock.NewEntityServiceInterfaceMock(suite.T()),
-		entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T()), nil)
+		NewUserServiceInterfaceMock(suite.T()), entitymock.NewEntityServiceInterfaceMock(suite.T()), nil)
 
 	resource := &userDeclarativeResource{
 		ID:         "user-1",
 		Type:       "person",
 		OUID:       "ou-1",
-		Attributes: map[string]interface{}{},
+		Attributes: map[string]interface{}{"email": "nameless@example.com"},
 	}
 
-	_, err := exporter.ValidateResource(context.Background(), resource, "user-1", log.GetLogger())
-	suite.NotNil(err)
+	name, err := exporter.ValidateResource(context.Background(), resource, "user-1", log.GetLogger())
+	suite.Nil(err)
+	suite.Equal("user-1", name)
+}
+
+func (suite *DeclarativeResourceTestSuite) TestMakeUserValidator_AcceptsAUserWithoutAUsername() {
+	attrs, err := json.Marshal(map[string]interface{}{"email": "nameless@example.com"})
+	suite.Require().NoError(err)
+
+	e := &providers.Entity{
+		ID:         "user-1",
+		Type:       "person",
+		OUID:       "ou-1",
+		Attributes: attrs,
+	}
+
+	svcMock := entitymock.NewEntityServiceInterfaceMock(suite.T())
+	svcMock.On("GetEntityProfile", context.Background(), "user-1").
+		Return((*providers.Entity)(nil), entitypkg.ErrEntityNotFound)
+
+	validator := makeUserValidator()
+	err = validator(e, svcMock)
+	suite.NoError(err)
 }
 
 func (suite *DeclarativeResourceTestSuite) TestMakeUserValidator_Success() {
@@ -480,7 +514,7 @@ func (c *credentialExport) sharingAnswers(
 ) {
 	t.Helper()
 	c.sharing = sharingmock.NewSharingServiceInterfaceMock(t)
-	c.exporter = newUserExporter(c.users, c.entities, c.entityTypes, c.sharing)
+	c.exporter = newUserExporter(c.users, c.entities, c.sharing)
 	c.sharing.On("ExportPolicies", context.Background(), UserSharingType, "user-1").
 		Return(replayable, svcErr).Once()
 }
@@ -489,7 +523,7 @@ func (c *credentialExport) sharingAnswers(
 // shares it the same way.
 func TestAUsersSharingPoliciesAreExported(t *testing.T) {
 	c := newCredentialExport(t, "alice")
-	c.typeDeclaresCredentials()
+	c.userHolds()
 	share := sharing.PolicyRequest{ChildUnits: &sharing.ChildUnitsRequest{
 		Mode:  sharing.ChildUnitsSelected,
 		Units: []sharing.ChildUnitRequest{{OUID: "ou-eu", Reach: sharing.ReachUnit}},
@@ -508,10 +542,38 @@ func TestAUsersSharingPoliciesAreExported(t *testing.T) {
 	assert.Equal(t, []sharing.PolicyRequest{share, reshare}, user.SharingPolicies)
 }
 
+// The roles a share mandates travel with the user's export, in the shape an import replays.
+func (suite *DeclarativeResourceTestSuite) TestAUsersMandatedRolesAreExported() {
+	c := newCredentialExport(suite.T(), "alice")
+	c.userHolds()
+	roles := []string{"role-a"}
+	share := sharing.PolicyRequest{ChildUnits: &sharing.ChildUnitsRequest{
+		Mode: sharing.ChildUnitsSelected,
+		Units: []sharing.ChildUnitRequest{{OUID: "ou-eu", Reach: sharing.ReachUnit,
+			OverlayRules: map[string]sharing.OverlayRule{RolesFieldKey: {Value: &roles}}}},
+	}}
+	c.sharingAnswers(suite.T(), []sharing.ReplayablePolicy{{InitiatingOUID: "ou-1", Request: share}}, nil)
+
+	doc, err := yaml.Marshal(c.exportUser(suite.T()))
+	suite.Require().NoError(err)
+	var reimported userDeclarativeResource
+	suite.Require().NoError(yaml.Unmarshal(doc, &reimported))
+
+	suite.Assert().Contains(string(doc), "editable: false")
+	suite.Require().Len(reimported.SharingPolicies, 1)
+	units := reimported.SharingPolicies[0].ChildUnits.Units
+	suite.Require().Len(units, 1)
+	suite.Assert().Equal(sharing.ReachUnit, units[0].Reach)
+	rule := units[0].OverlayRules[RolesFieldKey]
+	suite.Assert().False(rule.Editable)
+	suite.Require().NotNil(rule.Value)
+	suite.Assert().Equal(roles, *rule.Value)
+}
+
 // A user shared nowhere is exported with no sharing section.
 func TestAUserSharedNowhereExportsNoSharingPolicies(t *testing.T) {
 	c := newCredentialExport(t, "alice")
-	c.typeDeclaresCredentials()
+	c.userHolds()
 
 	user := c.exportUser(t)
 
@@ -522,11 +584,32 @@ func TestAUserSharedNowhereExportsNoSharingPolicies(t *testing.T) {
 // re-import shared nowhere.
 func TestUnreadableSharingFailsTheUsersExport(t *testing.T) {
 	c := newCredentialExport(t, "alice")
-	c.typeDeclaresCredentials()
+	c.userHolds()
 	c.sharingAnswers(t, nil, &tidcommon.InternalServerError)
 
 	_, _, svcErr := c.exporter.GetResourceByID(context.Background(), "user-1")
 
 	require.NotNil(t, svcErr)
 	assert.Equal(t, tidcommon.InternalServerError.Code, svcErr.Code)
+}
+
+// A user's project travels with its export, so a deploy scoped to the project carries the user.
+func TestAUsersProjectIsExported(t *testing.T) {
+	users := NewUserServiceInterfaceMock(t)
+	entities := entitymock.NewEntityServiceInterfaceMock(t)
+	sharingMock := sharingmock.NewSharingServiceInterfaceMock(t)
+	users.On("GetUser", context.Background(), "user-1", false).Return(&providers.User{ID: "user-1",
+		Type: "person", OUID: "ou-1", ProjectID: "project-1", Attributes: json.RawMessage(`{"username":"alice"}`)},
+		(*tidcommon.ServiceError)(nil)).Once()
+	entities.On("GetHeldCredentialTypes", context.Background(), "user-1").Return([]string{}, nil).Once()
+	sharingMock.On("ExportPolicies", context.Background(), UserSharingType, "user-1").
+		Return([]sharing.ReplayablePolicy(nil), (*tidcommon.ServiceError)(nil)).Once()
+
+	resource, _, svcErr := newUserExporter(users, entities, sharingMock).
+		GetResourceByID(context.Background(), "user-1")
+
+	require.Nil(t, svcErr)
+	doc, err := yaml.Marshal(resource)
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), "projectId: project-1")
 }

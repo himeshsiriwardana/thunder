@@ -15,7 +15,6 @@ import (
 )
 
 const (
-	conditionalExecMockGooglePort    = 8093
 	conditionalExecNewUserSub        = "conditional-exec-new-user-sub"
 	conditionalExecNewUserEmail      = "newuser@conditional-exec-test.com"
 	conditionalExecExistingUserSub   = "conditional-exec-existing-user-sub"
@@ -52,7 +51,7 @@ var (
 				"condition": map[string]interface{}{
 					"key":    "{{ctx(userEligibleForProvisioning)}}",
 					"value":  "true",
-					"onSkip": "auth_assert",
+					"onSkip": "resolve_ou",
 				},
 				"executor": map[string]interface{}{
 					"name": "OUExecutor",
@@ -65,10 +64,23 @@ var (
 				"condition": map[string]interface{}{
 					"key":    "{{ctx(userEligibleForProvisioning)}}",
 					"value":  "true",
-					"onSkip": "auth_assert",
+					"onSkip": "resolve_ou",
 				},
 				"executor": map[string]interface{}{
 					"name": "ProvisioningExecutor",
+				},
+				"onSuccess": "resolve_ou",
+			},
+			// The application is shared, so an existing user's sign-in decides its OU here. A provisioned
+			// user's OU is the one OU creation set, which the resolver keeps.
+			{
+				"id":   "resolve_ou",
+				"type": "TASK_EXECUTION",
+				"properties": map[string]interface{}{
+					"resolveFrom": "prompt",
+				},
+				"executor": map[string]interface{}{
+					"name": "OUResolverExecutor",
 				},
 				"onSuccess": "auth_assert",
 			},
@@ -173,9 +185,8 @@ func (ts *ConditionalExecAuthFlowTestSuite) SetupSuite() {
 	// Initialize config
 	ts.config = &common.TestSuiteConfig{}
 
-	// Start mock Google server
-	mockGoogleServer, err := testutils.NewMockGoogleOIDCServer(conditionalExecMockGooglePort,
-		"test_google_client", "test_google_secret")
+	// Create mock Google server
+	mockGoogleServer, err := testutils.NewMockGoogleOIDCServer("conditional_exec_google_client", "conditional_exec_google_secret")
 	ts.Require().NoError(err, "Failed to create mock Google server")
 	ts.mockGoogleServer = mockGoogleServer
 
@@ -200,9 +211,6 @@ func (ts *ConditionalExecAuthFlowTestSuite) SetupSuite() {
 		Picture:       "https://example.com/picture2.jpg",
 		Locale:        "en",
 	})
-
-	err = ts.mockGoogleServer.Start()
-	ts.Require().NoError(err, "Failed to start mock Google server")
 
 	// Create test organization unit
 	ouID, err := testutils.CreateOrganizationUnit(conditionalExecTestOU)
@@ -244,12 +252,12 @@ func (ts *ConditionalExecAuthFlowTestSuite) SetupSuite() {
 		Properties: []testutils.IDPProperty{
 			{
 				Name:     "client_id",
-				Value:    "test_google_client",
+				Value:    "conditional_exec_google_client",
 				IsSecret: false,
 			},
 			{
 				Name:     "client_secret",
-				Value:    "test_google_secret",
+				Value:    "conditional_exec_google_secret",
 				IsSecret: true,
 			},
 			{
@@ -291,6 +299,7 @@ func (ts *ConditionalExecAuthFlowTestSuite) SetupSuite() {
 	// Update flow definition with created IDP ID
 	nodes := conditionalExecFlow.Nodes.([]map[string]interface{})
 	nodes[1]["properties"].(map[string]interface{})["idpId"] = idpID
+	nodes[4]["properties"].(map[string]interface{})["parentOuId"] = conditionalExecPreCreatedOUID
 	conditionalExecFlow.Nodes = nodes
 
 	// Create flow
@@ -304,6 +313,10 @@ func (ts *ConditionalExecAuthFlowTestSuite) SetupSuite() {
 	appID, err := testutils.CreateApplication(conditionalExecTestApp)
 	ts.Require().NoError(err, "Failed to create test application")
 	conditionalExecTestAppID = appID
+
+	// A new user is provisioned into the OU created during sign-in, below the application's own, so the
+	// application is shared with the units beneath it.
+	ts.Require().NoError(testutils.ShareApplicationWithChildUnits(appID), "Failed to share test application")
 }
 
 func (ts *ConditionalExecAuthFlowTestSuite) TearDownSuite() {
@@ -382,7 +395,8 @@ func (ts *ConditionalExecAuthFlowTestSuite) TestSkipConditionalNodes() {
 
 	// For existing user, flow should complete directly
 	ts.Require().Equal("COMPLETE", flowStep.FlowStatus,
-		"Expected flow status to be COMPLETE (conditional nodes should be skipped for existing user)")
+		"Expected flow status to be COMPLETE (conditional nodes should be skipped for existing user): %+v",
+		flowStep.Error)
 	ts.Require().NotEmpty(flowStep.Assertion, "Assertion token should be present")
 	ts.Nil(flowStep.Error, "Error should be nil")
 

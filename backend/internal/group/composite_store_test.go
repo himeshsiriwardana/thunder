@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
@@ -194,6 +195,70 @@ func (suite *CompositeGroupStoreTestSuite) TestGetGroupList_FileListError() {
 
 // --- GetTransitiveGroupsForEntity ---
 
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupMember_PrefersTheDBStore() {
+	suite.mockDBStore.On("GetGroupMember", mock.Anything, "grp1", "usr1").
+		Return(&Member{ID: "usr1", Type: memberTypeEntity}, nil)
+
+	member, err := suite.store.GetGroupMember(context.Background(), "grp1", "usr1")
+
+	suite.NoError(err)
+	suite.Equal(&Member{ID: "usr1", Type: memberTypeEntity}, member)
+	suite.mockFileStore.AssertNotCalled(suite.T(), "GetGroupMember", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupMember_FallsBackToTheFileStore() {
+	suite.mockDBStore.On("GetGroupMember", mock.Anything, "grp1", "grp2").Return(nil, nil)
+	suite.mockFileStore.On("GetGroupMember", mock.Anything, "grp1", "grp2").
+		Return(&Member{ID: "grp2", Type: MemberTypeGroup}, nil)
+
+	member, err := suite.store.GetGroupMember(context.Background(), "grp1", "grp2")
+
+	suite.NoError(err)
+	suite.Equal(&Member{ID: "grp2", Type: MemberTypeGroup}, member)
+}
+
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupMember_NilWhenNeitherStoreHasIt() {
+	suite.mockDBStore.On("GetGroupMember", mock.Anything, "grp1", "usr1").Return(nil, nil)
+	suite.mockFileStore.On("GetGroupMember", mock.Anything, "grp1", "usr1").Return(nil, nil)
+
+	member, err := suite.store.GetGroupMember(context.Background(), "grp1", "usr1")
+
+	suite.NoError(err)
+	suite.Nil(member)
+}
+
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupMember_DBStoreError() {
+	suite.mockDBStore.On("GetGroupMember", mock.Anything, "grp1", "usr1").Return(nil, errors.New("db error"))
+
+	member, err := suite.store.GetGroupMember(context.Background(), "grp1", "usr1")
+
+	suite.Error(err)
+	suite.Nil(member)
+	suite.mockFileStore.AssertNotCalled(suite.T(), "GetGroupMember", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupMember_FileStoreError() {
+	suite.mockDBStore.On("GetGroupMember", mock.Anything, "grp1", "usr1").Return(nil, nil)
+	suite.mockFileStore.On("GetGroupMember", mock.Anything, "grp1", "usr1").Return(nil, errors.New("file error"))
+
+	member, err := suite.store.GetGroupMember(context.Background(), "grp1", "usr1")
+
+	suite.Error(err)
+	suite.Nil(member)
+}
+
+// Only the file store declares members, so the database store is not asked.
+func (suite *CompositeGroupStoreTestSuite) TestIsGroupMemberDeclarative_AsksTheFileStore() {
+	suite.mockFileStore.On("IsGroupMemberDeclarative", mock.Anything, "grp1", "usr1").Return(true, nil)
+
+	declared, err := suite.store.IsGroupMemberDeclarative(context.Background(), "grp1", "usr1")
+
+	suite.NoError(err)
+	suite.True(declared)
+	suite.mockDBStore.AssertNotCalled(suite.T(), "IsGroupMemberDeclarative", mock.Anything, mock.Anything,
+		mock.Anything)
+}
+
 func (suite *CompositeGroupStoreTestSuite) TestGetTransitiveGroupsForEntity_MergesBothStores() {
 	dbGroups := []providers.EntityGroup{
 		{ID: "grp1", Name: "Administrators", OUID: "ou1"},
@@ -294,4 +359,83 @@ func (suite *CompositeGroupStoreTestSuite) TestGetTransitiveGroupsForEntity_File
 
 	suite.Error(err)
 	suite.Equal(testErr, err)
+}
+
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupListByProject_MergesBothStores() {
+	ouIDs := []string{"ou1"}
+	suite.mockDBStore.On("GetGroupListCountByProject", mock.Anything, "project-1", ouIDs).Return(1, nil)
+	suite.mockFileStore.On("GetGroupListCountByProject", mock.Anything, "project-1", ouIDs).Return(1, nil)
+	suite.mockDBStore.On("GetGroupListByProject", mock.Anything, "project-1", ouIDs, 1, 0).
+		Return([]GroupBasicDAO{{ID: "grp1", ProjectID: "project-1"}}, nil)
+	suite.mockFileStore.On("GetGroupListByProject", mock.Anything, "project-1", ouIDs, 1, 0).
+		Return([]GroupBasicDAO{{ID: "grp2", ProjectID: "project-1"}}, nil)
+
+	count, err := suite.store.GetGroupListCountByProject(context.Background(), "project-1", ouIDs)
+	suite.NoError(err)
+	suite.Equal(2, count)
+
+	groups, err := suite.store.GetGroupListByProject(context.Background(), "project-1", ouIDs, 10, 0)
+	suite.NoError(err)
+	suite.Len(groups, 2)
+}
+
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupListCountByProject_Errors() {
+	suite.mockDBStore.On("GetGroupListCountByProject", mock.Anything, "project-1", []string(nil)).
+		Return(0, errors.New("db fail")).Once()
+	_, err := suite.store.GetGroupListCountByProject(context.Background(), "project-1", nil)
+	suite.Error(err)
+
+	suite.mockDBStore.On("GetGroupListCountByProject", mock.Anything, "project-2", []string(nil)).Return(1, nil)
+	suite.mockFileStore.On("GetGroupListCountByProject", mock.Anything, "project-2", []string(nil)).
+		Return(0, errors.New("file fail"))
+	_, err = suite.store.GetGroupListCountByProject(context.Background(), "project-2", nil)
+	suite.Error(err)
+
+	suite.mockDBStore.On("GetGroupListCountByProject", mock.Anything, "project-3", []string(nil)).
+		Return(serverconst.MaxCompositeStoreRecords, nil)
+	suite.mockFileStore.On("GetGroupListCountByProject", mock.Anything, "project-3", []string(nil)).Return(1, nil)
+	_, err = suite.store.GetGroupListCountByProject(context.Background(), "project-3", nil)
+	suite.ErrorIs(err, errResultLimitExceededInCompositeMode)
+}
+
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupListByProject_Errors() {
+	suite.mockDBStore.On("GetGroupListCountByProject", mock.Anything, "project-1", []string(nil)).
+		Return(0, errors.New("db fail"))
+	_, err := suite.store.GetGroupListByProject(context.Background(), "project-1", nil, 10, 0)
+	suite.Error(err)
+
+	suite.mockDBStore.On("GetGroupListCountByProject", mock.Anything, "project-2", []string(nil)).
+		Return(serverconst.MaxCompositeStoreRecords, nil)
+	suite.mockFileStore.On("GetGroupListCountByProject", mock.Anything, "project-2", []string(nil)).Return(1, nil)
+	_, err = suite.store.GetGroupListByProject(context.Background(), "project-2", nil, 10, 0)
+	suite.ErrorIs(err, errResultLimitExceededInCompositeMode)
+}
+
+// A group whose database store alone holds more members than the composite limit is refused, not
+// listed as if it held only the limit.
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupMembers_OneStoreOverTheLimit() {
+	suite.mockDBStore.On("GetGroupMemberCount", mock.Anything, "group1").
+		Return(serverconst.MaxCompositeStoreRecords+500, nil).Once()
+	suite.mockFileStore.On("GetGroupMemberCount", mock.Anything, "group1").Return(0, nil).Once()
+
+	_, err := suite.store.GetGroupMembers(context.Background(), "group1", serverconst.MaxCompositeStoreRecords+1, 0)
+
+	suite.ErrorIs(err, errResultLimitExceededInCompositeMode)
+}
+
+// The groups of an organization unit are still listed when its database store alone holds more than the
+// composite limit, as its first records.
+func (suite *CompositeGroupStoreTestSuite) TestGetGroupsByOrganizationUnit_OneStoreOverTheLimitIsClamped() {
+	suite.mockDBStore.On("GetGroupsByOrganizationUnitCount", mock.Anything, "ou1").
+		Return(serverconst.MaxCompositeStoreRecords+500, nil).Once()
+	suite.mockFileStore.On("GetGroupsByOrganizationUnitCount", mock.Anything, "ou1").Return(0, nil).Once()
+	suite.mockDBStore.On("GetGroupsByOrganizationUnit", mock.Anything, "ou1", mock.Anything, 0).
+		Return([]GroupBasicDAO{{ID: "grp1"}}, nil).Once()
+	suite.mockFileStore.On("GetGroupsByOrganizationUnit", mock.Anything, "ou1", mock.Anything, 0).
+		Return([]GroupBasicDAO{}, nil).Maybe()
+
+	groups, err := suite.store.GetGroupsByOrganizationUnit(context.Background(), "ou1", 10, 0)
+
+	suite.NoError(err)
+	suite.Len(groups, 1)
 }

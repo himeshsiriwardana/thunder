@@ -18,10 +18,10 @@ Always pin to a specific release tag rather than `latest`:
 
 ```bash
 # Avoid: resolves to a different image after each release
-ghcr.io/thunder-id/thunderid:latest
+ghcr.io/thunder-id/thunderid-gateway:latest
 
 # Prefer: explicit and reproducible
-ghcr.io/thunder-id/thunderid:<version>
+ghcr.io/thunder-id/thunderid-gateway:<version>
 ```
 
 Pinning ensures upgrades are intentional and your deployment is reproducible across environments.
@@ -67,7 +67,7 @@ docker run -d \
   --mount type=bind,src="$(pwd)/config/secrets",dst=/opt/thunderid/config/secrets,readonly \
   --mount type=bind,src="$(pwd)/config/resources/server_configs/cors.yaml",dst=/opt/thunderid/config/resources/server_configs/cors.yaml,readonly \
   --mount type=bind,src="$(pwd)/config/resources/server_configs/csp.yaml",dst=/opt/thunderid/config/resources/server_configs/csp.yaml,readonly \
-  ghcr.io/thunder-id/thunderid:<version>
+  ghcr.io/thunder-id/thunderid-gateway:<version>
 ```
 
 The certs directory must contain the TLS pair, RSA and ECDSA signing pairs, and encryption key referenced by `deployment.yaml`. The secrets directory must contain the Direct Auth Secret when it uses the default file reference. See [Mount Production Configuration](../../production-guidelines#mount-production-configuration) for the complete file inventory and permission requirements.
@@ -113,7 +113,7 @@ services:
       - thunderid
 
   thunderid:
-    image: ghcr.io/thunder-id/thunderid:<version>
+    image: ghcr.io/thunder-id/thunderid-gateway:<version>
     restart: unless-stopped
     expose:
       - "8090"
@@ -125,6 +125,40 @@ services:
       - ./config/resources/server_configs/csp.yaml:/opt/thunderid/config/resources/server_configs/csp.yaml:ro
 ```
 
+### Record the Client IP
+
+Behind NGINX, the connecting address of every request is the NGINX container's. To record the real client IP on SSO sessions and in the access log, give NGINX a fixed address on its own network and list only that address as a [trusted proxy](../../configuration#trusted-proxies). Add these lines to the Compose file:
+
+```yaml
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+services:
+  nginx:
+    networks:
+      edge:
+        ipv4_address: 172.28.0.10
+  thunderid:
+    networks:
+      - default
+      - edge
+```
+
+Attach NGINX only to `edge`, so it always reaches <ProductName /> from the trusted address. <ProductName /> keeps the `default` network as well: listing `networks:` on a service removes it from the Compose default network, so without it <ProductName /> loses access to other services it reaches there, such as its database.
+
+Then trust the NGINX address in `deployment.yaml`. NGINX sends `X-Forwarded-For`, the default header:
+
+```yaml
+server:
+  trusted_proxies:
+    - cidr: "172.28.0.10/32"
+```
+
+Trust the exact address rather than a range. A range such as `172.16.0.0/12` covers every Docker network on the host, so any container could report any client IP.
+
 ## Set Resource Constraints
 
 Prevent a runaway container from exhausting host resources by setting CPU and memory limits:
@@ -132,7 +166,7 @@ Prevent a runaway container from exhausting host resources by setting CPU and me
 ```yaml
 services:
   thunderid:
-    image: ghcr.io/thunder-id/thunderid:<version>
+    image: ghcr.io/thunder-id/thunderid-gateway:<version>
     deploy:
       resources:
         limits:
@@ -152,7 +186,7 @@ Add a health check so Docker can detect and restart an unhealthy container autom
 ```yaml
 services:
   thunderid:
-    image: ghcr.io/thunder-id/thunderid:<version>
+    image: ghcr.io/thunder-id/thunderid-gateway:<version>
     healthcheck:
       test: ["CMD", "curl", "-fsk", "https://localhost:8090/health/liveness"]
       interval: 30s

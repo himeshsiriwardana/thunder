@@ -3,7 +3,10 @@
 
 package csp
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+)
 
 // PolicyHandler decodes, validates, and merges the "csp" server-config section. It implements the
 // section-handler contract structurally, without importing the serverconfig package.
@@ -23,13 +26,13 @@ func (PolicyHandler) Decode(raw json.RawMessage) (any, error) {
 }
 
 // Validate checks that the incoming value is an acceptable csp policy.
-func (PolicyHandler) Validate(incoming, _, _ any) error {
+func (PolicyHandler) Validate(_ context.Context, incoming, _, _ any) error {
 	cfg, _ := incoming.(PolicyConfig)
 	return cfg.Validate()
 }
 
 // Merge overlays the writable (db) layer onto the read-only (declarative) layer: an explicit writable
-// value wins per field, directive, and path.
+// value wins per field and per directive, including the directives of a path.
 func (PolicyHandler) Merge(readOnly, writable any) any {
 	ro, _ := readOnly.(PolicyConfig)
 	wr, _ := writable.(PolicyConfig)
@@ -46,8 +49,9 @@ func (PolicyHandler) Merge(readOnly, writable any) any {
 	return merged
 }
 
-// mergePaths overlays writable path policies onto read-only ones by prefix: a match replaces the
-// read-only entry; entries present in only one layer are kept. Returns nil when both are empty.
+// mergePaths overlays writable path policies onto read-only ones by prefix: for a matching prefix, each
+// writable directive replaces the read-only directive of the same name and the rest are kept; entries
+// present in only one layer are kept. Returns nil when both are empty.
 func mergePaths(readOnly, writable []PathPolicy) []PathPolicy {
 	if len(readOnly) == 0 && len(writable) == 0 {
 		return nil
@@ -59,7 +63,7 @@ func mergePaths(readOnly, writable []PathPolicy) []PathPolicy {
 			if _, seen := byPrefix[p.Location]; !seen {
 				order = append(order, p.Location)
 			}
-			byPrefix[p.Location] = p.Directives
+			byPrefix[p.Location] = mergeDirectives(byPrefix[p.Location], p.Directives)
 		}
 	}
 	out := make([]PathPolicy, 0, len(order))

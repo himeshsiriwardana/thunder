@@ -68,6 +68,8 @@ fileGroupNames:
   application.yaml: Applications
   cimd.yaml: Applications         # Client ID Metadata Document preview, used to register applications
   authzen.yaml: Access Control
+  capability.yaml: ~             # Capabilities claimed by Access Control
+  authorization-detail-type.yaml: ~  # Authorization Detail Types claimed by Access Control
   authentication.yaml: ~         # all tags claimed by Authentication
   configuration-version.yaml: ~  # Configuration Versions claimed by System
   connections.yaml: Connections
@@ -88,7 +90,6 @@ fileGroupNames:
   registration.yaml: ~           # Passkeys (registration) claimed by Authentication
   resource.yaml: ~               # all tags claimed by Access Control
   role.yaml: ~                   # Roles claimed by Access Control
-  scim.yaml: ~                   # SCIM tags claimed by SCIM Provisioning
   user.yaml: ~                   # all tags claimed by Identities
   openid4vci.yaml: Verifiable Credentials
   openid4vp.yaml: Verifiable Credentials
@@ -113,10 +114,13 @@ explicitSubGroups:
     tags:
       - AuthZEN
       - Roles
+      - Role Sharing
       - Resource Servers
       - Resources
       - Actions
       - Permissions
+      - Capabilities
+      - Authorization Detail Types
 
   # ── Authentication mechanisms ─────────────────────────────────────────────────
   - name: Authentication
@@ -154,6 +158,7 @@ explicitSubGroups:
       - JWKS
       - DCR
       - Discovery
+      - Authorization Details Types
 
   # ── Operational ───────────────────────────────────────────────────────────────
   - name: System
@@ -166,17 +171,6 @@ explicitSubGroups:
       - Gateways
       - Gateway values
       - Configuration Versions
-
-  # ── SCIM Provisioning ─────────────────────────────────────────────────────────
-  - name: SCIM Provisioning
-    tags:
-      - SCIM Service Provider Config
-      - SCIM Schemas
-      - SCIM Resource Types
-      - SCIM Users
-      - SCIM Me
-      - SCIM Groups
-      - SCIM Unimplemented
 
 # Defines the display order of all sidebar groups (explicit and auto-derived).
 # Groups not listed here are appended alphabetically after all ordered entries.
@@ -193,5 +187,4 @@ groupOrder:
   - Verifiable Credentials
   - Branding & Localization
   - System
-  - SCIM Provisioning
   - Other

@@ -125,6 +125,50 @@ func (c *compositeRoleStore) GetRoleListCountByOUID(ctx context.Context, ouID st
 	return len(roles), nil
 }
 
+// GetRoleListCountByProject returns the count of the roles of a project across both stores, narrowed to the
+// ones an organization unit owns when ouID is set. A role ID is unique across the stores, so the counts add
+// up exactly.
+func (c *compositeRoleStore) GetRoleListCountByProject(ctx context.Context, projectID, ouID string) (int, error) {
+	dbCount, err := c.dbStore.GetRoleListCountByProject(ctx, projectID, ouID)
+	if err != nil {
+		return 0, err
+	}
+	fileCount, err := c.fileStore.GetRoleListCountByProject(ctx, projectID, ouID)
+	if err != nil {
+		return 0, err
+	}
+	if dbCount+fileCount > serverconst.MaxCompositeStoreRecords {
+		return 0, errResultLimitExceededInCompositeMode
+	}
+	return dbCount + fileCount, nil
+}
+
+// GetRoleListByProject retrieves the roles of a project from both stores and merges them, narrowed to the
+// ones an organization unit owns when ouID is set.
+func (c *compositeRoleStore) GetRoleListByProject(
+	ctx context.Context, projectID, ouID string, limit, offset int,
+) ([]Role, error) {
+	roles, limitExceeded, err := declarativeresource.CompositeMergeListHelperWithLimit(
+		func() (int, error) { return c.dbStore.GetRoleListCountByProject(ctx, projectID, ouID) },
+		func() (int, error) { return c.fileStore.GetRoleListCountByProject(ctx, projectID, ouID) },
+		func(count int) ([]Role, error) { return c.dbStore.GetRoleListByProject(ctx, projectID, ouID, count, 0) },
+		func(count int) ([]Role, error) {
+			return c.fileStore.GetRoleListByProject(ctx, projectID, ouID, count, 0)
+		},
+		mergeRoles,
+		limit,
+		offset,
+		serverconst.MaxCompositeStoreRecords,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if limitExceeded {
+		return nil, errResultLimitExceededInCompositeMode
+	}
+	return roles, nil
+}
+
 // GetRoleListByOUID retrieves roles belonging to the given organization unit from both stores
 // and merges them.
 func (c *compositeRoleStore) GetRoleListByOUID(
@@ -276,18 +320,9 @@ func (c *compositeRoleStore) getCompositeAssignments(
 	dbCountFn, fileCountFn func(context.Context, string) (int, error),
 	dbListFn, fileListFn func(int) ([]RoleAssignment, error),
 ) ([]RoleAssignment, error) {
-	capCount := func(fn func(context.Context, string) (int, error)) func() (int, error) {
-		return func() (int, error) {
-			count, err := fn(ctx, id)
-			if err != nil {
-				return 0, err
-			}
-			return min(count, serverconst.MaxCompositeStoreRecords), nil
-		}
-	}
 	assignments, limitExceeded, err := declarativeresource.CompositeMergeListHelperWithLimit(
-		capCount(dbCountFn),
-		capCount(fileCountFn),
+		func() (int, error) { return dbCountFn(ctx, id) },
+		func() (int, error) { return fileCountFn(ctx, id) },
 		dbListFn,
 		fileListFn,
 		mergeAssignments,
@@ -349,18 +384,9 @@ func (c *compositeRoleStore) getCompositeAssignmentsCount(
 	dbCountFn, fileCountFn func(context.Context, string) (int, error),
 	dbListFn, fileListFn func(int) ([]RoleAssignment, error),
 ) (int, error) {
-	capCount := func(fn func(context.Context, string) (int, error)) func() (int, error) {
-		return func() (int, error) {
-			count, err := fn(ctx, id)
-			if err != nil {
-				return 0, err
-			}
-			return min(count, serverconst.MaxCompositeStoreRecords), nil
-		}
-	}
 	assignments, limitExceeded, err := declarativeresource.CompositeMergeListHelperWithLimit(
-		capCount(dbCountFn),
-		capCount(fileCountFn),
+		func() (int, error) { return dbCountFn(ctx, id) },
+		func() (int, error) { return fileCountFn(ctx, id) },
 		dbListFn,
 		fileListFn,
 		mergeAssignments,
@@ -398,8 +424,9 @@ func (c *compositeRoleStore) DeleteRole(ctx context.Context, id string) error {
 	return c.dbStore.DeleteRole(ctx, id)
 }
 
-// DeleteAssignmentsByRoleID deletes all assignments for a role from the database store only.
-func (c *compositeRoleStore) DeleteAssignmentsByRoleID(ctx context.Context, id string) error {
+// DeleteAssignmentsByRoleID deletes all assignments for a role from the database store only, returning
+// the ones it removed. File-based assignments are declarative and are never removed.
+func (c *compositeRoleStore) DeleteAssignmentsByRoleID(ctx context.Context, id string) ([]RoleAssignment, error) {
 	return c.dbStore.DeleteAssignmentsByRoleID(ctx, id)
 }
 
@@ -415,10 +442,36 @@ func (c *compositeRoleStore) DeleteAssignmentsByAssignee(
 	return c.dbStore.DeleteAssignmentsByAssignee(ctx, assigneeType, assigneeID)
 }
 
+// HasAssigneeAssignments reports whether either store holds an assignment of the assignee.
+func (c *compositeRoleStore) HasAssigneeAssignments(
+	ctx context.Context, assigneeType, assigneeID string) (bool, error) {
+	found, err := c.dbStore.HasAssigneeAssignments(ctx, assigneeType, assigneeID)
+	if err != nil || found {
+		return found, err
+	}
+	return c.fileStore.HasAssigneeAssignments(ctx, assigneeType, assigneeID)
+}
+
 // GetReferencedPermissions returns the permissions referenced by database-backed roles only.
 // Declarative roles are immutable, so their permissions are never pruned.
 func (c *compositeRoleStore) GetReferencedPermissions(ctx context.Context) ([]ResourcePermissions, error) {
 	return c.dbStore.GetReferencedPermissions(ctx)
+}
+
+// GetRolesByPermission returns the roles that grant a permission on a resource server, from both stores.
+func (c *compositeRoleStore) GetRolesByPermission(
+	ctx context.Context, resourceServerID, permission string) ([]Role, error) {
+	dbRoles, err := c.dbStore.GetRolesByPermission(ctx, resourceServerID, permission)
+	if err != nil {
+		return nil, err
+	}
+
+	fileRoles, err := c.fileStore.GetRolesByPermission(ctx, resourceServerID, permission)
+	if err != nil {
+		return nil, err
+	}
+
+	return mergeRoles(dbRoles, fileRoles), nil
 }
 
 // DeleteRolePermission removes the permission from the database store only.
@@ -435,6 +488,50 @@ func (c *compositeRoleStore) AddAssignments(ctx context.Context, id string, assi
 // RemoveAssignments removes assignments from a role in the database store only.
 func (c *compositeRoleStore) RemoveAssignments(ctx context.Context, id string, assignments []RoleAssignment) error {
 	return c.dbStore.RemoveAssignments(ctx, id, assignments)
+}
+
+// AddMandatedAssignments adds a mandated assignment in the database store only.
+func (c *compositeRoleStore) AddMandatedAssignments(
+	ctx context.Context, policyID, roleID, ouID string, assignee RoleAssignment) error {
+	return c.dbStore.AddMandatedAssignments(ctx, policyID, roleID, ouID, assignee)
+}
+
+// ListMandatedAssignments lists the mandated assignments of a policy from the database store only.
+func (c *compositeRoleStore) ListMandatedAssignments(
+	ctx context.Context, policyID string) ([]MandatedAssignment, error) {
+	return c.dbStore.ListMandatedAssignments(ctx, policyID)
+}
+
+// DeleteMandatedAssignments deletes the mandated assignments of a policy in the database store only.
+func (c *compositeRoleStore) DeleteMandatedAssignments(
+	ctx context.Context, policyID string, filter MandatedFilter) error {
+	return c.dbStore.DeleteMandatedAssignments(ctx, policyID, filter)
+}
+
+// ListMandatedRoleUnits lists the roles sharing policies mandate from the database store only.
+func (c *compositeRoleStore) ListMandatedRoleUnits(ctx context.Context) ([]MandatedRoleUnit, error) {
+	return c.dbStore.ListMandatedRoleUnits(ctx)
+}
+
+// ListMandatedAssignmentsForRole lists the mandated assignments of a role from the database store only.
+func (c *compositeRoleStore) ListMandatedAssignmentsForRole(
+	ctx context.Context, roleID, ouID string) ([]RoleAssignment, error) {
+	return c.dbStore.ListMandatedAssignmentsForRole(ctx, roleID, ouID)
+}
+
+// GetDirectAssignments returns the direct assignments of the role in ouID to any of assigneeIDs from
+// both stores.
+func (c *compositeRoleStore) GetDirectAssignments(
+	ctx context.Context, roleID, ouID string, assigneeIDs []string) ([]RoleAssignment, error) {
+	dbAssignments, err := c.dbStore.GetDirectAssignments(ctx, roleID, ouID, assigneeIDs)
+	if err != nil {
+		return nil, err
+	}
+	fileAssignments, err := c.fileStore.GetDirectAssignments(ctx, roleID, ouID, assigneeIDs)
+	if err != nil {
+		return nil, err
+	}
+	return mergeAssignments(dbAssignments, fileAssignments), nil
 }
 
 // CheckRoleNameExists checks if a role with the given name exists in either store.
@@ -504,6 +601,31 @@ func (c *compositeRoleStore) GetAuthorizedPermissionsByResourceServer(
 	}
 
 	return mergePermissions(mergePermissions(dbPerms, filePerms), crossStorePerms), nil
+}
+
+// GetHeldPermissionsByResourceServer combines database grants with declared roles and assignments.
+func (c *compositeRoleStore) GetHeldPermissionsByResourceServer(
+	ctx context.Context, entityID string, groupIDs, roleIDs []string, assignmentOUID, resourceServerID string,
+) ([]string, error) {
+	dbPermissions, err := c.dbStore.GetHeldPermissionsByResourceServer(
+		ctx, entityID, groupIDs, roleIDs, assignmentOUID, resourceServerID)
+	if err != nil {
+		return nil, err
+	}
+	declaredRoleIDs := slices.Clone(roleIDs)
+	if entityID != "" || len(groupIDs) > 0 {
+		assignedRoleIDs, err := c.dbStore.GetEntityRoleIDs(ctx, entityID, groupIDs, assignmentOUID)
+		if err != nil {
+			return nil, err
+		}
+		declaredRoleIDs = append(declaredRoleIDs, assignedRoleIDs...)
+	}
+	filePermissions, err := c.fileStore.GetHeldPermissionsByResourceServer(
+		ctx, entityID, groupIDs, declaredRoleIDs, assignmentOUID, resourceServerID)
+	if err != nil {
+		return nil, err
+	}
+	return mergePermissions(dbPermissions, filePermissions), nil
 }
 
 // crossStoreAuthorizedPermissions resolves permissions for the (declarative role definition
@@ -654,13 +776,19 @@ func (c *compositeRoleStore) crossStoreAllPermissions(
 	return resourcePermissionsFromMap(byResourceServer), nil
 }
 
-// GetEntityRoleIDs returns the IDs of roles assigned to an entity (directly or via groups).
-// Delegates to the database store since assignments are persisted there even for declarative
-// roles. The file store has no independent record of API-added assignments.
+// GetEntityRoleIDs combines database and declared assignments in the requested organization unit.
 func (c *compositeRoleStore) GetEntityRoleIDs(
 	ctx context.Context, entityID string, groupIDs []string, assignmentOUID string,
 ) ([]string, error) {
-	return c.dbStore.GetEntityRoleIDs(ctx, entityID, groupIDs, assignmentOUID)
+	dbRoleIDs, err := c.dbStore.GetEntityRoleIDs(ctx, entityID, groupIDs, assignmentOUID)
+	if err != nil {
+		return nil, err
+	}
+	fileRoleIDs, err := c.fileStore.GetEntityRoleIDs(ctx, entityID, groupIDs, assignmentOUID)
+	if err != nil {
+		return nil, err
+	}
+	return mergePermissions(dbRoleIDs, fileRoleIDs), nil
 }
 
 // GetUserRoles retrieves role names assigned to an entity from both stores.
@@ -756,16 +884,17 @@ func mergeAssignments(dbAssignments, fileAssignments []RoleAssignment) []RoleAss
 	seen := make(map[string]bool)
 	result := make([]RoleAssignment, 0, len(dbAssignments)+len(fileAssignments))
 
-	// Add database assignments first (they take precedence)
+	// Add database assignments first (they take precedence). A mandated one is keyed apart, so it never
+	// hides a declared direct assignment of the same assignee.
 	for _, assignment := range dbAssignments {
-		key := assignment.OUID + ":" + string(assignment.Type) + ":" + assignment.ID
+		key := assignment.OUID + ":" + string(assignment.Type) + ":" + assignment.ID + ":" + assignment.PolicyID
 		result = append(result, assignment)
 		seen[key] = true
 	}
 
 	// Add file-based assignments only if not already seen
 	for _, assignment := range fileAssignments {
-		key := assignment.OUID + ":" + string(assignment.Type) + ":" + assignment.ID
+		key := assignment.OUID + ":" + string(assignment.Type) + ":" + assignment.ID + ":" + assignment.PolicyID
 		if !seen[key] {
 			result = append(result, assignment)
 			seen[key] = true

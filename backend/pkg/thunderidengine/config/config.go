@@ -192,29 +192,51 @@ type CacheConfig struct {
 
 // RedisConfig holds the Redis connection configuration.
 type RedisConfig struct {
-	Address           string `yaml:"address"              json:"address"`
-	Username          string `yaml:"username"             json:"username"`
-	Password          string `yaml:"password"             json:"password"`
-	DB                int    `yaml:"db"                   json:"db"`
-	KeyPrefix         string `yaml:"key_prefix"           json:"key_prefix"`
-	MaxRetries        int    `yaml:"max_retries"          json:"max_retries"`
-	MinRetryBackoffMS int    `yaml:"min_retry_backoff_ms" json:"min_retry_backoff_ms"`
-	MaxRetryBackoffMS int    `yaml:"max_retry_backoff_ms" json:"max_retry_backoff_ms"`
-	DialTimeoutMS     int    `yaml:"dial_timeout_ms"      json:"dial_timeout_ms"`
-	ReadTimeoutMS     int    `yaml:"read_timeout_ms"      json:"read_timeout_ms"`
-	WriteTimeoutMS    int    `yaml:"write_timeout_ms"     json:"write_timeout_ms"`
+	Address           string         `yaml:"address"              json:"address"`
+	Username          string         `yaml:"username"             json:"username"`
+	Password          string         `yaml:"password"             json:"password"`
+	DB                int            `yaml:"db"                   json:"db"`
+	KeyPrefix         string         `yaml:"key_prefix"           json:"key_prefix"`
+	MaxRetries        int            `yaml:"max_retries"          json:"max_retries"`
+	MinRetryBackoffMS int            `yaml:"min_retry_backoff_ms" json:"min_retry_backoff_ms"`
+	MaxRetryBackoffMS int            `yaml:"max_retry_backoff_ms" json:"max_retry_backoff_ms"`
+	DialTimeoutMS     int            `yaml:"dial_timeout_ms"      json:"dial_timeout_ms"`
+	ReadTimeoutMS     int            `yaml:"read_timeout_ms"      json:"read_timeout_ms"`
+	WriteTimeoutMS    int            `yaml:"write_timeout_ms"     json:"write_timeout_ms"`
+	TLS               RedisTLSConfig `yaml:"tls" json:"tls"`
+}
+
+// RedisTLSConfig holds the TLS settings for a Redis connection.
+type RedisTLSConfig struct {
+	Enabled            bool   `yaml:"enabled"              json:"enabled"`
+	CAFile             string `yaml:"ca_file"              json:"ca_file"`
+	CertFile           string `yaml:"cert_file"            json:"cert_file"`
+	KeyFile            string `yaml:"key_file"             json:"key_file"`
+	ServerName         string `yaml:"server_name"          json:"server_name"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
 }
 
 // ServerConfig holds the server configuration details.
 type ServerConfig struct {
-	Hostname                   string         `yaml:"hostname"   json:"hostname"`
-	Port                       int            `yaml:"port"       json:"port"`
-	HTTPOnly                   bool           `yaml:"http_only"  json:"http_only"`
-	PublicURL                  string         `yaml:"public_url" json:"public_url"`
-	Identifier                 string         `yaml:"identifier" json:"identifier"`
-	SecurityConfig             SecurityConfig `yaml:"security"   json:"security"`
-	EnableOUQualifiedEndpoints bool           `yaml:"enable_ou_qualified_endpoints" json:"enable_ou_qualified_endpoints"` //nolint:lll // one tag pair
-	Timeouts                   ServerTimeouts `yaml:"timeouts"   json:"timeouts"`
+	Hostname                   string               `yaml:"hostname"   json:"hostname"`
+	Port                       int                  `yaml:"port"       json:"port"`
+	HTTPOnly                   bool                 `yaml:"http_only"  json:"http_only"`
+	PublicURL                  string               `yaml:"public_url" json:"public_url"`
+	ProductName                string               `yaml:"product_name" json:"product_name"`
+	Identifier                 string               `yaml:"identifier" json:"identifier"`
+	SystemOUID                 string               `yaml:"system_ou_id" json:"system_ou_id"`
+	SecurityConfig             SecurityConfig       `yaml:"security"   json:"security"`
+	EnableOUQualifiedEndpoints bool                 `yaml:"enable_ou_qualified_endpoints" json:"enable_ou_qualified_endpoints"` //nolint:lll // one tag pair
+	TrustedProxies             []TrustedProxyConfig `yaml:"trusted_proxies" json:"trusted_proxies"`
+	Timeouts                   ServerTimeouts       `yaml:"timeouts"   json:"timeouts"`
+}
+
+// TrustedProxyConfig is a reverse proxy, or a range of them, and the header it reports the client IP in.
+type TrustedProxyConfig struct {
+	// CIDR is the range the proxy connects from, such as "10.0.1.0/24" or "172.28.0.10/32".
+	CIDR string `yaml:"cidr" json:"cidr"`
+	// Header is the request header the proxy sets the client IP in. Defaults to "x-forwarded-for".
+	Header string `yaml:"header" json:"header"`
 }
 
 // The timeouts a server uses for a value that is not positive, the same as default.json ships. Go's
@@ -405,6 +427,14 @@ type ClientAssertionConfig struct {
 	MaxIatAge int64 `yaml:"max_iat_age" json:"max_iat_age"`
 }
 
+// DeviceGrantConfig holds the lifetime and polling interval for device authorization requests.
+type DeviceGrantConfig struct {
+	// ExpiresIn is the device authorization request lifetime in seconds.
+	ExpiresIn int64 `yaml:"expires_in" json:"expires_in"`
+	// Interval is the minimum token polling interval in seconds.
+	Interval int64 `yaml:"interval" json:"interval"`
+}
+
 // OAuthConfig holds the OAuth configuration details.
 type OAuthConfig struct {
 	RefreshToken         RefreshTokenConfig         `yaml:"refresh_token"               json:"refresh_token"`
@@ -417,6 +447,7 @@ type OAuthConfig struct {
 	DPoP                 DPoPConfig                 `yaml:"dpop"                        json:"dpop"`
 	AuthClass            AuthClassConfig            `yaml:"auth_class"                  json:"auth_class"`
 	CIBA                 CIBAConfig                 `yaml:"ciba"                        json:"ciba"`
+	DeviceGrant          DeviceGrantConfig          `yaml:"device_grant"                json:"device_grant"`
 	ClientAssertion      ClientAssertionConfig      `yaml:"client_assertion"            json:"client_assertion"`
 	Revocation           RevocationConfig           `yaml:"revocation"                  json:"revocation"`
 	TokenExchange        TokenExchangeConfig        `yaml:"token_exchange"              json:"token_exchange"`

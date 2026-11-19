@@ -37,10 +37,11 @@ func (t AssigneeType) IsEntityType() bool {
 
 // AssignmentResponse represents an assignment of a role to a user or group.
 type AssignmentResponse struct {
-	ID      string       `json:"id"`
-	Type    AssigneeType `json:"type"`
-	OUID    string       `json:"ouId"`
-	Display string       `json:"display,omitempty"`
+	ID         string       `json:"id"`
+	Type       AssigneeType `json:"type"`
+	OUID       string       `json:"ouId"`
+	Display    string       `json:"display,omitempty"`
+	IsReadOnly bool         `json:"isReadOnly"`
 }
 
 // AssignmentRequest represents an assignment of a role to a user or group.
@@ -56,6 +57,7 @@ type RoleSummaryResponse struct {
 	Description string `json:"description,omitempty"`
 	OUID        string `json:"ouId"`
 	OUHandle    string `json:"ouHandle,omitempty"`
+	ProjectID   string `json:"projectId,omitempty"`
 	IsReadOnly  bool   `json:"isReadOnly"`
 	IsOwnedByOU bool   `json:"isOwnedByOU"`
 }
@@ -67,7 +69,9 @@ type RoleResponse struct {
 	Description string                `json:"description,omitempty"`
 	OUID        string                `json:"ouId"`
 	OUHandle    string                `json:"ouHandle,omitempty"`
+	ProjectID   string                `json:"projectId,omitempty"`
 	IsOwnedByOU bool                  `json:"isOwnedByOU"`
+	IsReadOnly  bool                  `json:"isReadOnly"`
 	Permissions []ResourcePermissions `json:"permissions"`
 }
 
@@ -75,7 +79,8 @@ type RoleResponse struct {
 type CreateRoleRequest struct {
 	Name        string                `json:"name"                  native:"required,min=1,max=100"`
 	Description string                `json:"description,omitempty"`
-	OUID        string                `json:"ouId"                  native:"required"`
+	OUID        string                `json:"ouId,omitempty"`
+	ProjectID   string                `json:"projectId,omitempty"`
 	Permissions []ResourcePermissions `json:"permissions"`
 	Assignments []AssignmentRequest   `json:"assignments,omitempty"`
 }
@@ -87,6 +92,7 @@ type CreateRoleResponse struct {
 	Description string                `json:"description,omitempty"`
 	OUID        string                `json:"ouId"`
 	OUHandle    string                `json:"ouHandle,omitempty"`
+	ProjectID   string                `json:"projectId,omitempty"`
 	Permissions []ResourcePermissions `json:"permissions"`
 	Assignments []AssignmentResponse  `json:"assignments,omitempty"`
 }
@@ -95,7 +101,8 @@ type CreateRoleResponse struct {
 type UpdateRoleRequest struct {
 	Name        string                `json:"name"                  native:"required,min=1,max=100"`
 	Description string                `json:"description,omitempty"`
-	OUID        string                `json:"ouId"                  native:"required"`
+	OUID        string                `json:"ouId,omitempty"`
+	ProjectID   string                `json:"projectId,omitempty"`
 	Permissions []ResourcePermissions `json:"permissions"`
 }
 
@@ -139,6 +146,7 @@ type RoleCreationDetail struct {
 	Name        string
 	Description string
 	OUID        string
+	ProjectID   string
 	Permissions []ResourcePermissions
 	Assignments []RoleAssignment
 }
@@ -150,6 +158,7 @@ type RoleWithPermissionsAndAssignments struct {
 	Description string
 	OUID        string
 	OUHandle    string
+	ProjectID   string
 	Permissions []ResourcePermissions
 	Assignments []RoleAssignment
 }
@@ -161,6 +170,27 @@ type RoleAssignment struct {
 	ID   string       `yaml:"id"`
 	Type AssigneeType `yaml:"type"`
 	OUID string       `yaml:"ouId,omitempty"`
+	// PolicyID is the sharing policy that mandates the assignment. Empty for a direct assignment.
+	PolicyID string `yaml:"-"`
+}
+
+// MandatedAssignment is a role assignment written by a sharing policy.
+type MandatedAssignment struct {
+	RoleID     string
+	Assignment RoleAssignment
+}
+
+// MandatedFilter narrows a policy's mandated assignments; an empty OUID matches every unit.
+type MandatedFilter struct {
+	OUID   string
+	RoleID string
+}
+
+// MandatedRoleUnit is one role a sharing policy mandates in one organization unit.
+type MandatedRoleUnit struct {
+	PolicyID string
+	RoleID   string
+	OUID     string
 }
 
 // RoleAssignmentWithDisplay represents an assignment used internally by the service layer.
@@ -169,6 +199,10 @@ type RoleAssignmentWithDisplay struct {
 	Type    AssigneeType
 	OUID    string
 	Display string
+	// PolicyID is the sharing policy that mandates the assignment. Empty for a direct assignment.
+	PolicyID string
+	// IsManaged marks an assignment a control plane deployed, which only it can remove.
+	IsManaged bool
 }
 
 // Role represents basic role information used internally by the service layer.
@@ -178,6 +212,7 @@ type Role struct {
 	Description string
 	OUID        string
 	OUHandle    string
+	ProjectID   string
 	IsReadOnly  bool
 	IsOwnedByOU bool
 }
@@ -189,7 +224,10 @@ type RoleWithPermissions struct {
 	Description string
 	OUID        string
 	OUHandle    string
+	ProjectID   string
 	IsOwnedByOU bool
+	// IsReadOnly marks a role a control plane deployed.
+	IsReadOnly  bool
 	Permissions []ResourcePermissions
 }
 
@@ -198,6 +236,7 @@ type RoleUpdateDetail struct {
 	Name        string
 	Description string
 	OUID        string
+	ProjectID   string
 	Permissions []ResourcePermissions
 }
 

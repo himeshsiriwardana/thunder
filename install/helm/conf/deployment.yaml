@@ -9,11 +9,26 @@ server:
   {{- if .Values.configuration.server.identifier }}
   identifier: {{ .Values.configuration.server.identifier | quote }}
   {{- end }}
+  {{- if .Values.configuration.server.productName }}
+  product_name: {{ .Values.configuration.server.productName | quote }}
+  {{- end }}
+  {{- if .Values.configuration.server.systemOuId }}
+  system_ou_id: {{ .Values.configuration.server.systemOuId | quote }}
+  {{- end }}
   {{- with .Values.configuration.server.timeouts }}
   timeouts:
     read_header_seconds: {{ .readHeaderSeconds }}
     write_seconds: {{ .writeSeconds }}
     idle_seconds: {{ .idleSeconds }}
+  {{- end }}
+  {{- with .Values.configuration.server.trustedProxies }}
+  trusted_proxies:
+    {{- range . }}
+    - cidr: {{ .cidr | quote }}
+      {{- if .header }}
+      header: {{ .header | quote }}
+      {{- end }}
+    {{- end }}
   {{- end }}
   {{- if or .Values.configuration.server.security .Values.setup.enabled }}
   security:
@@ -185,6 +200,21 @@ database:
       password: {{ "{{.DB_RUNTIME_TRANSIENT_REDIS_PASSWORD}}" | quote }}
       db: {{ .Values.configuration.database.runtime_transient.redis.db }}
       key_prefix: {{ .Values.configuration.database.runtime_transient.redis.key_prefix | quote }}
+      {{- with .Values.configuration.database.runtime_transient.redis.tls }}
+      {{- if .enabled }}
+      tls:
+        enabled: true
+        {{- if .secretName }}
+        ca_file: "config/redis-tls/runtime-transient/ca.crt"
+        {{- if .clientAuth }}
+        cert_file: "config/redis-tls/runtime-transient/tls.crt"
+        key_file: "config/redis-tls/runtime-transient/tls.key"
+        {{- end }}
+        {{- end }}
+        server_name: {{ .serverName | quote }}
+        insecure_skip_verify: {{ .insecureSkipVerify | default false }}
+      {{- end }}
+      {{- end }}
     {{- else }}
     postgres:
       hostname: {{ .Values.configuration.database.runtime_transient.postgres.hostname | quote }}
@@ -269,6 +299,21 @@ cache:
     password: {{ "{{.CACHE_REDIS_PASSWORD}}" | quote }}
     db: {{ .Values.configuration.cache.redis.db }}
     key_prefix: {{ .Values.configuration.cache.redis.keyPrefix | quote }}
+    {{- with .Values.configuration.cache.redis.tls }}
+    {{- if .enabled }}
+    tls:
+      enabled: true
+      {{- if .secretName }}
+      ca_file: "config/redis-tls/cache/ca.crt"
+      {{- if .clientAuth }}
+      cert_file: "config/redis-tls/cache/tls.crt"
+      key_file: "config/redis-tls/cache/tls.key"
+      {{- end }}
+      {{- end }}
+      server_name: {{ .serverName | quote }}
+      insecure_skip_verify: {{ .insecureSkipVerify | default false }}
+    {{- end }}
+    {{- end }}
   {{- end }}
 
 jwt:
@@ -375,11 +420,6 @@ openid4vp:
   {{- if .Values.configuration.openid4vp.store }}
   store: {{ include "thunderid.validateStoreMode" (dict "value" .Values.configuration.openid4vp.store "field" "configuration.openid4vp.store") | quote }}
   {{- end }}
-  trusted_anchors:
-  {{- range .Values.configuration.openid4vp.trustedAnchors }}
-    - name: {{ .name | quote }}
-      cert_file: {{ .certFile | quote }}
-  {{- end }}
 
 openid4vci:
   signing_key_id: {{ .Values.configuration.openid4vci.signingKeyId | quote }}
@@ -391,9 +431,6 @@ openid4vci:
   {{- if .Values.configuration.openid4vci.store }}
   store: {{ include "thunderid.validateStoreMode" (dict "value" .Values.configuration.openid4vci.store "field" "configuration.openid4vci.store") | quote }}
   {{- end }}
-
-scim:
-  urn_prefix: {{ .Values.configuration.scim.urnPrefix | quote }}
 
 {{- /* Values copied from a v1.0.0 chart carry an email block with an empty host, which never enabled email. */}}
 {{- $legacyEmail := default dict (default dict .Values.configuration).email }}
@@ -472,6 +509,13 @@ log:
   {{- end }}
 {{- end }}
 
+{{- $audit := default dict .Values.configuration.audit }}
+{{- if hasKey $audit "enabled" }}
+
+audit:
+  enabled: {{ $audit.enabled }}
+{{- end }}
+
 {{- $stores := default dict .Values.configuration.stores }}
 {{- range $section := (list "user" "group" "role" "theme" "layout" "translation" "agent" "user_type" "organization_unit" "identity_provider" "application" "server_config" "resource" "authorization_detail_type" "http_connection") }}
 {{- $mode := index $stores $section }}
@@ -543,12 +587,24 @@ account_access:
 identity_governance_provider:
   type: {{ $governanceProviderType | quote }}
 {{- end }}
-{{- /* Notification template store lives under the nested notification.template path. */}}
-{{- if $stores.notification_template }}
+{{- /* Notification template store and content-length limits live under the notification.template path. */}}
+{{- $ntTemplate := default dict (default dict .Values.configuration.notification).template }}
+{{- if or $stores.notification_template $ntTemplate.maxSubjectLength $ntTemplate.maxEmailBodyLength $ntTemplate.maxSmsBodyLength }}
 
 notification:
   template:
+{{- if $stores.notification_template }}
     store: {{ include "thunderid.validateStoreMode" (dict "value" $stores.notification_template "field" "configuration.stores.notification_template") | quote }}
+{{- end }}
+{{- if $ntTemplate.maxSubjectLength }}
+    max_subject_length: {{ $ntTemplate.maxSubjectLength | int64 }}
+{{- end }}
+{{- if $ntTemplate.maxEmailBodyLength }}
+    max_email_body_length: {{ $ntTemplate.maxEmailBodyLength | int64 }}
+{{- end }}
+{{- if $ntTemplate.maxSmsBodyLength }}
+    max_sms_body_length: {{ $ntTemplate.maxSmsBodyLength | int64 }}
+{{- end }}
 {{- end }}
 
 declarative_resources:

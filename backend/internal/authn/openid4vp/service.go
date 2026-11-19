@@ -15,6 +15,7 @@ import (
 	authncommon "github.com/thunder-id/thunderid/internal/authn/common"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/internal/vc/presentation"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -46,7 +47,6 @@ type openid4vpService struct {
 	x5c            []string
 	jwtSvc         jwt.JWTServiceInterface
 	issuerURL      string
-	trust          *trustAnchorStore
 	logger         *log.Logger
 }
 
@@ -54,7 +54,7 @@ type openid4vpService struct {
 func newOpenID4VPService(
 	cfg serviceConfig, store openID4VPStoreInterface, clientID string,
 	cryptoProvider providers.RuntimeCryptoProvider, signingKeyRef providers.KeyRef, signingAlg string, x5c []string,
-	trust *trustAnchorStore, defStore presentation.PresentationDefinitionServiceInterface,
+	defStore presentation.PresentationDefinitionServiceInterface,
 	jwtSvc jwt.JWTServiceInterface, issuerURL string,
 ) (*openid4vpService, error) {
 	if store == nil || clientID == "" || cryptoProvider == nil || defStore == nil {
@@ -74,7 +74,6 @@ func newOpenID4VPService(
 		x5c:            x5c,
 		jwtSvc:         jwtSvc,
 		issuerURL:      issuerURL,
-		trust:          trust,
 		logger:         log.GetLogger().With(log.String(log.LoggerKeyComponentName, "OpenID4VPService")),
 	}, nil
 }
@@ -209,7 +208,7 @@ func (s *openid4vpService) Authenticate(_ context.Context, cred *authncommon.Ope
 func (s *openid4vpService) resolveDefinition(
 	ctx context.Context, definitionID string,
 ) (*presentationDefinition, error) {
-	dto, svcErr := s.defStore.GetPresentationDefinitionByHandle(ctx, definitionID)
+	dto, svcErr := s.defStore.GetPresentationDefinitionByHandle(security.WithRuntimeContext(ctx), definitionID)
 	if svcErr != nil {
 		if svcErr.Code == presentation.ErrorDefinitionNotFound.Code {
 			return nil, fmt.Errorf("%w: no presentation definition registered for %q",
@@ -217,7 +216,11 @@ func (s *openid4vpService) resolveDefinition(
 		}
 		return nil, fmt.Errorf("failed to resolve presentation definition %q", definitionID)
 	}
-	return dtoToDefinition(*dto, s.clientID, s.cfg.EnforceKeyBinding), nil
+	def, err := dtoToDefinition(*dto, s.clientID, s.cfg.EnforceKeyBinding)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve presentation definition %q: %w", definitionID, err)
+	}
+	return def, nil
 }
 
 // load fetches non-expired state, deleting and rejecting expired entries.

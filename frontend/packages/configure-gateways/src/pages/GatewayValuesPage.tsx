@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {DocumentTitle} from '@thunderid/components';
+import {useHiddenResources} from '@thunderid/contexts';
 import {Alert, Box, CircularProgress, PageTitle, Stack, Tab, Tabs} from '@wso2/oxygen-ui';
 import {useMemo, useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
@@ -9,33 +10,14 @@ import {useNavigate, useParams} from 'react-router';
 import useGateways from '../api/useGateways';
 import {useRunningReferences} from '../api/useGatewayVersions';
 import {useStoredValues} from '../api/useStoredValues';
+import {useVersion} from '../api/useVersions';
 import DeployCard from '../components/DeployCard';
 import FullScreenHeader from '../components/FullScreenHeader';
 import ValuesTable, {type ValueRow} from '../components/ValuesTable';
 import useDeployRoutes from '../hooks/useDeployRoutes';
-import type {StoredValue, ValueKind, ValueReference} from '../models/deploy';
+import type {ValueKind} from '../models/deploy';
 import type {Gateway} from '../models/gateway';
-
-/** Every name of one kind the gateway holds or the version it runs refers to, named rows first. */
-function rowsOf(kind: ValueKind, stored: StoredValue[], references: ValueReference[]): ValueRow[] {
-  const byName = new Map<string, ValueRow>();
-  references
-    .filter((reference: ValueReference) => reference.kind === kind)
-    .forEach((reference: ValueReference) => {
-      const row = byName.get(reference.name) ?? {name: reference.name, references: []};
-      row.references.push(reference);
-      byName.set(reference.name, row);
-    });
-  stored.forEach((value: StoredValue) => {
-    const row = byName.get(value.name) ?? {name: value.name, references: []};
-    row.stored = value;
-    byName.set(value.name, row);
-  });
-  return [...byName.values()].sort((a: ValueRow, b: ValueRow) => {
-    const unset = (row: ValueRow): number => (row.stored ? 1 : 0);
-    return unset(a) - unset(b) || a.name.localeCompare(b.name);
-  });
-}
+import valueRowsOf, {withoutHiddenResources} from '../utils/valueRows';
 
 /**
  * The variables and secrets one gateway holds, with what the version it runs refers to each for, and
@@ -52,12 +34,29 @@ export default function GatewayValuesPage(): JSX.Element {
   const running = useRunningReferences(gatewayId);
   const variables = useStoredValues(gatewayId, 'variable');
   const secrets = useStoredValues(gatewayId, 'secret');
+  // The configuration as it stands names the resource a value belongs to when the version this gateway runs
+  // does not refer to it. It only labels rows, so it neither holds the page back nor fails it.
+  const current = useVersion('current');
   const references = useMemo(() => running.data ?? [], [running.data]);
+  const currentReferences = useMemo(() => current.data?.references ?? [], [current.data]);
+  // The values of hidden resources are left out, but rows are read with them so they do not show as unused.
+  const {isHiddenResource} = useHiddenResources();
   const variableRows = useMemo(
-    () => rowsOf('variable', variables.data ?? [], references),
-    [variables.data, references],
+    () =>
+      withoutHiddenResources(
+        valueRowsOf('variable', variables.data ?? [], references, currentReferences),
+        isHiddenResource,
+      ),
+    [variables.data, references, currentReferences, isHiddenResource],
   );
-  const secretRows = useMemo(() => rowsOf('secret', secrets.data ?? [], references), [secrets.data, references]);
+  const secretRows = useMemo(
+    () =>
+      withoutHiddenResources(
+        valueRowsOf('secret', secrets.data ?? [], references, currentReferences),
+        isHiddenResource,
+      ),
+    [secrets.data, references, currentReferences, isHiddenResource],
+  );
   const missing = [...variableRows, ...secretRows].filter(
     (row: ValueRow) => !row.stored && row.references.length > 0,
   ).length;

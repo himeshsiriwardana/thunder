@@ -3,8 +3,8 @@
 
 import {SettingsCard} from '@thunderid/components';
 import {useDataGridLocaleText} from '@thunderid/hooks';
-import {Box, Avatar, DataGrid, IconButton, ListingTable, Tabs, Tab} from '@wso2/oxygen-ui';
-import {AppWindow, Bot, Trash2, UserRound, UsersRound} from '@wso2/oxygen-ui-icons-react';
+import {Box, Avatar, DataGrid, IconButton, Tabs, Tab, Tooltip} from '@wso2/oxygen-ui';
+import {AppWindow, Bot, Eye, Trash2, UserRound, UsersRound} from '@wso2/oxygen-ui-icons-react';
 import {useState, useMemo, type JSX, type ReactNode, type SyntheticEvent} from 'react';
 import {useTranslation} from 'react-i18next';
 import useGetRoleAssignments from '../../../api/useGetRoleAssignments';
@@ -18,6 +18,10 @@ interface ManageAssignmentsSectionProps {
   onAssignmentTabChange: (tab: number) => void;
   isReadOnly?: boolean;
 }
+
+// A direct and a read-only assignment of the same assignee coexist, so the flag joins the row's ID.
+const assignmentRowId = (type: string, row: RoleAssignment): string =>
+  `${type}:${row.id}${row.isReadOnly ? ':readonly' : ''}`;
 
 /**
  * Section component for displaying and managing role assignments
@@ -116,19 +120,31 @@ export default function ManageAssignmentsSection({
         width: 60,
         sortable: false,
         filterable: false,
-        renderCell: (params: DataGrid.GridRenderCellParams<RoleAssignment>): JSX.Element => (
-          <IconButton
-            size="small"
-            color="error"
-            aria-label={t('common:actions.remove')}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemoveAssignment(params.row);
-            }}
-          >
-            <Trash2 size={14} />
-          </IconButton>
-        ),
+        renderCell: (params: DataGrid.GridRenderCellParams<RoleAssignment>): JSX.Element =>
+          params.row.isReadOnly ? (
+            <Tooltip title={t('common:status.readOnly', 'Read only')}>
+              <IconButton
+                size="small"
+                disableRipple
+                sx={{cursor: 'default'}}
+                aria-label={t('common:status.readOnly', 'Read only')}
+              >
+                <Eye size={14} />
+              </IconButton>
+            </Tooltip>
+          ) : (
+            <IconButton
+              size="small"
+              color="error"
+              aria-label={t('common:actions.remove')}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveAssignment(params.row);
+              }}
+            >
+              <Trash2 size={14} />
+            </IconButton>
+          ),
       },
     ],
     [t, onRemoveAssignment],
@@ -270,92 +286,79 @@ export default function ManageAssignmentsSection({
       </Box>
 
       {activeAssignmentTab === 0 && (
-        <ListingTable.Provider variant="data-grid">
-          <ListingTable.Container sx={{height: 400}}>
-            <ListingTable.DataGrid
-              rows={userAssignmentsData?.assignments ?? []}
-              columns={userColumns}
-              loading={isUsersLoading}
-              getRowId={(row): string => `user:${(row as RoleAssignment).id}`}
-              paginationMode="server"
-              rowCount={userAssignmentsData?.totalResults ?? 0}
-              paginationModel={userPaginationModel}
-              onPaginationModelChange={setUserPaginationModel}
-              pageSizeOptions={[5, 10, 25]}
-              disableRowSelectionOnClick
-              // Filtering is not wired end to end, so the column filter panel stays hidden.
-              disableColumnFilter
-              localeText={dataGridLocaleText}
-              sx={{'--oxygen-shape-borderRadius': '0px', border: 'none'}}
-            />
-          </ListingTable.Container>
-        </ListingTable.Provider>
+        <Box sx={{height: 400, width: '100%'}}>
+          <DataGrid.DataGrid
+            rows={userAssignmentsData?.assignments ?? []}
+            columns={userColumns}
+            loading={isUsersLoading}
+            getRowId={(row): string => assignmentRowId('user', row)}
+            paginationMode="server"
+            rowCount={userAssignmentsData?.totalResults ?? 0}
+            paginationModel={userPaginationModel}
+            onPaginationModelChange={setUserPaginationModel}
+            pageSizeOptions={[5, 10, 25]}
+            disableRowSelectionOnClick
+            localeText={dataGridLocaleText}
+            sx={{'--oxygen-shape-borderRadius': '0px', border: 'none'}}
+          />
+        </Box>
       )}
 
       {activeAssignmentTab === 1 && (
-        <ListingTable.Provider variant="data-grid">
-          <ListingTable.Container sx={{height: 400}}>
-            <ListingTable.DataGrid
-              rows={groupAssignmentsData?.assignments ?? []}
-              columns={groupColumns}
-              loading={isGroupsLoading}
-              getRowId={(row): string => `group:${(row as RoleAssignment).id}`}
-              paginationMode="server"
-              rowCount={groupAssignmentsData?.totalResults ?? 0}
-              paginationModel={groupPaginationModel}
-              onPaginationModelChange={setGroupPaginationModel}
-              pageSizeOptions={[5, 10, 25]}
-              disableRowSelectionOnClick
-              disableColumnFilter
-              localeText={dataGridLocaleText}
-              sx={{'--oxygen-shape-borderRadius': '0px', border: 'none'}}
-            />
-          </ListingTable.Container>
-        </ListingTable.Provider>
+        <Box sx={{height: 400, width: '100%'}}>
+          <DataGrid.DataGrid
+            rows={groupAssignmentsData?.assignments ?? []}
+            columns={groupColumns}
+            loading={isGroupsLoading}
+            getRowId={(row): string => assignmentRowId('group', row)}
+            paginationMode="server"
+            rowCount={groupAssignmentsData?.totalResults ?? 0}
+            paginationModel={groupPaginationModel}
+            onPaginationModelChange={setGroupPaginationModel}
+            pageSizeOptions={[5, 10, 25]}
+            disableRowSelectionOnClick
+            localeText={dataGridLocaleText}
+            sx={{'--oxygen-shape-borderRadius': '0px', border: 'none'}}
+          />
+        </Box>
       )}
 
       {activeAssignmentTab === 2 && (
-        <ListingTable.Provider variant="data-grid">
-          <ListingTable.Container sx={{height: 400}}>
-            <ListingTable.DataGrid
-              rows={appAssignmentsData?.assignments ?? []}
-              columns={appColumns}
-              loading={isAppsLoading}
-              getRowId={(row): string => `app:${(row as RoleAssignment).id}`}
-              paginationMode="server"
-              rowCount={appAssignmentsData?.totalResults ?? 0}
-              paginationModel={appPaginationModel}
-              onPaginationModelChange={setAppPaginationModel}
-              pageSizeOptions={[5, 10, 25]}
-              disableRowSelectionOnClick
-              disableColumnFilter
-              localeText={dataGridLocaleText}
-              sx={{'--oxygen-shape-borderRadius': '0px', border: 'none'}}
-            />
-          </ListingTable.Container>
-        </ListingTable.Provider>
+        <Box sx={{height: 400, width: '100%'}}>
+          <DataGrid.DataGrid
+            rows={appAssignmentsData?.assignments ?? []}
+            columns={appColumns}
+            loading={isAppsLoading}
+            getRowId={(row): string => assignmentRowId('app', row)}
+            paginationMode="server"
+            rowCount={appAssignmentsData?.totalResults ?? 0}
+            paginationModel={appPaginationModel}
+            onPaginationModelChange={setAppPaginationModel}
+            pageSizeOptions={[5, 10, 25]}
+            disableRowSelectionOnClick
+            localeText={dataGridLocaleText}
+            sx={{'--oxygen-shape-borderRadius': '0px', border: 'none'}}
+          />
+        </Box>
       )}
 
       {activeAssignmentTab === 3 && (
-        <ListingTable.Provider variant="data-grid">
-          <ListingTable.Container sx={{height: 400}}>
-            <ListingTable.DataGrid
-              rows={agentAssignmentsData?.assignments ?? []}
-              columns={agentColumns}
-              loading={isAgentsLoading}
-              getRowId={(row): string => `agent:${(row as RoleAssignment).id}`}
-              paginationMode="server"
-              rowCount={agentAssignmentsData?.totalResults ?? 0}
-              paginationModel={agentPaginationModel}
-              onPaginationModelChange={setAgentPaginationModel}
-              pageSizeOptions={[5, 10, 25]}
-              disableRowSelectionOnClick
-              disableColumnFilter
-              localeText={dataGridLocaleText}
-              sx={{'--oxygen-shape-borderRadius': '0px', border: 'none'}}
-            />
-          </ListingTable.Container>
-        </ListingTable.Provider>
+        <Box sx={{height: 400, width: '100%'}}>
+          <DataGrid.DataGrid
+            rows={agentAssignmentsData?.assignments ?? []}
+            columns={agentColumns}
+            loading={isAgentsLoading}
+            getRowId={(row): string => assignmentRowId('agent', row)}
+            paginationMode="server"
+            rowCount={agentAssignmentsData?.totalResults ?? 0}
+            paginationModel={agentPaginationModel}
+            onPaginationModelChange={setAgentPaginationModel}
+            pageSizeOptions={[5, 10, 25]}
+            disableRowSelectionOnClick
+            localeText={dataGridLocaleText}
+            sx={{'--oxygen-shape-borderRadius': '0px', border: 'none'}}
+          />
+        </Box>
       )}
     </SettingsCard>
   );

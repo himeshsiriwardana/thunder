@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import userEvent from '@testing-library/user-event';
+import {CapabilitiesProvider} from '@thunderid/contexts';
 import {render, renderHook, screen, fireEvent} from '@thunderid/test-utils';
 import {useTranslation} from 'react-i18next';
 import {describe, expect, it, vi, beforeAll, beforeEach} from 'vitest';
@@ -45,16 +46,12 @@ vi.mock('@wso2/oxygen-ui', async () => {
   return {
     ...actual,
     ListingTable: {
-      Provider: ({children, loading, variant}: {children: React.ReactNode; loading: boolean; variant: string}) => (
-        <div data-testid="data-grid" data-loading={String(loading)} data-variant={variant}>
+      Provider: ({children, loading}: {children: React.ReactNode; loading: boolean}) => (
+        <div data-testid="data-grid" data-loading={String(loading)}>
           {children}
         </div>
       ),
-      Container: ({children, disablePaper = undefined}: {children: React.ReactNode; disablePaper?: boolean}) => (
-        <div data-testid="listing-container" data-disable-paper={disablePaper}>
-          {children}
-        </div>
-      ),
+      Container: ({children}: {children: React.ReactNode}) => children,
       DataGrid: ({
         rows,
         columns,
@@ -110,6 +107,11 @@ vi.mock('@/components/TranslationDeleteDialog', () => ({
   },
 }));
 
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
+
 describe('TranslationsList', () => {
   let t: (key: string) => string;
 
@@ -128,11 +130,15 @@ describe('TranslationsList', () => {
     expect(screen.getByTestId('row-de-DE')).toBeInTheDocument();
   });
 
-  it('renders the listing as a papered data grid', () => {
-    render(<TranslationsList />);
+  it('hides the edit and delete row actions when the admin may only view translations', () => {
+    render(
+      <CapabilitiesProvider capabilities={viewOnly}>
+        <TranslationsList />
+      </CapabilitiesProvider>,
+    );
 
-    expect(screen.getByTestId('data-grid')).toHaveAttribute('data-variant', 'data-grid');
-    expect(screen.getByTestId('listing-container')).not.toHaveAttribute('data-disable-paper');
+    expect(screen.queryByRole('button', {name: /edit/i})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: /delete/i})).not.toBeInTheDocument();
   });
 
   it('navigates to the edit page when a row is clicked', () => {

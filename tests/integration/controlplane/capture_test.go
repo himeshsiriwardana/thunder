@@ -6,6 +6,7 @@ package controlplane
 import (
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -152,9 +153,9 @@ func (ts *ControlPlaneTestSuite) withDefaultGateway() *capturingGateway {
 	return g
 }
 
-// variableName is how an export names a resource's value: its type, its name and the field.
-func variableName(resourceType, name, field string) string {
-	return resourceType + "_" + strings.ToUpper(strings.NewReplacer(" ", "_", "-", "_").Replace(name)) + "_" + field
+// variableName is how an export names a resource's value, as testutils.ExportVariableName spells it.
+func variableName(resourceType, id, field string) string {
+	return testutils.ExportVariableName(resourceType, id, field)
 }
 
 // An application written on the control plane leaves its client ID and secret in the default
@@ -175,15 +176,44 @@ func (ts *ControlPlaneTestSuite) TestAWrittenApplicationsValuesReachTheDefaultGa
 	ts.Require().NoError(err)
 	defer func() { _ = testutils.DeleteApplication(appID) }()
 
-	held, ok := g.heldSoon("variables", variableName("APPLICATION", name, "CLIENT_ID"))
+	held, ok := g.heldSoon("variables", variableName("APPLICATION", appID, "CLIENT_ID"))
 	ts.True(ok, "the client ID was not captured")
 	ts.Equal(clientID, held)
-	held, ok = g.heldSoon("secrets", variableName("APPLICATION", name, "CLIENT_SECRET"))
+	held, ok = g.heldSoon("secrets", variableName("APPLICATION", appID, "CLIENT_SECRET"))
 	ts.True(ok, "the client secret was not captured")
 	ts.Equal(clientSecret, held)
-	held, ok = g.heldSoon("variables", variableName("APPLICATION", name, "REDIRECT_URIS"))
+	held, ok = g.heldSoon("variables", variableName("APPLICATION", appID, "REDIRECT_URIS"))
 	ts.True(ok, "the redirect URIs were not captured")
 	ts.JSONEq(`["https://cp-capture.example.com/callback"]`, held)
+}
+
+// An application's Flow Secret reaches the default gateway's secrets under the name its export refers
+// to, as issued on create, and again when an update sets a new one, as a regenerate does.
+func (ts *ControlPlaneTestSuite) TestAWrittenApplicationsFlowSecretReachesTheDefaultGateway() {
+	g := ts.withDefaultGateway()
+	name := unique("CP Capture Flow Secret App")
+	appID, err := testutils.CreateApplication(testutils.Application{
+		OUID: ts.ouID, Name: name, Type: "custom", Embedded: true,
+	})
+	ts.Require().NoError(err)
+	defer func() { _ = testutils.DeleteApplication(appID) }()
+	issued := testutils.GetFlowSecret(appID)
+	ts.Require().NotEmpty(issued, "the application was not issued a Flow Secret")
+	secretName := variableName("APPLICATION", appID, "FLOW_SECRET")
+
+	held, ok := g.heldSoon("secrets", secretName)
+	ts.True(ok, "the issued Flow Secret was not captured")
+	ts.Equal(issued, held)
+
+	regenerated := unique("CpRegeneratedFlowSecret")
+	status, raw := ts.call(http.MethodPut, "/applications/"+appID, map[string]any{
+		"ouId": ts.ouID, "name": name, "type": "custom", "flowSecret": regenerated,
+	}, nil)
+	ts.Require().Equal(http.StatusOK, status, string(raw))
+
+	ts.True(g.holdsValueSoon("secrets", regenerated), "the regenerated Flow Secret was not captured")
+	held, _ = g.held("secrets", secretName)
+	ts.Equal(regenerated, held)
 }
 
 // A value the gateway's store refuses is written again a little later, so a store that is briefly
@@ -204,10 +234,10 @@ func (ts *ControlPlaneTestSuite) TestACapturedValueRefusedOnceIsWrittenAgain() {
 	ts.Require().NoError(err)
 	defer func() { _ = testutils.DeleteApplication(appID) }()
 
-	held, ok := g.heldSoon("variables", variableName("APPLICATION", name, "CLIENT_ID"))
+	held, ok := g.heldSoon("variables", variableName("APPLICATION", appID, "CLIENT_ID"))
 	ts.True(ok, "the client ID was not captured after the store refused it once")
 	ts.Equal(clientID, held)
-	ts.GreaterOrEqual(g.attemptsAt("variables", variableName("APPLICATION", name, "CLIENT_ID")), 2,
+	ts.GreaterOrEqual(g.attemptsAt("variables", variableName("APPLICATION", appID, "CLIENT_ID")), 2,
 		"the refused write was not tried again")
 }
 
@@ -235,10 +265,10 @@ func (ts *ControlPlaneTestSuite) TestAnApplicationWithoutRedirectURIsAsksNoGatew
 	ts.Require().NoError(err)
 	defer func() { _ = testutils.DeleteApplication(appID) }()
 
-	held, ok := g.heldSoon("variables", variableName("APPLICATION", name, "CLIENT_ID"))
+	held, ok := g.heldSoon("variables", variableName("APPLICATION", appID, "CLIENT_ID"))
 	ts.True(ok, "the client ID was not captured")
 	ts.Equal(clientID, held)
-	_, ok = g.held("variables", variableName("APPLICATION", name, "REDIRECT_URIS"))
+	_, ok = g.held("variables", variableName("APPLICATION", appID, "REDIRECT_URIS"))
 	ts.False(ok, "a value was captured for redirect URIs the application does not have")
 
 	var exported struct {
@@ -246,7 +276,7 @@ func (ts *ControlPlaneTestSuite) TestAnApplicationWithoutRedirectURIsAsksNoGatew
 	}
 	status, raw := ts.call(http.MethodPost, "/export", map[string]any{"applications": []string{appID}}, &exported)
 	ts.Require().Equal(http.StatusOK, status, string(raw))
-	ts.NotContains(exported.Resources, variableName("APPLICATION", name, "REDIRECT_URIS"),
+	ts.NotContains(exported.Resources, variableName("APPLICATION", appID, "REDIRECT_URIS"),
 		"the export refers to redirect URIs the application does not have")
 }
 
@@ -342,12 +372,78 @@ func (ts *ControlPlaneTestSuite) TestAWrittenAgentsCredentialsReachTheDefaultGat
 	ts.Require().NoError(err)
 	defer func() { _ = testutils.DeleteAgent(agentID) }()
 
-	held, ok := g.heldSoon("variables", variableName("AGENT", name, "CLIENT_ID"))
+	held, ok := g.heldSoon("variables", variableName("AGENT", agentID, "CLIENT_ID"))
 	ts.True(ok, "the agent's client ID was not captured")
 	ts.Equal(clientID, held)
-	held, ok = g.heldSoon("secrets", variableName("AGENT", name, "CLIENT_SECRET"))
+	held, ok = g.heldSoon("secrets", variableName("AGENT", agentID, "CLIENT_SECRET"))
 	ts.True(ok, "the agent's client secret was not captured")
 	ts.Equal(clientSecret, held)
+}
+
+// An agent's password reaches the default gateway's secrets, never its variables, under the name the
+// control plane's export refers to it by, and a password set later replaces it there. That is what a
+// Data Plane signs the agent in with.
+func (ts *ControlPlaneTestSuite) TestAWrittenAgentsPasswordReachesTheDefaultGatewaysSecrets() {
+	g := ts.withDefaultGateway()
+	snapshot, err := testutils.SnapshotAgentType()
+	ts.Require().NoError(err)
+	defer func() { ts.NoError(testutils.RestoreAgentType(snapshot)) }()
+	_, err = testutils.CreateAgentType(testutils.UserType{
+		Handle:           "default",
+		DisplayName:      "Default",
+		OUID:             ts.ouID,
+		SystemAttributes: &testutils.UserTypeSystemAttributes{Display: "name"},
+		Schema: map[string]interface{}{
+			"name":     map[string]interface{}{"type": "string"},
+			"password": map[string]interface{}{"type": "string", "credential": true},
+		},
+	})
+	ts.Require().NoError(err)
+	name := unique("CP Capture Password Agent")
+	password := unique("Cp-Agent-Pass1!")
+
+	agentID, err := testutils.CreateAgent(testutils.Agent{
+		OUID:       ts.ouID,
+		Type:       "default",
+		Attributes: map[string]interface{}{"name": name, "password": password},
+	})
+	ts.Require().NoError(err)
+	defer func() { _ = testutils.DeleteAgent(agentID) }()
+	secretName := variableName("AGENT", agentID, "PASSWORD")
+
+	held, ok := g.heldSoon("secrets", secretName)
+	ts.True(ok, "the agent's password was not captured")
+	ts.Equal(password, held)
+	ts.False(g.holdsValue("variables", password), "the password was captured as a variable")
+
+	var exported struct {
+		Resources string `json:"resources"`
+	}
+	status, raw := ts.call(http.MethodPost, "/export", map[string]any{"agents": []string{agentID}}, &exported)
+	ts.Require().Equal(http.StatusOK, status, string(raw))
+	ts.Contains(exported.Resources, `password: "sec:`+secretName+`"`,
+		"the export does not refer to the captured password")
+	ts.NotContains(exported.Resources, password)
+
+	rotated := unique("Cp-Agent-Rotated1!")
+	status, raw = ts.call(http.MethodPost, "/agents/"+agentID+"/update-credentials", map[string]any{
+		"credentials": map[string]any{"password": rotated},
+	}, nil)
+	ts.Require().Equal(http.StatusNoContent, status, string(raw))
+	ts.True(g.holdsValueSoon("secrets", rotated), "the replaced password was not captured")
+	held, _ = g.held("secrets", secretName)
+	ts.Equal(rotated, held)
+
+	// An import onto the control plane sets the password through the agent service, which captures it too.
+	imported := unique("Cp-Agent-Imported1!")
+	status, raw = ts.call(http.MethodPost, "/import", map[string]any{
+		"content": fmt.Sprintf("resource_type: agent\nid: %s\ntype: default\nouId: %s\nattributes:\n  name: %s\n"+
+			"credentials:\n  password: \"{{.PASSWORD}}\"\n", agentID, ts.ouID, name),
+		"variables": map[string]any{"PASSWORD": imported},
+		"options":   map[string]any{"target": "runtime", "upsert": true},
+	}, nil)
+	ts.Require().Equal(http.StatusOK, status, string(raw))
+	ts.True(g.holdsValueSoon("secrets", imported), "the imported password was not captured: %s", raw)
 }
 
 // createResourceServer creates a resource server on the control plane and returns its id.
@@ -373,9 +469,9 @@ func (ts *ControlPlaneTestSuite) TestAWrittenResourceServersIdentifierReachesThe
 	g := ts.withDefaultGateway()
 	name := unique("CP Capture Orders")
 	identifier := "https://" + unique("cp-capture-orders") + ".example.com"
-	variable := variableName("RESOURCE_SERVER", name, "IDENTIFIER")
 
 	rsID := ts.createResourceServer(name, identifier)
+	variable := variableName("RESOURCE_SERVER", rsID, "IDENTIFIER")
 
 	held, ok := g.heldSoon("variables", variable)
 	ts.True(ok, "the identifier was not captured")
@@ -417,7 +513,7 @@ func (ts *ControlPlaneTestSuite) TestAWrittenAuthorizationDetailTypesProcessorCr
 		ID string `json:"id"`
 	}
 	status, raw := ts.call(http.MethodPost, "/authorization-detail-types", map[string]any{
-		"type": value, "name": name, "schema": schema,
+		"type": value, "name": name, "schema": schema, "projectId": defaultProjectID,
 		"processor": map[string]any{"endpoint": "https://processor.example.com/rar",
 			"authentication": map[string]any{"type": "bearer", "properties": map[string]any{"token": credential}}},
 	}, &created)
@@ -490,7 +586,7 @@ func (ts *ControlPlaneTestSuite) TestAnHTTPConnectionsPasswordIsCapturedOnEveryW
 	}
 	created := unique("cp-http-basic-secret")
 	id := ts.createHTTPConnection(map[string]any{"name": name, "url": url, "authentication": basic(created)})
-	secret := variableName("CONNECTION", name, "PASSWORD")
+	secret := variableName("CONNECTION", id, "PASSWORD")
 	held, ok := g.heldSoon("secrets", secret)
 	ts.Require().True(ok, "the password was not captured")
 	ts.Require().Equal(created, held, "the captured password is not the connection's")
@@ -522,10 +618,10 @@ func (ts *ControlPlaneTestSuite) TestAnHTTPConnectionsPasswordIsCapturedOnEveryW
 func (ts *ControlPlaneTestSuite) captureBarrier(g *capturingGateway) string {
 	ts.T().Helper()
 	name := unique("cp-http-barrier")
-	ts.createHTTPConnection(map[string]any{"name": name, "url": "https://cp-http-barrier.example.com/hook",
+	id := ts.createHTTPConnection(map[string]any{"name": name, "url": "https://cp-http-barrier.example.com/hook",
 		"authentication": map[string]any{"type": "bearer", "properties": map[string]any{
 			"token": unique("cp-http-barrier-token")}}})
-	secret := variableName("CONNECTION", name, "TOKEN")
+	secret := variableName("CONNECTION", id, "TOKEN")
 	_, ok := g.heldSoon("secrets", secret)
 	ts.Require().True(ok, "the barrier connection's token was not captured")
 	return "secrets/" + secret

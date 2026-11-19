@@ -7,7 +7,8 @@ import {ElementTypes} from '../../models/elements';
 import type {FlowDefinitionResponse, FlowNode} from '../../models/responses';
 import {StaticStepTypes, StepTypes} from '../../models/steps';
 import {transformFlowToCanvas} from '../flowToCanvasTransformer';
-import {transformReactFlow} from '../reactFlowTransformer';
+import generateFlowGraph from '../generateFlowGraph';
+import {transformReactFlow, validateFlowGraph} from '../reactFlowTransformer';
 
 describe('flowToCanvasTransformer', () => {
   const createBaseFlowData = (nodes: FlowNode[]): FlowDefinitionResponse => ({
@@ -688,6 +689,24 @@ describe('flowToCanvasTransformer', () => {
         expect(components?.[1]?.['inputType']).toBe('number');
       });
 
+      it('should derive a datetime-local input type for a date-time input', () => {
+        const flowData = createBaseFlowData([
+          {
+            id: 'prompt-node',
+            type: 'PROMPT',
+            meta: {
+              components: [{id: 'valid-until-input', type: 'DATE_TIME_INPUT', ref: 'validUntil'}],
+            },
+            layout: {position: {x: 0, y: 0}, size: {width: 300, height: 200}},
+          },
+        ]);
+
+        const result = transformFlowToCanvas(flowData);
+
+        const components = result.nodes[0].data.components as Record<string, unknown>[] | undefined;
+        expect(components?.[0]?.['inputType']).toBe('datetime-local');
+      });
+
       it('should handle nested components (forms)', () => {
         const flowData = createBaseFlowData([
           {
@@ -802,9 +821,14 @@ describe('flowToCanvasTransformer', () => {
 
         expect(node).toMatchObject({
           type: StaticStepTypes.Variables,
-          deletable: false,
           data: {displayOnly: true, inputs: declarations},
         });
+      });
+
+      it('should leave the node deletable, so its own remove button works on a saved flow', () => {
+        const node = transformFlowToCanvas(flowData).nodes.find((n) => n.id === 'vars');
+
+        expect(node?.deletable).toBe(true);
       });
 
       it('should draw the paths on both sides of the node', () => {
@@ -825,6 +849,34 @@ describe('flowToCanvasTransformer', () => {
         const saved = transformReactFlow({nodes: canvas.nodes, edges: canvas.edges}).nodes.find((n) => n.id === 'vars');
 
         expect(saved).toMatchObject({type: 'VARIABLES', inputs: declarations, onSuccess: 'login'});
+      });
+    });
+
+    describe('VARIABLES node onFailure', () => {
+      const flowData = createBaseFlowData([
+        {id: 'start', type: 'START', onSuccess: 'vars'},
+        {
+          id: 'vars',
+          type: 'VARIABLES',
+          onSuccess: 'end',
+          onFailure: 'oops',
+          inputs: [{identifier: 'social', type: 'CONNECTION_SELECT', category: 'IDENTITY_PROVIDER'}],
+        },
+        {id: 'oops', type: 'PROMPT', prompts: [{action: {ref: 'back', nextNode: 'start'}}]},
+        {id: 'end', type: 'END'},
+      ]);
+
+      it('should draw the failure path from the failure handle', () => {
+        const {edges} = transformFlowToCanvas(flowData);
+
+        expect(edges.find((edge) => edge.source === 'vars' && edge.sourceHandle === 'failure')?.target).toBe('oops');
+      });
+
+      it('should write the failure path back as onFailure', () => {
+        const canvas = transformFlowToCanvas(flowData);
+        const saved = transformReactFlow({nodes: canvas.nodes, edges: canvas.edges}).nodes.find((n) => n.id === 'vars');
+
+        expect(saved).toMatchObject({onSuccess: 'end', onFailure: 'oops'});
       });
     });
 
@@ -958,6 +1010,199 @@ describe('flowToCanvasTransformer', () => {
           nextNode: 'session_signout',
           type: 'CONFIRM',
         });
+      });
+    });
+
+    describe('Executor input defaults', () => {
+      const inputs = [
+        {ref: 'input_locale', type: 'TEXT_INPUT', identifier: 'locale', required: false, defaultValue: 'en-US'},
+        {
+          ref: 'input_region',
+          type: 'TEXT_INPUT',
+          identifier: 'region',
+          required: false,
+          defaultValue: 'eu',
+          constant: true,
+        },
+      ];
+
+      it('should keep the default and constant of executor inputs through a load and save', () => {
+        const canvas = transformFlowToCanvas(
+          createBaseFlowData([
+            {
+              id: 'provisioning',
+              type: 'TASK_EXECUTION',
+              executor: {name: 'ProvisioningExecutor', inputs},
+              layout: {position: {x: 0, y: 0}, size: {width: 200, height: 100}},
+            },
+          ]),
+        );
+
+        expect(canvas.nodes[0].data.action?.executor).toEqual({name: 'ProvisioningExecutor', inputs});
+
+        const saved = transformReactFlow({edges: canvas.edges, nodes: canvas.nodes});
+
+        expect(saved.nodes.find((node) => node.id === 'provisioning')?.executor?.inputs).toEqual(inputs);
+      });
+    });
+
+    describe('Prompt input defaults', () => {
+      const promptFlow = (inputType: string, metaValue?: string) =>
+        createBaseFlowData([
+          {
+            id: 'prompt-node',
+            type: 'PROMPT',
+            meta: {
+              components: [
+                {
+                  id: 'block-1',
+                  type: 'BLOCK',
+                  components: [
+                    {
+                      id: 'input_department',
+                      type: inputType,
+                      ref: 'department',
+                      ...(metaValue ? {value: metaValue} : {}),
+                    },
+                    {id: 'submit-btn', type: 'ACTION', eventType: 'SUBMIT'},
+                  ],
+                },
+              ],
+            },
+            prompts: [
+              {
+                inputs: [
+                  {
+                    ref: 'input_department',
+                    type: inputType,
+                    identifier: 'department',
+                    required: false,
+                    defaultValue: 'Computer Science',
+                  },
+                ],
+                action: {ref: 'submit-btn', nextNode: 'end-node'},
+              },
+            ],
+            layout: {position: {x: 0, y: 0}, size: {width: 300, height: 200}},
+          },
+          {
+            id: 'end-node',
+            type: 'END',
+            layout: {position: {x: 400, y: 0}, size: {width: 100, height: 50}},
+          },
+        ]);
+
+      const restoredInput = (canvas: ReturnType<typeof transformFlowToCanvas>) => {
+        const block = canvas.nodes[0].data.components?.[0] as {components: {value?: string}[]};
+
+        return block.components[0];
+      };
+
+      it('should fill the value of the component from the default of its prompt input', () => {
+        const canvas = transformFlowToCanvas(promptFlow('TEXT_INPUT'));
+
+        expect(restoredInput(canvas).value).toBe('Computer Science');
+      });
+
+      it('should prefer the default of the prompt input over a stale value in the meta', () => {
+        const canvas = transformFlowToCanvas(promptFlow('TEXT_INPUT', 'Old'));
+
+        expect(restoredInput(canvas).value).toBe('Computer Science');
+      });
+
+      it('should not fill the value of an input that cannot hold a default', () => {
+        const canvas = transformFlowToCanvas(promptFlow('PASSWORD_INPUT'));
+
+        expect(restoredInput(canvas).value).toBeUndefined();
+      });
+
+      it('should keep the default through a load and save', () => {
+        const canvas = transformFlowToCanvas(promptFlow('TEXT_INPUT'));
+
+        const saved = transformReactFlow({edges: canvas.edges, nodes: canvas.nodes});
+
+        const prompt = saved.nodes.find((node) => node.id === 'prompt-node');
+        expect(prompt?.prompts?.[0].inputs?.[0].defaultValue).toBe('Computer Science');
+      });
+    });
+
+    describe('Node condition', () => {
+      const condition = {key: '{{ctx(userEligibleForProvisioning)}}', value: 'true', onSkip: 'skip_target'};
+
+      const conditionFlow = (): FlowDefinitionResponse =>
+        createBaseFlowData([
+          {id: 'start', type: 'START', onSuccess: 'provisioning'},
+          {
+            id: 'provisioning',
+            type: 'TASK_EXECUTION',
+            executor: {name: 'ProvisioningExecutor'},
+            condition,
+            onSuccess: 'auth_assert',
+          },
+          {id: 'skip_target', type: 'TASK_EXECUTION', executor: {name: 'AuthorizationExecutor'}, onSuccess: 'end'},
+          {id: 'auth_assert', type: 'TASK_EXECUTION', executor: {name: 'AuthAssertExecutor'}, onSuccess: 'end'},
+          {id: 'end', type: 'END'},
+        ]);
+
+      it.each<[string, FlowNode]>([
+        ['TASK_EXECUTION', {id: 'node', type: 'TASK_EXECUTION', executor: {name: 'ProvisioningExecutor'}, condition}],
+        [
+          'PROMPT',
+          {
+            id: 'node',
+            type: 'PROMPT',
+            meta: {components: [{id: 'action_next', type: 'ACTION', label: 'Next'}]},
+            prompts: [{action: {ref: 'action_next', nextNode: 'end'}}],
+            condition,
+          },
+        ],
+        ['CALL', {id: 'node', type: 'CALL', flow: {ref: 'called-flow'}, condition}],
+      ])('should keep the condition of a %s node', (_type, apiNode) => {
+        const canvas = transformFlowToCanvas(createBaseFlowData([apiNode, {id: 'end', type: 'END'}]));
+
+        expect(canvas.nodes.find((n) => n.id === 'node')?.data.condition).toEqual(condition);
+      });
+
+      it('should not add a condition to a node that has none', () => {
+        const canvas = transformFlowToCanvas(conditionFlow());
+
+        expect(canvas.nodes.find((n) => n.id === 'auth_assert')?.data).not.toHaveProperty('condition');
+      });
+
+      it('should not draw the skip target as a connection', () => {
+        const {edges} = transformFlowToCanvas(conditionFlow());
+
+        expect(edges.filter((edge) => edge.source === 'provisioning').map((edge) => edge.target)).toEqual([
+          'auth_assert',
+        ]);
+      });
+
+      it('should keep the condition through a load and save', () => {
+        const canvas = transformFlowToCanvas(conditionFlow());
+
+        const saved = transformReactFlow({edges: canvas.edges, nodes: canvas.nodes});
+
+        const provisioning = saved.nodes.find((node) => node.id === 'provisioning');
+        expect(provisioning?.condition).toEqual(condition);
+        expect(provisioning?.onSuccess).toBe('auth_assert');
+        expect(saved.nodes.find((node) => node.id === 'auth_assert')).not.toHaveProperty('condition');
+      });
+
+      it('should keep the provisioning condition of a generated sign-in flow through a load and save', () => {
+        const generated = generateFlowGraph({
+          googleIdpId: 'google-idp',
+          hasCredentialsAuth: true,
+          hasPasskey: false,
+          hasSmsOtp: false,
+        });
+        const generatedCondition = generated.nodes.find((node) => node.id === 'provisioning')?.condition;
+        expect(generatedCondition?.onSkip).toBeTruthy();
+
+        const canvas = transformFlowToCanvas(createBaseFlowData(generated.nodes));
+        const saved = transformReactFlow({edges: canvas.edges, nodes: canvas.nodes});
+
+        expect(saved.nodes.find((node) => node.id === 'provisioning')?.condition).toEqual(generatedCondition);
+        expect(validateFlowGraph(saved)).toEqual([]);
       });
     });
   });

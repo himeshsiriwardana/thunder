@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/thunder-id/thunderid/internal/attributecache"
+	"github.com/thunder-id/thunderid/internal/flow/session"
 	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	oauth2authz "github.com/thunder-id/thunderid/internal/oauth/oauth2/authz"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/ciba"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/deviceauth"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/revocation"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/tokenservice"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
@@ -30,12 +32,14 @@ func Initialize(
 	actorProvider providers.ActorProvider,
 	resourceService providers.ResourceServerProvider,
 	cibaService ciba.CIBAServiceInterface,
+	deviceService deviceauth.DeviceAuthServiceInterface,
 	refreshTokenRevoker revocation.RefreshTokenRevokerInterface,
 	criteriaRevoker revocation.CriteriaRevokerInterface,
 	enforcementService revocation.EnforcementServiceInterface,
 	governance providers.IdentityGovernanceProvider,
 	authzDetails providers.AuthorizationDetailProvider,
 	deviceSecretValidity time.Duration,
+	ssoSession session.Service,
 	cfg oauthconfig.Config,
 ) GrantHandlerProviderInterface {
 	return newGrantHandlerProvider(
@@ -49,12 +53,14 @@ func Initialize(
 		actorProvider,
 		resourceService,
 		cibaService,
+		deviceService,
 		refreshTokenRevoker,
 		criteriaRevoker,
 		enforcementService,
 		governance,
 		authzDetails,
 		deviceSecretValidity,
+		ssoSession,
 		cfg,
 	)
 }

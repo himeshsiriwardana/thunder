@@ -17,11 +17,6 @@ import (
 	"testing"
 	"time"
 
-	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
-	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
-
-	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -35,8 +30,12 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/actorprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/httpmock"
+	"github.com/thunder-id/thunderid/tests/mocks/identitygovernanceprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/jose/jwemock"
 	"github.com/thunder-id/thunderid/tests/mocks/jose/jwtmock"
 )
@@ -100,7 +99,7 @@ func (suite *TokenBuilderTestSuite) TestNewTokenBuilder() {
 	jwtService := jwtmock.NewJWTServiceInterfaceMock(suite.T())
 	builder := newTokenBuilder(oauthconfig.Config{
 		JWT: engineconfig.JWTConfig{Issuer: "https://example.com", ValidityPeriod: 3600},
-	}, jwtService, nil, nil, nil)
+	}, jwtService, nil, nil, nil, nil)
 
 	assert.NotNil(suite.T(), builder)
 	assert.Implements(suite.T(), (*TokenBuilderInterface)(nil), builder)
@@ -2538,6 +2537,83 @@ func (suite *TokenBuilderTestSuite) TestBuildIDJAG_NoResources_OmitsResourceClai
 	suite.mockJWTService.AssertExpectations(suite.T())
 }
 
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_CopiesIDTokenAttributes() {
+	suite.oauthApp.Token.IDToken = &providers.IDTokenConfig{
+		UserAttributes: []string{"email", "given_name", "roles", "groups", "aud_sub", "resource", "nonce", "sid"},
+	}
+	ctx := &IDJAGBuildContext{
+		Subject:   "user123",
+		Audience:  testIDJAGAud,
+		ClientID:  suite.oauthApp.ClientID,
+		Resources: []string{"https://rs01.example.com"},
+		UserAttributes: map[string]interface{}{
+			"email":      "user@example.com",
+			"given_name": "Ada",
+			"phone":      "+94770000000",
+			"roles":      []interface{}{"admin"},
+			"groups":     []interface{}{"staff"},
+			"aud_sub":    "other-account",
+			"resource":   "https://other.example.com",
+			"nonce":      "n-0S6_WzA2Mj",
+			"sid":        "session-1",
+			"auth_time":  float64(1311280970),
+		},
+		OAuthApp: suite.oauthApp,
+	}
+
+	var issued map[string]interface{}
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		providers.DefaultIDJAGValidityPeriod,
+		mock.Anything,
+		jwt.TokenTypeIDJAG,
+		mock.Anything,
+	).Run(func(args mock.Arguments) {
+		issued = args.Get(4).(map[string]interface{})
+	}).Return("test-id-jag", time.Now().Unix(), nil)
+
+	_, err := suite.builder.BuildIDJAG(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), map[string]interface{}{
+		"aud":        testIDJAGAud,
+		"client_id":  suite.oauthApp.ClientID,
+		"resource":   "https://rs01.example.com",
+		"email":      "user@example.com",
+		"given_name": "Ada",
+	}, issued)
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_NoIDTokenAttributes_CopiesNone() {
+	ctx := &IDJAGBuildContext{
+		Subject:        "user123",
+		Audience:       testIDJAGAud,
+		ClientID:       suite.oauthApp.ClientID,
+		UserAttributes: map[string]interface{}{"email": "user@example.com"},
+		OAuthApp:       suite.oauthApp,
+	}
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		providers.DefaultIDJAGValidityPeriod,
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			_, hasEmail := claims["email"]
+			return !hasEmail
+		}),
+		jwt.TokenTypeIDJAG,
+		mock.Anything,
+	).Return("test-id-jag", time.Now().Unix(), nil)
+
+	_, err := suite.builder.BuildIDJAG(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
 func (suite *TokenBuilderTestSuite) TestBuildIDJAG_Error_NilContext() {
 	result, err := suite.builder.BuildIDJAG(context.Background(), nil)
 
@@ -2601,7 +2677,7 @@ const (
 func TestResolveSubjectIdentity_CarriedFromTheAssertion(t *testing.T) {
 	tb := &tokenBuilder{}
 
-	id, category := tb.resolveSubjectIdentity(&AccessTokenBuildContext{
+	id, category := tb.resolveSubjectIdentity(context.Background(), &AccessTokenBuildContext{
 		Subject:         "alice@example.com",
 		SubjectEntityID: subjectIdentityUserID,
 		SubjectCategory: string(providers.EntityCategoryUser),
@@ -2616,12 +2692,12 @@ func TestResolveSubjectIdentity_CarriedFromTheAssertion(t *testing.T) {
 // resolved.
 func TestResolveSubjectIdentity_AssertionIDWithoutCategory(t *testing.T) {
 	actors := actorprovidermock.NewActorProviderMock(t)
-	actors.On("GetActor", subjectIdentityUserID).
+	actors.On("GetActor", mock.Anything, subjectIdentityUserID).
 		Return(&providers.Entity{ID: subjectIdentityUserID, Category: providers.EntityCategoryUser},
 			(*tidcommon.ServiceError)(nil))
 	tb := &tokenBuilder{actorProvider: actors}
 
-	id, category := tb.resolveSubjectIdentity(&AccessTokenBuildContext{
+	id, category := tb.resolveSubjectIdentity(context.Background(), &AccessTokenBuildContext{
 		SubjectEntityID: subjectIdentityUserID,
 	})
 
@@ -2634,7 +2710,7 @@ func TestResolveSubjectIdentity_AssertionIDWithoutCategory(t *testing.T) {
 func TestResolveSubjectIdentity_SubjectIsTheClient(t *testing.T) {
 	tb := &tokenBuilder{}
 
-	id, category := tb.resolveSubjectIdentity(&AccessTokenBuildContext{
+	id, category := tb.resolveSubjectIdentity(context.Background(), &AccessTokenBuildContext{
 		Subject: subjectIdentityClientID,
 		OAuthApp: &providers.OAuthClient{
 			ID:             subjectIdentityClientID,
@@ -2650,12 +2726,12 @@ func TestResolveSubjectIdentity_SubjectIsTheClient(t *testing.T) {
 // minted for agent B must report an agent subject, not a user.
 func TestResolveSubjectIdentity_AgentSubjectOfAnExchange(t *testing.T) {
 	actors := actorprovidermock.NewActorProviderMock(t)
-	actors.On("GetActor", "agent-b").
+	actors.On("GetActor", mock.Anything, "agent-b").
 		Return(&providers.Entity{ID: "agent-b", Category: providers.EntityCategoryAgent},
 			(*tidcommon.ServiceError)(nil))
 	tb := &tokenBuilder{actorProvider: actors}
 
-	id, category := tb.resolveSubjectIdentity(&AccessTokenBuildContext{
+	id, category := tb.resolveSubjectIdentity(context.Background(), &AccessTokenBuildContext{
 		Subject:  "agent-b",
 		OAuthApp: &providers.OAuthClient{ID: subjectIdentityClientID, EntityCategory: providers.EntityCategoryAgent},
 	})
@@ -2669,11 +2745,11 @@ func TestResolveSubjectIdentity_AgentSubjectOfAnExchange(t *testing.T) {
 // so the attribute — an email address here — is never published.
 func TestResolveSubjectIdentity_MappedAttributeIsNotReported(t *testing.T) {
 	actors := actorprovidermock.NewActorProviderMock(t)
-	actors.On("GetActor", "alice@example.com").
+	actors.On("GetActor", mock.Anything, "alice@example.com").
 		Return((*providers.Entity)(nil), &tidcommon.ServiceError{Code: "ENTITY-404"})
 	tb := &tokenBuilder{actorProvider: actors}
 
-	id, category := tb.resolveSubjectIdentity(&AccessTokenBuildContext{
+	id, category := tb.resolveSubjectIdentity(context.Background(), &AccessTokenBuildContext{
 		Subject:  "alice@example.com",
 		OAuthApp: &providers.OAuthClient{ID: subjectIdentityClientID},
 	})
@@ -2686,7 +2762,7 @@ func TestResolveSubjectIdentity_NoProviderOrNoSubject(t *testing.T) {
 	tb := &tokenBuilder{}
 
 	// A subject that is not the client cannot be resolved without a provider, so it is not reported.
-	id, category := tb.resolveSubjectIdentity(&AccessTokenBuildContext{
+	id, category := tb.resolveSubjectIdentity(context.Background(), &AccessTokenBuildContext{
 		Subject:  subjectIdentityUserID,
 		OAuthApp: &providers.OAuthClient{ID: subjectIdentityClientID},
 	})
@@ -2694,7 +2770,7 @@ func TestResolveSubjectIdentity_NoProviderOrNoSubject(t *testing.T) {
 	assert.Empty(t, category)
 
 	// No subject at all.
-	id, category = tb.resolveSubjectIdentity(&AccessTokenBuildContext{})
+	id, category = tb.resolveSubjectIdentity(context.Background(), &AccessTokenBuildContext{})
 	assert.Empty(t, id)
 	assert.Empty(t, category)
 }
@@ -2705,7 +2781,7 @@ func TestResolveSubjectIdentity_NoProviderOrNoSubject(t *testing.T) {
 func TestResolveActorIdentity_ActorIsTheClient(t *testing.T) {
 	tb := &tokenBuilder{}
 
-	id := tb.resolveActorIdentity(&AccessTokenBuildContext{
+	id := tb.resolveActorIdentity(context.Background(), &AccessTokenBuildContext{
 		OAuthApp: &providers.OAuthClient{
 			ID:             subjectIdentityClientID,
 			EntityCategory: providers.EntityCategoryAgent,
@@ -2719,12 +2795,12 @@ func TestResolveActorIdentity_ActorIsTheClient(t *testing.T) {
 // entity is reported.
 func TestResolveActorIdentity_ActorTokenNamesAnEntity(t *testing.T) {
 	actors := actorprovidermock.NewActorProviderMock(t)
-	actors.On("GetActor", "agent-b").
+	actors.On("GetActor", mock.Anything, "agent-b").
 		Return(&providers.Entity{ID: "agent-b", Category: providers.EntityCategoryAgent},
 			(*tidcommon.ServiceError)(nil))
 	tb := &tokenBuilder{actorProvider: actors}
 
-	id := tb.resolveActorIdentity(&AccessTokenBuildContext{
+	id := tb.resolveActorIdentity(context.Background(), &AccessTokenBuildContext{
 		OAuthApp: &providers.OAuthClient{ID: subjectIdentityClientID},
 	}, "agent-b")
 
@@ -2736,11 +2812,11 @@ func TestResolveActorIdentity_ActorTokenNamesAnEntity(t *testing.T) {
 // address here, is never published.
 func TestResolveActorIdentity_MappedAttributeIsNotReported(t *testing.T) {
 	actors := actorprovidermock.NewActorProviderMock(t)
-	actors.On("GetActor", "svc@example.com").
+	actors.On("GetActor", mock.Anything, "svc@example.com").
 		Return((*providers.Entity)(nil), &tidcommon.ServiceError{Code: "ENTITY-404"})
 	tb := &tokenBuilder{actorProvider: actors}
 
-	id := tb.resolveActorIdentity(&AccessTokenBuildContext{
+	id := tb.resolveActorIdentity(context.Background(), &AccessTokenBuildContext{
 		OAuthApp: &providers.OAuthClient{ID: subjectIdentityClientID},
 	}, "svc@example.com")
 
@@ -2751,13 +2827,13 @@ func TestResolveActorIdentity_NoProviderOrNoActor(t *testing.T) {
 	tb := &tokenBuilder{}
 
 	// An actor that is not the client cannot be resolved without a provider, so it is not reported.
-	id := tb.resolveActorIdentity(&AccessTokenBuildContext{
+	id := tb.resolveActorIdentity(context.Background(), &AccessTokenBuildContext{
 		OAuthApp: &providers.OAuthClient{ID: subjectIdentityClientID},
 	}, "agent-b")
 	assert.Empty(t, id)
 
 	// No actor at all.
-	id = tb.resolveActorIdentity(&AccessTokenBuildContext{}, "")
+	id = tb.resolveActorIdentity(context.Background(), &AccessTokenBuildContext{}, "")
 	assert.Empty(t, id)
 }
 
@@ -2842,6 +2918,50 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_CarriesSessionID() {
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), testRefreshToken, result.Token)
 	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_CarriesTheIssuingOU() {
+	tests := []struct {
+		name string
+		ouID string
+	}{
+		{"issuing OU known", "ou-issued"},
+		{"no issuing OU", ""},
+	}
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			suite.SetupTest()
+			ctx := &RefreshTokenBuildContext{
+				ClientID:             "test-client",
+				Scopes:               []string{"openid"},
+				GrantType:            string(providers.GrantTypeAuthorizationCode),
+				AccessTokenSubject:   "user123",
+				AccessTokenAudiences: []string{"app123"},
+				OAuthApp:             suite.oauthApp,
+				OUID:                 tt.ouID,
+			}
+
+			suite.mockJWTService.On("GenerateJWT",
+				mock.Anything,
+				"test-client",
+				"https://example.com",
+				mock.Anything,
+				mock.MatchedBy(func(claims map[string]interface{}) bool {
+					ouID, stamped := claims[constants.ClaimAccessTokenOUID]
+					if tt.ouID == "" {
+						return !stamped
+					}
+					return ouID == tt.ouID
+				}), mock.Anything, mock.Anything,
+			).Return(testRefreshToken, time.Now().Unix(), nil)
+
+			result, err := suite.builder.BuildRefreshToken(context.Background(), ctx)
+
+			assert.NoError(suite.T(), err)
+			assert.Equal(suite.T(), testRefreshToken, result.Token)
+			suite.mockJWTService.AssertExpectations(suite.T())
+		})
+	}
 }
 
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_CarriesAuthorizationDetails() {
@@ -3420,3 +3540,370 @@ var testPaymentDetails = []providers.AuthorizationDetail{{
 	Type: "payment_initiation", TypeID: "type-2", TypeVersion: 2,
 	Value: json.RawMessage(`{"type":"payment_initiation","id":"d1"}`), Admitted: true,
 }}
+
+const (
+	lifespanIssuer        = "https://example.com"
+	lifespanValidity      = int64(1200)
+	lifespanAgentClientID = "agent-client"
+	lifespanUserID        = "user-1"
+)
+
+// newLifespanBuilder returns a builder that asks the given authority about every token it builds. It
+// has no actor provider, so the builder reads no entity of its own.
+func newLifespanBuilder(t *testing.T, governance providers.IdentityGovernanceProvider) (
+	*tokenBuilder, *jwtmock.JWTServiceInterfaceMock) {
+	jwtService := jwtmock.NewJWTServiceInterfaceMock(t)
+	return &tokenBuilder{
+		cfg: oauthconfig.Config{
+			JWT: engineconfig.JWTConfig{Issuer: lifespanIssuer, ValidityPeriod: 3600},
+		},
+		jwtService: jwtService,
+		governance: governance,
+	}, jwtService
+}
+
+// issuanceAuthority returns an authority that answers the issuance-plane check for each entity with
+// its decision. An entity it is not told about is unexpected.
+func issuanceAuthority(t *testing.T,
+	decisions map[string]providers.AccessDecision) *identitygovernanceprovidermock.IdentityGovernanceProviderMock {
+	governance := identitygovernanceprovidermock.NewIdentityGovernanceProviderMock(t)
+	for entityID, decision := range decisions {
+		governance.EXPECT().EvaluateAccess(mock.Anything, entityID, providers.AccessPlaneIssuance,
+			providers.AuthenticationMethod("")).Return(decision, nil).Once()
+	}
+	return governance
+}
+
+func admitted(notAfter time.Time) providers.AccessDecision {
+	return providers.AccessDecision{Admitted: true, NotAfter: notAfter}
+}
+
+// within reports whether a validity period lies in [low, high]. The builder holds back a second, and
+// the test clock may cross a second boundary, so a capped validity is checked against a range.
+func within(low, high int64) interface{} {
+	return mock.MatchedBy(func(v int64) bool { return v >= low && v <= high })
+}
+
+func agentClientApp() *providers.OAuthClient {
+	return &providers.OAuthClient{
+		ID:             lifespanAgentClientID,
+		ClientID:       lifespanAgentClientID,
+		EntityCategory: providers.EntityCategoryAgent,
+	}
+}
+
+func (suite *TokenBuilderTestSuite) TestCapAtLifespan() {
+	tests := []struct {
+		name      string
+		notAfter  time.Time
+		low, high int64
+		ended     bool
+	}{
+		{name: "zero caps nothing", low: lifespanValidity, high: lifespanValidity},
+		{name: "a later end keeps the validity", notAfter: time.Now().Add(time.Hour),
+			low: lifespanValidity, high: lifespanValidity},
+		{name: "an earlier end shortens it, holding back a second", notAfter: time.Now().Add(5 * time.Minute),
+			low: 298, high: 299},
+		{name: "an end within the held-back second refuses", notAfter: time.Now().Add(time.Second), ended: true},
+		{name: "an end now refuses", notAfter: time.Now(), ended: true},
+		{name: "a past end refuses", notAfter: time.Now().Add(-time.Minute), ended: true},
+	}
+	for _, tc := range tests {
+		suite.Run(tc.name, func() {
+			validity, err := capAtLifespan(lifespanValidity, tc.notAfter)
+
+			if tc.ended {
+				suite.ErrorIs(err, ErrIssuanceRefused)
+				return
+			}
+			suite.NoError(err)
+			suite.GreaterOrEqual(validity, tc.low)
+			suite.LessOrEqual(validity, tc.high)
+		})
+	}
+}
+
+// The builder checks every party the access token names, by resource ID where the grant resolved one,
+// and caps the token at the earliest lifespan end among them.
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_ChecksEveryPartyAndCapsAtTheEarliestEnd() {
+	earliest := time.Now().Add(5 * time.Minute)
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		lifespanAgentClientID: admitted(earliest.Add(time.Hour)),
+		"subject-entity":      admitted(time.Time{}),
+		"actor-entity":        admitted(earliest),
+		"nested-agent":        admitted(time.Time{}),
+	})
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+	jwtService.On("GenerateJWT", mock.Anything, "user@example.com", lifespanIssuer, within(298, 299),
+		mock.Anything, jwt.TokenTypeAccessToken, "").Return(testAccessToken, time.Now().Unix(), nil)
+
+	token, err := tb.BuildAccessToken(suite.T().Context(), &AccessTokenBuildContext{
+		Subject:         "user@example.com",
+		SubjectEntityID: "subject-entity",
+		Audiences:       []string{"rs"},
+		OAuthApp:        agentClientApp(),
+		ValidityPeriod:  lifespanValidity,
+		ActorClaims: &SubjectTokenClaims{
+			Sub: "actor@example.com", EntityID: "actor-entity",
+			NestedAct: map[string]interface{}{"sub": "nested-agent"},
+		},
+	})
+
+	suite.Require().NoError(err)
+	suite.GreaterOrEqual(token.ExpiresIn, int64(298))
+	suite.LessOrEqual(token.ExpiresIn, int64(299))
+}
+
+// A party the authority does not admit, such as an expired agent, fails issuance without a token.
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_RefusedPartyFailsIssuance() {
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		lifespanAgentClientID: {Reason: providers.AccessRefusalReasonExpired},
+	})
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+
+	token, err := tb.BuildAccessToken(suite.T().Context(), &AccessTokenBuildContext{
+		Subject: lifespanAgentClientID, Audiences: []string{"rs"}, OAuthApp: agentClientApp(),
+		ValidityPeriod: lifespanValidity,
+	})
+
+	suite.Nil(token)
+	suite.ErrorIs(err, ErrIssuanceRefused)
+	jwtService.AssertNotCalled(suite.T(), "GenerateJWT")
+}
+
+// An authority that cannot decide fails issuance as a server error, never as a refused party.
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_AuthorityFaultFailsIssuance() {
+	governance := identitygovernanceprovidermock.NewIdentityGovernanceProviderMock(suite.T())
+	governance.EXPECT().EvaluateAccess(mock.Anything, lifespanAgentClientID, providers.AccessPlaneIssuance,
+		providers.AuthenticationMethod("")).Return(providers.AccessDecision{}, &tidcommon.InternalServerError).Once()
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+
+	_, err := tb.BuildAccessToken(suite.T().Context(), &AccessTokenBuildContext{
+		Subject: lifespanAgentClientID, Audiences: []string{"rs"}, OAuthApp: agentClientApp(),
+		ValidityPeriod: lifespanValidity,
+	})
+
+	suite.Require().Error(err)
+	suite.NotErrorIs(err, ErrIssuanceRefused)
+	jwtService.AssertNotCalled(suite.T(), "GenerateJWT")
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_NoAuthorityCapsNothing() {
+	tb, jwtService := newLifespanBuilder(suite.T(), nil)
+	jwtService.On("GenerateJWT", mock.Anything, lifespanAgentClientID, lifespanIssuer, lifespanValidity,
+		mock.Anything, jwt.TokenTypeAccessToken, "").Return(testAccessToken, time.Now().Unix(), nil)
+
+	token, err := tb.BuildAccessToken(suite.T().Context(), &AccessTokenBuildContext{
+		Subject: lifespanAgentClientID, Audiences: []string{"rs"}, OAuthApp: agentClientApp(),
+		ValidityPeriod: lifespanValidity,
+	})
+
+	suite.Require().NoError(err)
+	suite.Equal(lifespanValidity, token.ExpiresIn)
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_ChecksClientSubjectAndActor() {
+	tests := []struct {
+		name      string
+		expiresAt int64
+		low, high int64
+	}{
+		{"first issuance", 0, 298, 299},
+		{"rotation inherits a later expiry", time.Now().Add(time.Hour).Unix(), 298, 299},
+		{"rotation inherits an earlier expiry", time.Now().Add(time.Minute).Unix(), 59, 60},
+	}
+	for _, tc := range tests {
+		suite.Run(tc.name, func() {
+			governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+				lifespanAgentClientID: admitted(time.Now().Add(5 * time.Minute)),
+				"subject-entity":      admitted(time.Time{}),
+			})
+			tb, jwtService := newLifespanBuilder(suite.T(), governance)
+			jwtService.On("GenerateJWT", mock.Anything, lifespanAgentClientID, lifespanIssuer,
+				within(tc.low, tc.high), mock.Anything, jwt.TokenTypeRefreshToken, "").
+				Return(testRefreshToken, time.Now().Unix(), nil)
+
+			token, err := tb.BuildRefreshToken(suite.T().Context(), &RefreshTokenBuildContext{
+				ClientID:           lifespanAgentClientID,
+				AccessTokenSubject: "user@example.com",
+				SubjectEntityID:    "subject-entity",
+				ActorSub:           lifespanAgentClientID,
+				OAuthApp:           agentClientApp(),
+				ExpiresAt:          tc.expiresAt,
+			})
+
+			suite.Require().NoError(err)
+			suite.LessOrEqual(token.ExpiresIn, tc.high)
+		})
+	}
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_RefusedSubjectFailsIssuance() {
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		lifespanAgentClientID: admitted(time.Time{}),
+		"subject-entity":      {},
+	})
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+
+	_, err := tb.BuildRefreshToken(suite.T().Context(), &RefreshTokenBuildContext{
+		ClientID: lifespanAgentClientID, AccessTokenSubject: "user@example.com", SubjectEntityID: "subject-entity",
+		OAuthApp: agentClientApp(),
+	})
+
+	suite.ErrorIs(err, ErrIssuanceRefused)
+	jwtService.AssertNotCalled(suite.T(), "GenerateJWT")
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDToken_ChecksClientAndSubject() {
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		"app":          admitted(time.Time{}),
+		"agent-entity": admitted(time.Now().Add(5 * time.Minute)),
+	})
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+	jwtService.On("GenerateJWT", mock.Anything, "agent@example.com", lifespanIssuer, within(298, 299),
+		mock.Anything, jwt.TokenTypeJWT, "").Return(testIDToken, time.Now().Unix(), nil)
+
+	token, err := tb.BuildIDToken(suite.T().Context(), &IDTokenBuildContext{
+		Subject:         "agent@example.com",
+		SubjectEntityID: "agent-entity",
+		Audience:        "app-client",
+		OAuthApp:        &providers.OAuthClient{ID: "app", ClientID: "app-client"},
+	})
+
+	suite.Require().NoError(err)
+	suite.LessOrEqual(token.ExpiresIn, int64(299))
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDToken_RefusedSubjectFailsIssuance() {
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		"agent-subject": {Reason: providers.AccessRefusalReasonExpired},
+	})
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+
+	_, err := tb.BuildIDToken(suite.T().Context(), &IDTokenBuildContext{
+		Subject: "agent@example.com", SubjectEntityID: "agent-subject", Audience: "app-client",
+	})
+
+	suite.ErrorIs(err, ErrIssuanceRefused)
+	jwtService.AssertNotCalled(suite.T(), "GenerateJWT")
+}
+
+func idjagClientApp() *providers.OAuthClient {
+	app := agentClientApp()
+	app.Token = &providers.OAuthTokenConfig{IDJAG: &providers.IDJAGConfig{ValidityPeriod: lifespanValidity}}
+	return app
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_ChecksClientAndSubject() {
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		lifespanAgentClientID: admitted(time.Now().Add(5 * time.Minute)),
+		lifespanUserID:        admitted(time.Time{}),
+	})
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+	jwtService.On("GenerateJWT", mock.Anything, lifespanUserID, lifespanIssuer, within(298, 299),
+		mock.Anything, jwt.TokenTypeIDJAG, "").Return(testAccessToken, time.Now().Unix(), nil)
+
+	token, err := tb.BuildIDJAG(suite.T().Context(), &IDJAGBuildContext{
+		Subject: lifespanUserID, Audience: "rs", ClientID: lifespanAgentClientID, OAuthApp: idjagClientApp(),
+	})
+
+	suite.Require().NoError(err)
+	suite.LessOrEqual(token.ExpiresIn, int64(299))
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_RefusedClientFailsIssuance() {
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		lifespanAgentClientID: {Reason: providers.AccessRefusalReasonExpired},
+	})
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+
+	token, err := tb.BuildIDJAG(suite.T().Context(), &IDJAGBuildContext{
+		Subject: lifespanUserID, Audience: "rs", ClientID: lifespanAgentClientID, OAuthApp: idjagClientApp(),
+	})
+
+	suite.Nil(token)
+	suite.ErrorIs(err, ErrIssuanceRefused)
+	jwtService.AssertNotCalled(suite.T(), "GenerateJWT")
+}
+
+// Within one token request an entity named by several tokens is checked once.
+func (suite *TokenBuilderTestSuite) TestAdmitAndCap_MemoizesDecisionsPerRequest() {
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		lifespanAgentClientID: admitted(time.Time{}),
+		lifespanUserID:        admitted(time.Time{}),
+	})
+	tb, _ := newLifespanBuilder(suite.T(), governance)
+	ctx := WithIssuanceDecisions(suite.T().Context())
+
+	for range 3 {
+		_, err := tb.admitAndCap(ctx, lifespanValidity, lifespanAgentClientID, lifespanUserID)
+		suite.Require().NoError(err)
+	}
+}
+
+// Without a request memo, and after a fault, every build asks the authority again.
+func (suite *TokenBuilderTestSuite) TestAdmitAndCap_AsksAgainWithoutMemoOrAfterFault() {
+	governance := identitygovernanceprovidermock.NewIdentityGovernanceProviderMock(suite.T())
+	governance.EXPECT().EvaluateAccess(mock.Anything, lifespanAgentClientID, providers.AccessPlaneIssuance,
+		providers.AuthenticationMethod("")).Return(providers.AccessDecision{}, &tidcommon.InternalServerError).Once()
+	governance.EXPECT().EvaluateAccess(mock.Anything, lifespanAgentClientID, providers.AccessPlaneIssuance,
+		providers.AuthenticationMethod("")).Return(admitted(time.Time{}), nil).Twice()
+	tb, _ := newLifespanBuilder(suite.T(), governance)
+	memoized := WithIssuanceDecisions(suite.T().Context())
+
+	_, err := tb.admitAndCap(memoized, lifespanValidity, lifespanAgentClientID)
+	suite.Require().Error(err)
+	_, err = tb.admitAndCap(memoized, lifespanValidity, lifespanAgentClientID)
+	suite.Require().NoError(err)
+	_, err = tb.admitAndCap(suite.T().Context(), lifespanValidity, lifespanAgentClientID)
+	suite.Require().NoError(err)
+}
+
+// A subject the grant did not resolve to a local entity, such as an external issuer's sub that equals a
+// local entity's ID, is not checked: only the client is.
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_UnresolvedSubjectIsNotChecked() {
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		lifespanAgentClientID: admitted(time.Time{}),
+	})
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+	jwtService.On("GenerateJWT", mock.Anything, lifespanUserID, lifespanIssuer, lifespanValidity,
+		mock.Anything, jwt.TokenTypeAccessToken, "").Return(testAccessToken, time.Now().Unix(), nil)
+
+	_, err := tb.BuildAccessToken(suite.T().Context(), &AccessTokenBuildContext{
+		Subject: lifespanUserID, Audiences: []string{"rs"}, OAuthApp: agentClientApp(),
+		ValidityPeriod: lifespanValidity, ActorClaims: &SubjectTokenClaims{Sub: "external-actor"},
+	})
+
+	suite.Require().NoError(err)
+}
+
+// A nested actor this server recorded is checked; one an external issuer named is not, even when its sub
+// equals a local entity's ID.
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_ChecksOnlyLocallyRecordedNestedActors() {
+	governance := issuanceAuthority(suite.T(), map[string]providers.AccessDecision{
+		lifespanAgentClientID: admitted(time.Time{}),
+		"actor-entity":        admitted(time.Time{}),
+		"local-nested":        admitted(time.Time{}),
+		"issued-here":         admitted(time.Time{}),
+	})
+	tb, jwtService := newLifespanBuilder(suite.T(), governance)
+	jwtService.On("GenerateJWT", mock.Anything, lifespanUserID, lifespanIssuer, lifespanValidity,
+		mock.Anything, jwt.TokenTypeAccessToken, "").Return(testAccessToken, time.Now().Unix(), nil)
+
+	_, err := tb.BuildAccessToken(suite.T().Context(), &AccessTokenBuildContext{
+		Subject: lifespanUserID, Audiences: []string{"rs"}, OAuthApp: agentClientApp(),
+		ValidityPeriod: lifespanValidity,
+		ActorClaims: &SubjectTokenClaims{
+			Sub: "actor@example.com", EntityID: "actor-entity",
+			NestedAct: map[string]interface{}{
+				"sub": "local-nested",
+				"act": map[string]interface{}{
+					"sub": "external-equal-to-local", "iss": "https://external-idp.example.com",
+					"act": map[string]interface{}{"sub": "issued-here", "iss": lifespanIssuer},
+				},
+			},
+		},
+	})
+
+	suite.Require().NoError(err)
+}

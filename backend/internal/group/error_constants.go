@@ -182,6 +182,64 @@ var (
 			DefaultValue: "The filter must be a single ouId eq expression with a quoted organization unit ID",
 		},
 	}
+	// ErrorMemberOUMismatch is the error returned when the group's organization unit neither owns a
+	// member nor has the member shared with it.
+	ErrorMemberOUMismatch = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "GRP-1019",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.groupservice.member_ou_mismatch",
+			DefaultValue: "Member not available in the group's organization unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.groupservice.member_ou_mismatch_description",
+			DefaultValue: "One or more members are neither owned by the group's organization unit " +
+				"nor shared with it",
+		},
+	}
+	// ErrorGroupOUChangeNotAllowed is the error returned when moving a group that has members,
+	// belongs to other groups, or is assigned roles.
+	ErrorGroupOUChangeNotAllowed = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "GRP-1020",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.groupservice.group_ou_change_not_allowed",
+			DefaultValue: "Cannot change the group's organization unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.groupservice.group_ou_change_not_allowed_description",
+			DefaultValue: "The group has members, belongs to other groups, or is assigned roles. " +
+				"Remove its members, its memberships in other groups and its role assignments before moving it",
+		},
+	}
+	// ErrorInvalidProject is the error returned when a group names a project that does not exist.
+	ErrorInvalidProject = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "GRP-1021",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.groupservice.invalid_project",
+			DefaultValue: "Invalid project",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.groupservice.invalid_project_description",
+			DefaultValue: "No project exists with the given project ID",
+		},
+	}
+	// ErrorOUNotInProject is the error returned when a group names an organization unit outside the
+	// project it names.
+	ErrorOUNotInProject = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "GRP-1022",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.groupservice.ou_not_in_project",
+			DefaultValue: "Organization unit not in project",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.groupservice.ou_not_in_project_description",
+			DefaultValue: "A group in a project must be in the system organization unit " +
+				"or in an organization unit of the project",
+		},
+	}
 )
 
 // Declarative mode errors for group management operations.
@@ -229,4 +287,35 @@ var (
 
 	// errResultLimitExceededInCompositeMode is returned when composite store results exceed the configured limit.
 	errResultLimitExceededInCompositeMode = errors.New("result limit exceeded in composite mode")
+
+	// errNilEventBus is returned when the service is initialized without the event bus it audits on.
+	errNilEventBus = errors.New("the group service needs an event bus")
+	// ErrorManagedGroup is the error returned when attempting to change a group a control plane
+	// deployed. Only a deploy from the control plane changes or removes it.
+	ErrorManagedGroup = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "GRP-1023",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.groupservice.cannot_modify_managed_group",
+			DefaultValue: "Cannot modify a group deployed by the control plane",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.groupservice.cannot_modify_managed_group_description",
+			DefaultValue: "The group was deployed by the control plane and can only be changed there",
+		},
+	}
+	// ErrorManagedGroupMember is the error returned when attempting to remove a member a control plane
+	// deployed to a group. Members added on this deployment stay removable.
+	ErrorManagedGroupMember = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "GRP-1024",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.groupservice.cannot_remove_managed_member",
+			DefaultValue: "Cannot remove a member deployed by the control plane",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.groupservice.cannot_remove_managed_member_description",
+			DefaultValue: "The member was deployed to the group by the control plane and can only be removed there",
+		},
+	}
 )

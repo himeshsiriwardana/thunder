@@ -82,6 +82,16 @@ var eventTypeToCategory = map[providers.EventType]EventCategory{
 	EventTypeIdentityUnlockFailed:       CategoryAdministration,
 	EventTypeServerConfigUpdated:        CategoryAdministration,
 	EventTypeServerConfigUpdateFailed:   CategoryAdministration,
+	EventTypeAgentLifespanSet:           CategoryAdministration,
+	EventTypeAgentLifespanExtended:      CategoryAdministration,
+	EventTypeAgentLifespanReduced:       CategoryAdministration,
+	EventTypeAgentReactivated:           CategoryAdministration,
+	EventTypeAgentLifespanUpdateFailed:  CategoryAdministration,
+
+	EventTypeAttributeVerificationRequested:   CategoryAdministration,
+	EventTypeAttributeVerificationVerified:    CategoryAdministration,
+	EventTypeAttributeVerificationRefused:     CategoryAdministration,
+	EventTypeAttributeVerificationInvalidated: CategoryAdministration,
 
 	// Flow events
 	EventTypeFlowStarted:                CategoryFlows,

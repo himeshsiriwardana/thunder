@@ -9,8 +9,11 @@ import {ActionEventTypes, BlockTypes, ElementCategories, ElementTypes, PromptAct
 import type {Element as FlowElement} from '../models/elements';
 import Notification, {NotificationType} from '../models/notification';
 import type {Resource} from '../models/resources';
-import {ExecutionTypes, StepTypes} from '../models/steps';
+import {ExecutionTypes, StaticStepTypes, StepTypes} from '../models/steps';
 import type {StepData} from '../models/steps';
+import {getExecutorInputs, hasInvalidInputConfig} from '../utils/executorInputs';
+import {getInputIdentifier, INPUT_ELEMENT_TYPES} from '../utils/inputTypeMapping';
+import {isParentOrganizationUnitUnset} from '../utils/parentOrganizationUnit';
 
 /** Placeholder a flow template carries until a sender is assigned. */
 const SENDER_ID_PLACEHOLDER = '{{SENDER_ID}}';
@@ -23,6 +26,11 @@ export interface RequiredFieldRule {
   name: string;
   /** i18n key for the per-field error message. */
   errorMessageKey: string;
+  /**
+   * Replaces the non-empty check for a field that must also satisfy a condition. Returns true when the
+   * field is not configured correctly.
+   */
+  isInvalid?: (resource: Resource) => boolean;
 }
 
 /**
@@ -52,6 +60,7 @@ const DEFAULT_INPUT_TYPES: readonly string[] = [
   ElementTypes.EmailInput,
   ElementTypes.NumberInput,
   ElementTypes.DateInput,
+  ElementTypes.DateTimeInput,
 ];
 
 export const VALIDATION_RULES: ValidationRuleDefinition[] = [
@@ -64,9 +73,9 @@ export const VALIDATION_RULES: ValidationRuleDefinition[] = [
     ],
     generalMessageKey: 'flows:core.validation.fields.input.general',
   },
-  // Select
+  // Select and user select
   {
-    match: (r) => r.type === ElementTypes.Select,
+    match: (r) => r.type === ElementTypes.Select || r.type === ElementTypes.UserSelect,
     fields: [
       {name: 'label', errorMessageKey: 'flows:core.validation.fields.input.label'},
       {name: 'ref', errorMessageKey: 'flows:core.validation.fields.input.ref'},
@@ -215,6 +224,18 @@ export const VALIDATION_RULES: ValidationRuleDefinition[] = [
   {
     match: (r) => (r as {data?: StepData}).data?.action?.executor?.name === ExecutionTypes.OTPExecutor,
     fields: [],
+    generalMessageKey: 'flows:core.validation.fields.executor.general',
+  },
+  // Executor inputs: every input's default and constant settings must be applicable
+  {
+    match: (r) => getExecutorInputs(r).length > 0,
+    fields: [
+      {
+        name: 'data.action.executor.inputs',
+        errorMessageKey: 'flows:core.validation.fields.executor.inputs',
+        isInvalid: (r) => getExecutorInputs(r).some(hasInvalidInputConfig),
+      },
+    ],
     generalMessageKey: 'flows:core.validation.fields.executor.general',
   },
   // OpenID4VP verify executor
@@ -387,6 +408,52 @@ export const ssoPairingRule: GraphValidationRule = (nodes: Node[]): Notification
         createGraphErrorNotification(`${node.id}_SSO_ORPHAN_SESSION`, 'flows:core.validation.sso.orphanSession', node),
       );
     }
+  }
+
+  return notifications;
+};
+
+/**
+ * Mirrors the server's save check on where a Resolve OU step may sit: none may be reachable from a
+ * session step, since a sign-in that reuses the session has already signed in by then. A warning
+ * rather than an error, like the linking rules: the server refuses the save either way, so this must
+ * not block the author mid-draw.
+ */
+export const ouResolverAfterSessionRule: GraphValidationRule = (nodes: Node[], edges: Edge[]): Notification[] => {
+  const notifications: Notification[] = [];
+  const reported = new Set<string>();
+
+  for (const session of nodes.filter((node) => getNodeExecutorName(node) === ExecutionTypes.Session)) {
+    const visited = new Set<string>([session.id]);
+    const pending = edges.filter((edge) => edge.source === session.id).map((edge) => edge.target);
+
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+
+      if (!visited.has(current)) {
+        visited.add(current);
+        edges.filter((edge) => edge.source === current).forEach((edge) => pending.push(edge.target));
+      }
+    }
+
+    nodes
+      .filter(
+        (node) =>
+          visited.has(node.id) &&
+          !reported.has(node.id) &&
+          getNodeExecutorName(node) === ExecutionTypes.OUResolverExecutor,
+      )
+      .forEach((node) => {
+        reported.add(node.id);
+        notifications.push(
+          createGraphErrorNotification(
+            `${node.id}_OU_RESOLVER_AFTER_SESSION`,
+            'flows:core.validation.ouResolver.afterSession',
+            node,
+            NotificationType.WARNING,
+          ),
+        );
+      });
   }
 
   return notifications;
@@ -684,14 +751,169 @@ export const richTextActionWiringRule: GraphValidationRule = (nodes: Node[], edg
 };
 
 /**
+ * Collects the input elements of a step, including ones nested inside containers such as a form block.
+ */
+function collectInputElements(elements: FlowElement[] | undefined): FlowElement[] {
+  if (!elements) {
+    return [];
+  }
+
+  return elements.flatMap((element) => [
+    ...(INPUT_ELEMENT_TYPES.has(element.type) ? [element] : []),
+    ...collectInputElements(element.components),
+  ]);
+}
+
+/**
+ * Mirrors the backend rule that a prompt cannot ask for an input an executor holds constant.
+ */
+export const promptInputHeldConstantRule: GraphValidationRule = (nodes: Node[]): Notification[] => {
+  const constantIdentifiers = new Set(
+    nodes
+      .flatMap((node) => getExecutorInputs(node as unknown as Resource))
+      .filter((input) => input.constant === true)
+      .map((input) => input.identifier),
+  );
+  if (constantIdentifiers.size === 0) {
+    return [];
+  }
+
+  return nodes
+    .flatMap((node) => collectInputElements((node.data as StepData | undefined)?.components))
+    .filter((element) => constantIdentifiers.has(getInputIdentifier(element)))
+    .map((element) =>
+      createGraphElementNotification(
+        `${element.id}_INPUT_HELD_CONSTANT`,
+        'flows:core.validation.inputs.heldConstant',
+        element,
+        NotificationType.ERROR,
+      ),
+    );
+};
+
+/**
+ * Mirrors the server's save check that the Resolve Variables steps of a flow declare at least one variable between
+ * them. A step dropped on the canvas starts with none, so this is a warning rather than an error, like the other
+ * rules the server refuses the save for: it must not block the author mid-draw. It is raised on the first of the
+ * steps, as the server does.
+ */
+export const variablesDeclaredRule: GraphValidationRule = (nodes: Node[]): Notification[] => {
+  const variablesNodes = nodes.filter((node) => node.type === StaticStepTypes.Variables);
+  const declaresAny = variablesNodes.some((node) => {
+    const inputs: unknown = (node.data as {inputs?: unknown} | undefined)?.inputs;
+
+    return Array.isArray(inputs) && inputs.length > 0;
+  });
+
+  if (variablesNodes.length === 0 || declaresAny) {
+    return [];
+  }
+
+  return [
+    createGraphErrorNotification(
+      `${variablesNodes[0].id}_VARIABLES_NONE_DECLARED`,
+      'flows:core.validation.variables.noneDeclared',
+      variablesNodes[0],
+      NotificationType.WARNING,
+    ),
+  ];
+};
+
+/**
+ * Mirrors the server's save check on the failure path of a Resolve Variables step: it must lead to a prompt view, the
+ * step that shows the error. A warning rather than an error, like `variablesDeclaredRule`: the server refuses the
+ * save either way, so it must not block the author mid-draw.
+ */
+export const variablesFailureTargetRule: GraphValidationRule = (nodes: Node[], edges: Edge[]): Notification[] =>
+  nodes
+    .filter((node) => node.type === StaticStepTypes.Variables)
+    .filter((node) => {
+      const target = edges.find((edge) => edge.source === node.id && edge.sourceHandle === FAILURE_HANDLE)?.target;
+      const targetNode = nodes.find((candidate) => candidate.id === target);
+
+      return targetNode !== undefined && targetNode.type !== StepTypes.View;
+    })
+    .map((node) =>
+      createGraphErrorNotification(
+        `${node.id}_VARIABLES_FAILURE_INVALID_TARGET`,
+        'flows:core.validation.variables.failureInvalidTarget',
+        node,
+        NotificationType.WARNING,
+      ),
+    );
+
+/**
+ * Mirrors the server's save check on a Resolve OU step that prompts in a sign-in flow: it names the parent OU users
+ * select below, since no user type sets one there. An error, so Save stays disabled until it is set.
+ */
+export const ouResolverParentRule: GraphValidationRule = (nodes: Node[]): Notification[] =>
+  nodes
+    .filter((node) => {
+      const properties = (node.data as StepData | undefined)?.properties;
+
+      return (
+        getNodeExecutorName(node) === ExecutionTypes.OUResolverExecutor &&
+        properties?.['resolveFrom'] === 'prompt' &&
+        isParentOrganizationUnitUnset(properties['parentOuId'])
+      );
+    })
+    .map((node) =>
+      createGraphErrorNotification(
+        `${node.id}_OU_RESOLVER_NO_PARENT`,
+        'flows:core.validation.ouResolver.noParent',
+        node,
+      ),
+    );
+
+/**
+ * Mirrors the server's save check on a sign-up flow's role assignment step: it names the roles it assigns, since no
+ * admin picks them there. An error, so Save stays disabled until they are set.
+ */
+export const roleAssignmentRolesRule: GraphValidationRule = (nodes: Node[]): Notification[] =>
+  nodes
+    .filter((node) => {
+      const stepData = node.data as StepData | undefined;
+      const mode = (stepData?.action?.executor as {mode?: string} | undefined)?.mode;
+      const roles = stepData?.properties?.['roles'];
+
+      return (
+        getNodeExecutorName(node) === ExecutionTypes.RoleExecutor &&
+        mode === 'role_assignment' &&
+        (typeof roles !== 'string' || roles.trim() === '')
+      );
+    })
+    .map((node) =>
+      createGraphErrorNotification(
+        `${node.id}_ROLE_ASSIGNMENT_NO_ROLES`,
+        'flows:core.validation.roleExecutor.noRoles',
+        node,
+      ),
+    );
+
+/**
  * Rules that apply to every flow type.
  */
-export const COMMON_GRAPH_VALIDATION_RULES: GraphValidationRule[] = [richTextActionWiringRule];
+export const COMMON_GRAPH_VALIDATION_RULES: GraphValidationRule[] = [
+  richTextActionWiringRule,
+  promptInputHeldConstantRule,
+  variablesDeclaredRule,
+  variablesFailureTargetRule,
+];
 
 export const GRAPH_VALIDATION_RULES: GraphValidationRule[] = [
   ssoPairingRule,
+  ouResolverAfterSessionRule,
+  ouResolverParentRule,
   linkingRejectActionRule,
   linkingExecutorWiringRule,
+  ...COMMON_GRAPH_VALIDATION_RULES,
+];
+
+/**
+ * Rules that apply to sign-up flows.
+ */
+export const REGISTRATION_GRAPH_VALIDATION_RULES: GraphValidationRule[] = [
+  roleAssignmentRolesRule,
   ...COMMON_GRAPH_VALIDATION_RULES,
 ];
 

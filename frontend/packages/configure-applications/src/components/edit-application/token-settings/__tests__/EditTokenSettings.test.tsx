@@ -58,6 +58,7 @@ vi.mock('../TokenUserAttributesSection', () => ({
     userAttributes,
     scopeMapping,
     signingAlg,
+    idJagEnabled,
   }: {
     accessTokenAttributes?: string[];
     idTokenAttributes?: string[];
@@ -69,6 +70,7 @@ vi.mock('../TokenUserAttributesSection', () => ({
     userAttributes?: string[];
     scopeMapping?: React.ReactNode;
     signingAlg?: string;
+    idJagEnabled?: boolean;
   }) => {
     const isOAuthMode = accessTokenAttributes !== undefined || idTokenAttributes !== undefined;
     if (isOAuthMode) {
@@ -77,6 +79,7 @@ vi.mock('../TokenUserAttributesSection', () => ({
           <div data-testid="token-user-attributes-section-access">Access Token Attributes</div>
           <div data-testid="token-user-attributes-section-id">ID Token Attributes</div>
           <div data-testid="signing-alg">{signingAlg ?? ''}</div>
+          <div data-testid="id-jag-enabled">{String(idJagEnabled)}</div>
           {userAttributes && <div data-testid="user-attributes-list">{userAttributes.join(',')}</div>}
           <button type="button" onClick={() => onIdTokenConfigChange?.('responseType', 'JWT')}>
             id-token-to-jwt
@@ -322,6 +325,35 @@ describe('EditTokenSettings', () => {
       );
 
       expect(screen.getByTestId('token-user-attributes-section-id')).toBeInTheDocument();
+    });
+
+    it('tells the attributes section when ID-JAG issuance is on', () => {
+      render(
+        <EditTokenSettings
+          application={mockApplication}
+          oauth2Config={
+            {
+              ...mockOAuth2Config,
+              token: {...mockOAuth2Config.token, idJag: {enabled: true, allowedAudiences: ['https://rs.example.com']}},
+            } as OAuth2Config
+          }
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      expect(screen.getByTestId('id-jag-enabled')).toHaveTextContent('true');
+    });
+
+    it('tells the attributes section when ID-JAG issuance is off', () => {
+      render(
+        <EditTokenSettings
+          application={mockApplication}
+          oauth2Config={mockOAuth2Config}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      expect(screen.getByTestId('id-jag-enabled')).toHaveTextContent('false');
     });
 
     it('should render access token validation section', () => {
@@ -815,6 +847,17 @@ describe('EditTokenSettings', () => {
         included: ['email', 'security.question'],
         excluded: ['security.secret'],
       },
+      {
+        name: 'verification claims of attributes that are not top-level contacts',
+        schema: {
+          email: {type: 'email'},
+          mobile: {type: 'mobile'},
+          nickname: {type: 'string'},
+          work: {type: 'object', properties: {email: {type: 'email'}}},
+        },
+        included: ['email_verified', 'mobile_verified'],
+        excluded: ['nickname_verified', 'work.email_verified'],
+      },
     ])('should exclude $name', async ({schema, included, excluded}) => {
       mockSchemaRequest(schema);
 
@@ -826,6 +869,49 @@ describe('EditTokenSettings', () => {
 
       excluded.forEach((attr) => expect(attributesList).not.toContain(attr));
       included.forEach((attr) => expect(attributesList).toContain(attr));
+    });
+  });
+
+  describe('Unsaved allowed user types', () => {
+    beforeEach(() => {
+      mockHttp.request.mockImplementation(({url}: {url: string}) => {
+        if (url.includes('/user-types/schema-1')) {
+          return Promise.resolve({
+            data: {id: 'schema-1', handle: 'default', displayName: 'Default', schema: {email: {type: 'string'}}},
+          });
+        }
+
+        return Promise.resolve({
+          data: {totalResults: 1, startIndex: 0, count: 1, types: [{id: 'schema-1', handle: 'default'}]},
+        });
+      });
+    });
+
+    it('should offer the attributes of an allowed user type that is not saved yet', async () => {
+      render(
+        <EditTokenSettings
+          application={{...mockApplication, allowedUserTypes: []}}
+          editedApp={{allowedUserTypes: ['default']}}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      await waitFor(() => expect(screen.getByTestId('user-attributes-list')).toHaveTextContent('email'));
+    });
+
+    it('should stop offering attributes when the allowed user types are cleared but not saved yet', async () => {
+      const {rerender} = render(<EditTokenSettings application={mockApplication} onFieldChange={mockOnFieldChange} />);
+      await waitFor(() => expect(screen.getByTestId('user-attributes-list')).toHaveTextContent('email'));
+
+      rerender(
+        <EditTokenSettings
+          application={mockApplication}
+          editedApp={{allowedUserTypes: []}}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      await waitFor(() => expect(screen.getByTestId('user-attributes-list')).toBeEmptyDOMElement());
     });
   });
 

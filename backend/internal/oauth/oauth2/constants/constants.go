@@ -63,6 +63,7 @@ const (
 
 	// RequestParamAuthorizationDetails is the RFC 9396 authorization request parameter.
 	RequestParamAuthorizationDetails string = systemconst.AuthorizationDetailsParamName
+	RequestParamDeviceCode           string = "device_code"
 )
 
 // OAuth2 HTTP headers.
@@ -106,6 +107,7 @@ const (
 	SessionDataKeyConsent string = "sessionDataKeyConsent"
 	ShowInsecureWarning   string = "showInsecureWarning"
 	AppID                 string = "applicationId"
+	Ref                   string = "ref"
 	ExecutionID           string = "executionId"
 )
 
@@ -130,6 +132,7 @@ const (
 	OAuth2BackchannelAuthEndpoint           string = "/oauth2/bc-authorize"
 	OAuth2BackchannelAuthCallbackEndpoint   string = "/oauth2/bc-authorize/callback"
 	OAuth2AuthorizationDetailsTypesEndpoint string = "/oauth2/authorization-details-types"
+	OAuth2DeviceAuthorizationEndpoint       string = "/oauth2/device-authorize"
 )
 
 // OAuth2 token types.
@@ -256,7 +259,7 @@ var StandardOIDCScopes = map[string]model.OIDCScope{
 
 // Standard JWT claim names.
 const (
-	ClaimSub      string = "sub"
+	ClaimSub      string = systemconst.SubClaimName
 	ClaimIss      string = "iss"
 	ClaimAud      string = "aud"
 	ClaimAzp      string = "azp"
@@ -269,7 +272,18 @@ const (
 	ClaimCHash    string = "c_hash"
 	ClaimAuthTime string = "auth_time"
 	ClaimACR      string = "acr"
+	ClaimAMR      string = "amr"
 	ClaimScope    string = "scope"
+	ClaimAct      string = systemconst.ActClaimName
+	ClaimCnf      string = "cnf"
+)
+
+// ID-JAG claim names (draft-ietf-oauth-identity-assertion-authz-grant Section 3.1) not defined above.
+const (
+	ClaimResource  string = "resource"
+	ClaimTenant    string = "tenant"
+	ClaimAudTenant string = "aud_tenant"
+	ClaimAudSub    string = "aud_sub"
 )
 
 // Custom JWT claim names.
@@ -284,7 +298,11 @@ const (
 	ClaimOUName         string = "ouName"
 	ClaimOUHandle       string = "ouHandle"
 	// ClaimOwner carries an agent's system-attribute owner on its client token.
-	ClaimOwner                  string = "owner"
+	ClaimOwner string = "owner"
+	// ClaimSubValidUntil carries when the subject agent's lifespan ends, its validUntil, on the agent's
+	// client token, in Unix seconds like the other time claims. It is omitted for an agent whose
+	// lifespan does not end.
+	ClaimSubValidUntil          string = "sub_valid_until"
 	ClaimClaimsRequest          string = "claims_req"
 	ClaimClaimsLocales          string = "claims_locales"
 	ClaimCompletedAuthClass     string = "completed_auth_class"
@@ -295,6 +313,8 @@ const (
 	ClaimAccessTokenSubject     string = "access_token_sub"
 	// ClaimAccessTokenAudience carries the audience of a refresh token's access tokens.
 	ClaimAccessTokenAudience string = "access_token_aud"
+	// ClaimAccessTokenOUID carries the organization unit a refresh token's access tokens are issued in.
+	ClaimAccessTokenOUID string = "access_token_ou_id"
 
 	// ClaimAuthorizationDetails carries the granted RFC 9396 authorization details on an access token.
 	ClaimAuthorizationDetails string = "authorization_details"
@@ -311,7 +331,7 @@ const (
 	ClaimIDP string = "idp"
 	// ClaimSubType identifies the identity class of the token subject, so a resource server can apply
 	// policy that differs by class. Emitted on client_credentials tokens.
-	ClaimSubType string = "sub_type"
+	ClaimSubType string = systemconst.SubTypeClaimName
 	// ClaimTokenFamilyID identifies the token family (one authorization grant) a token belongs to.
 	// A single tfid is minted per grant during the login flow and rides every access and refresh
 	// token of that grant, unchanged across refresh rotation, so revocation can target a whole
@@ -348,7 +368,8 @@ const (
 // SurfaceableClientSystemClaims is the fixed set of entity system-attribute keys that may be
 // surfaced as client-token claims.
 var SurfaceableClientSystemClaims = map[string]bool{
-	ClaimOwner: true,
+	ClaimOwner:         true,
+	ClaimSubValidUntil: true,
 }
 
 // OIDC subject types.
@@ -377,8 +398,8 @@ const (
 // Standard OIDC scope names.
 const (
 	ScopeOpenID = "openid"
-	// ScopeDeviceSSO asks for the device secret, the SSO session the code was issued from, in the code
-	// exchange response (OpenID Connect Native SSO for Mobile Apps).
+	// ScopeDeviceSSO asks for the device secret, the SSO session the grant was issued from, in the code
+	// exchange or device code token response (OpenID Connect Native SSO for Mobile Apps).
 	ScopeDeviceSSO = "device_sso"
 )
 
@@ -400,6 +421,18 @@ const (
 	CIBADefaultIntervalSeconds = 5
 	// CIBAMaxExpiresInSeconds is the maximum lifetime in seconds a client may request via requested_expiry.
 	CIBAMaxExpiresInSeconds = 600
+	// CIBAExpiredRecordRetentionSeconds keeps an expired request available long enough for the
+	// token endpoint to return expired_token instead of treating the auth_req_id as unknown.
+	CIBAExpiredRecordRetentionSeconds = 60
+	// DeviceAuthorizationDefaultExpiresInSeconds is the default lifetime for a device request.
+	DeviceAuthorizationDefaultExpiresInSeconds = 600
+	// DeviceAuthorizationDefaultIntervalSeconds is the minimum interval between token polls.
+	DeviceAuthorizationDefaultIntervalSeconds = 5
+	// DeviceAuthorizationSlowDownIncrementSeconds is added after each early token poll.
+	DeviceAuthorizationSlowDownIncrementSeconds = 5
+	// DeviceAuthorizationExpiredRecordRetentionSeconds keeps an expired request available long enough
+	// for the token endpoint to return expired_token instead of treating the device code as unknown.
+	DeviceAuthorizationExpiredRecordRetentionSeconds = 60
 )
 
 const (
@@ -419,11 +452,16 @@ func GetStandardClaims() []string {
 	}
 }
 
-// Refusals an organization-unit-scoped token request can receive. OUAccessRefusal is deliberately
+// Refusals an organization-unit-scoped request can receive. OUAccessRefusal is deliberately
 // the same answer whether the unit does not exist or the client has no standing in it.
 const (
 	OUAccessRefusal = "Client is not authorized for the requested organization unit"
 
 	OUScopedGrantRefusal = "The grant type is not supported on the organization unit scoped " +
 		"token endpoint"
+
+	OUSignInRefusal  = "The subject cannot sign in to the requested organization unit"
+	AppSignInRefusal = "The subject cannot sign in to this application"
+
+	OUCodeRefusal = "The authorization code was not issued for the requested organization unit"
 )

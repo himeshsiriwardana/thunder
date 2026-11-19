@@ -21,6 +21,12 @@ const (
 	ComponentIdentityGovernance = "IdentityGovernance"
 	// ComponentServerConfig identifies the server-config service.
 	ComponentServerConfig = "ServerConfig"
+	// ComponentAgentService identifies events from the agent management service.
+	ComponentAgentService = "AgentService"
+	// ComponentEntityService identifies events from the entity service.
+	ComponentEntityService = "EntityService"
+	// ComponentAttributeVerification identifies the attribute verification service.
+	ComponentAttributeVerification = "AttributeVerification"
 )
 
 // Authentication and Authorization Event Types
@@ -73,6 +79,14 @@ const (
 	EventTypeServerConfigUpdated providers.EventType = "SERVER_CONFIG_UPDATED"
 	// EventTypeServerConfigUpdateFailed is triggered when a server-config write is rejected or fails.
 	EventTypeServerConfigUpdateFailed providers.EventType = "SERVER_CONFIG_UPDATE_FAILED"
+	// EventTypeAttributeVerificationRequested is triggered when a contact verification is started.
+	EventTypeAttributeVerificationRequested providers.EventType = "ATTRIBUTE_VERIFICATION_REQUESTED"
+	// EventTypeAttributeVerificationVerified is triggered when a verification proof is recorded.
+	EventTypeAttributeVerificationVerified providers.EventType = "ATTRIBUTE_VERIFICATION_VERIFIED"
+	// EventTypeAttributeVerificationRefused is triggered when a verification proof is stale or ineligible.
+	EventTypeAttributeVerificationRefused providers.EventType = "ATTRIBUTE_VERIFICATION_REFUSED"
+	// EventTypeAttributeVerificationInvalidated is triggered when a write clears a verified contact.
+	EventTypeAttributeVerificationInvalidated providers.EventType = "ATTRIBUTE_VERIFICATION_INVALIDATED"
 
 	// Back-Channel Logout Events
 	// EventTypeBackchannelLogoutDelivered is triggered when a relying party accepts a logout token.
@@ -106,4 +120,24 @@ const (
 	// EventTypeExtensionCall is triggered once for every execution of an extension step, whatever its
 	// outcome.
 	EventTypeExtensionCall providers.EventType = "EXTENSION_CALL"
+)
+
+// Administration Event Types
+const (
+	// EventTypeAgentLifespanSet is triggered when an agent is registered with its lifespan.
+	EventTypeAgentLifespanSet providers.EventType = "AGENT_LIFESPAN_SET"
+
+	// EventTypeAgentLifespanExtended is triggered when an update moves an agent's lifespan end later,
+	// including to unbounded.
+	EventTypeAgentLifespanExtended providers.EventType = "AGENT_LIFESPAN_EXTENDED"
+
+	// EventTypeAgentLifespanReduced is triggered when an update moves an agent's lifespan end earlier.
+	EventTypeAgentLifespanReduced providers.EventType = "AGENT_LIFESPAN_REDUCED"
+
+	// EventTypeAgentReactivated is triggered when an update moves an expired agent's lifespan end into
+	// the future.
+	EventTypeAgentReactivated providers.EventType = "AGENT_REACTIVATED"
+
+	// EventTypeAgentLifespanUpdateFailed is triggered when a lifespan change is refused or fails.
+	EventTypeAgentLifespanUpdateFailed providers.EventType = "AGENT_LIFESPAN_UPDATE_FAILED"
 )

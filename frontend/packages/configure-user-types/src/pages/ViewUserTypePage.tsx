@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {DocumentTitle, PageLoadingAnimation, QueryErrorNotice, UnsavedChangesBar} from '@thunderid/components';
+import {useCapabilitiesContext} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger/react';
 import {
   getContactTypesMissingRegex,
   getErrorMessage,
   isContactAttributeType,
   isEqualIgnoringEmpty,
+  isHiddenOnCreate,
+  orderAttributes,
   resolveAttributeRegex,
 } from '@thunderid/utils';
 import {
@@ -40,7 +43,8 @@ import EditSchemaSettings from '../components/edit-user-type/schema-settings/Edi
 import UserTypeDeleteDialog from '../components/edit-user-type/UserTypeDeleteDialog';
 import UserTypeConstraints from '../constants/user-type-constraints';
 import useUserTypeRoutes from '../hooks/useUserTypeRoutes';
-import type {PropertyDefinition, UserTypeDefinition, PropertyType, SchemaPropertyInput} from '../types/user-types';
+import type {UserTypeDefinition, SchemaPropertyInput} from '../types/user-types';
+import convertPropertiesToSchema from '../utils/convertPropertiesToSchema';
 import getBreakingSchemaChanges from '../utils/getBreakingSchemaChanges';
 
 import {
@@ -73,8 +77,9 @@ function TabPanel({children = null, value, index, ...other}: TabPanelProps): JSX
  * Convert API schema to editable property inputs.
  */
 function convertSchemaToProperties(schema: UserTypeDefinition): SchemaPropertyInput[] {
-  return Object.entries(schema).map(([key, value], index) => ({
-    id: `${index}`,
+  // Rows are keyed by name, so an expanded row stays with its attribute after a reorder is saved.
+  return orderAttributes(schema).map(([key, value]) => ({
+    id: `attr-${key}`,
     name: key,
     displayName: 'displayName' in value ? (value.displayName ?? '') : '',
     type:
@@ -86,61 +91,17 @@ function convertSchemaToProperties(schema: UserTypeDefinition): SchemaPropertyIn
     credential: 'credential' in value ? (value.credential ?? false) : false,
     enum: 'enum' in value ? (value.enum ?? []) : [],
     regex: resolveAttributeRegex(value.type, 'regex' in value ? value.regex : undefined),
+    hiddenOnCreate: isHiddenOnCreate(value),
     ...('items' in value ? {items: value.items} : {}),
     ...('properties' in value ? {properties: value.properties} : {}),
   }));
-}
-
-/**
- * Convert editable property inputs back to API schema format.
- */
-function convertPropertiesToSchema(properties: SchemaPropertyInput[]): UserTypeDefinition {
-  const schema: UserTypeDefinition = {};
-
-  properties
-    .filter((prop) => prop.name.trim())
-    .forEach((prop) => {
-      const actualType: PropertyType = prop.type === 'enum' ? 'string' : prop.type;
-
-      const propDef: Partial<PropertyDefinition> = {
-        type: actualType,
-        required: prop.required,
-        ...(prop.displayName.trim() ? {displayName: prop.displayName.trim()} : {}),
-      };
-
-      if (prop.unique) {
-        (propDef as {unique?: boolean}).unique = true;
-      }
-
-      if ((prop.type === 'string' || prop.type === 'number' || prop.type === 'enum') && prop.credential) {
-        (propDef as {credential?: boolean}).credential = true;
-      }
-
-      if (prop.type === 'string' || isContactAttributeType(prop.type) || prop.type === 'enum') {
-        if (prop.enum.length > 0) {
-          (propDef as {enum?: string[]}).enum = prop.enum;
-        }
-        if (prop.regex.trim() || isContactAttributeType(prop.type)) {
-          (propDef as {regex?: string}).regex = prop.regex;
-        }
-      }
-
-      if (prop.type === 'array') {
-        (propDef as {items?: {type: string}}).items = prop.items ?? {type: 'string'};
-      } else if (prop.type === 'object') {
-        (propDef as {properties?: Record<string, PropertyDefinition>}).properties = prop.properties ?? {};
-      }
-
-      schema[prop.name.trim()] = propDef as PropertyDefinition;
-    });
-
-  return schema;
 }
 
 export default function ViewUserTypePage(): JSX.Element {
   const navigate = useNavigate();
   const {t} = useTranslation();
   const logger = useLogger('ViewUserTypePage');
+  const {can} = useCapabilitiesContext();
   const {id} = useParams<{id: string}>();
   const routes = useUserTypeRoutes();
   const listUrl = routes.list();
@@ -346,6 +307,17 @@ export default function ViewUserTypePage(): JSX.Element {
         t('userTypes:validationErrors.duplicateProperties', {
           duplicates: [...new Set(duplicates)].join(', '),
           defaultValue: 'Duplicate property names found: {{duplicates}}',
+        }),
+      );
+      return;
+    }
+
+    const emptyEnums = effectiveProperties.filter((p) => p.name.trim() && p.type === 'enum' && p.enum.length === 0);
+    if (emptyEnums.length > 0) {
+      setValidationError(
+        t('userTypes:validationErrors.enumValuesRequired', {
+          properties: emptyEnums.map((p) => p.name.trim()).join(', '),
+          defaultValue: 'Add at least one allowed value to: {{properties}}',
         }),
       );
       return;
@@ -573,7 +545,11 @@ export default function ViewUserTypePage(): JSX.Element {
         </TabPanel>
 
         <TabPanel value={activeTab} index={2}>
-          <EditAdvancedSettings onDeleteClick={userType.isReadOnly ? undefined : () => setDeleteDialogOpen(true)} />
+          <EditAdvancedSettings
+            onDeleteClick={
+              userType.isReadOnly || !can('usertype', 'delete') ? undefined : () => setDeleteDialogOpen(true)
+            }
+          />
         </TabPanel>
       </>
 
@@ -625,7 +601,7 @@ export default function ViewUserTypePage(): JSX.Element {
           saveLabel={t('common:actions.save', 'Save')}
           savingLabel={t('common:status.saving', 'Saving...')}
           isSaving={updateUserTypeMutation.isPending}
-          saveDisabled={userType.isReadOnly === true}
+          saveDisabled={userType.isReadOnly === true || !can('usertype', 'update')}
           error={
             validationError ??
             (updateUserTypeMutation.error

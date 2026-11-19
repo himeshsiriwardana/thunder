@@ -19,6 +19,7 @@ $header = @"
 server:
   hostname: localhost
   port: 8095
+  system_ou_id: "01900000-0000-7000-8000-000000000001"
   security:
     # Exercised by tests/integration/managementapikey: a deployment pipeline authenticating to the
     # import API without first obtaining OAuth client credentials. This is the SHA-256 digest of
@@ -97,7 +98,7 @@ if ($DbType -eq "postgres") {
     password: ""
     sslmode: ""
     path: "database/configdb.db"
-    options: "cache=shared&_pragma=foreign_keys(1)"
+    options: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 
   runtime_transient:
     type: sqlite
@@ -108,7 +109,7 @@ if ($DbType -eq "postgres") {
     password: ""
     sslmode: ""
     path: "database/runtime_transient.db"
-    options: "cache=shared&_pragma=foreign_keys(1)"
+    options: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 
   entity:
     type: sqlite
@@ -119,7 +120,7 @@ if ($DbType -eq "postgres") {
     password: ""
     sslmode: ""
     path: "database/entitydb.db"
-    options: "cache=shared&_pragma=foreign_keys(1)"
+    options: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 
   runtime_persistent:
     type: sqlite
@@ -130,7 +131,7 @@ if ($DbType -eq "postgres") {
     password: ""
     sslmode: ""
     path: "database/runtime_persistent.db"
-    options: "cache=shared&_pragma=foreign_keys(1)"
+    options: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 "@
 }
 

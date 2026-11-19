@@ -6,6 +6,7 @@ import {render, userEvent} from '@thunderid/test-utils';
 import {ListingTable} from '@wso2/oxygen-ui';
 import type {JSX} from 'react';
 import {describe, expect, it, vi} from 'vitest';
+import {DeployStatusProvider} from '../../ResourceDeployStatus/DeployStatusContext';
 import useFlowListColumns, {type FlowListRow} from '../useFlowListColumns';
 
 // The package initializes no i18next instance, so the fallback is the rendered copy.
@@ -16,16 +17,9 @@ vi.mock('react-i18next', () => ({
 }));
 
 const flows: FlowListRow[] = [
-  {
-    id: 'flow-1',
-    handle: 'suspend-users',
-    name: 'Suspend users',
-    flowType: 'ADMINISTRATION',
-    updatedAt: '2025-01-01T10:00:00Z',
-  },
+  {id: 'flow-1', name: 'Suspend users', flowType: 'ADMINISTRATION', updatedAt: '2025-01-01T10:00:00Z'},
   {
     id: 'flow-2',
-    handle: 'default-sign-in',
     name: 'Default sign-in',
     flowType: 'AUTHENTICATION',
     updatedAt: '2025-01-02T15:30:00Z',
@@ -61,7 +55,6 @@ describe('useFlowListColumns', () => {
       expect(screen.getByRole('columnheader', {name: header})).toBeInTheDocument();
     });
     const row = rowOf('Suspend users');
-    expect(within(row).getByText('suspend-users')).toBeInTheDocument();
     expect(within(row).getByText('ADMINISTRATION')).toBeInTheDocument();
     expect(within(row).getByText(/Jan.*2025|2025.*Jan/)).toBeInTheDocument();
   });
@@ -97,5 +90,19 @@ describe('useFlowListColumns', () => {
     expect(within(row).queryByRole('button', {name: 'Delete'})).not.toBeInTheDocument();
     await userEvent.click(within(row).getByRole('button', {name: 'View'}));
     expect(onOpen).toHaveBeenCalledWith(flows[1]);
+  });
+
+  it('shows where each flow is along the deploy path only where the app says so', () => {
+    const {unmount} = render(<FlowTable onOpen={vi.fn()} />);
+    expect(screen.queryByRole('columnheader', {name: 'Deployment'})).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <DeployStatusProvider value={{statusOf: () => ({state: 'notDeployed', target: 'Dev'}), openDeploy: vi.fn()}}>
+        <FlowTable onOpen={vi.fn()} />
+      </DeployStatusProvider>,
+    );
+    expect(screen.getByRole('columnheader', {name: 'Deployment'})).toBeInTheDocument();
+    expect(within(rowOf('Suspend users')).getByTestId('resource-deploy-status')).toHaveTextContent('Not deployed');
   });
 });

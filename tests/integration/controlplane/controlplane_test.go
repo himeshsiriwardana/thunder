@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -33,9 +32,15 @@ func TestControlPlaneTestSuite(t *testing.T) {
 }
 
 func (ts *ControlPlaneTestSuite) SetupSuite() {
+	// The suite's agents are of the bootstrap default agent type, and an agent is placed within its agent
+	// type's organization unit tree, so the suite's organization unit sits below the default one.
+	defaultOUID, err := testutils.DefaultOUID()
+	ts.Require().NoError(err)
 	ouID, err := testutils.CreateOrganizationUnit(testutils.OrganizationUnit{
-		Handle: unique("cp-suite"),
-		Name:   "Control Plane suite",
+		Handle:    unique("cp-suite"),
+		Name:      "Control Plane suite",
+		Parent:    &defaultOUID,
+		ProjectID: defaultProjectID,
 	})
 	ts.Require().NoError(err)
 	ts.ouID = ouID
@@ -188,6 +193,7 @@ id: cp-declarative-ou
 handle: cp-declarative-ou
 name: Control Plane Declarative OU
 description: Owns the declarative sender
+projectId: `+defaultProjectID+`
 ---
 resource_type: connection
 id: `+senderID+`
@@ -259,8 +265,9 @@ func (ts *ControlPlaneTestSuite) TestATokenWithoutTheSystemScopeIsRefused() {
 // A token naming the trusted issuer but signed with another key is refused: the issuer's JWKS is
 // what decides.
 func (ts *ControlPlaneTestSuite) TestATokenTheTrustedIssuerDidNotSignIsRefused() {
-	forger, err := testutils.NewMockOIDCServer(0, "", "")
+	forger, err := testutils.NewMockOIDCServer("", "")
 	ts.Require().NoError(err)
+	defer func() { _ = forger.Stop() }()
 	now := time.Now()
 	forged, err := forger.SignJWT(map[string]interface{}{"typ": "at+jwt"}, map[string]interface{}{
 		"iss":   fmt.Sprintf("http://localhost:%d", testutils.TrustedIssuerPort),
@@ -299,9 +306,8 @@ func (ts *ControlPlaneTestSuite) TestExportRefersToValuesAndImportKeepsTheRefere
 	status, raw := ts.call(http.MethodPost, "/export", map[string]any{"applications": []string{appID}}, &exported)
 	ts.Require().Equal(http.StatusOK, status, string(raw))
 
-	variable := strings.ToUpper(strings.NewReplacer(" ", "_", "-", "_").Replace(name))
-	clientIDRef := "var:APPLICATION_" + variable + "_CLIENT_ID"
-	clientSecretRef := "sec:APPLICATION_" + variable + "_CLIENT_SECRET"
+	clientIDRef := "var:" + variableName("APPLICATION", appID, "CLIENT_ID")
+	clientSecretRef := "sec:" + variableName("APPLICATION", appID, "CLIENT_SECRET")
 	ts.Contains(exported.Resources, clientIDRef)
 	ts.Contains(exported.Resources, clientSecretRef)
 	ts.NotContains(exported.Resources, clientID, "the export carried the client ID")
@@ -360,8 +366,8 @@ func (ts *ControlPlaneTestSuite) TestExportRefersToAListAsOneReference() {
 	status, raw := ts.call(http.MethodPost, "/export", map[string]any{"applications": []string{appID}}, &exported)
 	ts.Require().Equal(http.StatusOK, status, string(raw))
 
-	variable := strings.ToUpper(strings.NewReplacer(" ", "_", "-", "_").Replace(name))
-	ts.Regexp(`redirectUris:\s*\n\s*- var:APPLICATION_`+variable+`_REDIRECT_URIS\s*\n`, exported.Resources)
+	redirectURIs := variableName("APPLICATION", appID, "REDIRECT_URIS")
+	ts.Regexp(`redirectUris:\s*\n\s*- var:`+redirectURIs+`\s*\n`, exported.Resources)
 	ts.NotContains(exported.Resources, "cp-list-one.example.com", "the export carried an address")
 	ts.NotContains(exported.Resources, "cp-list-two.example.com", "the export carried an address")
 }
@@ -378,7 +384,7 @@ func (ts *ControlPlaneTestSuite) TestAnImportedResourceServerKeepsItsIdentifierR
 	}
 	status, raw := ts.call(http.MethodPost, "/export", map[string]any{"resourceServers": []string{rsID}}, &exported)
 	ts.Require().Equal(http.StatusOK, status, string(raw))
-	reference := "var:" + variableName("RESOURCE_SERVER", name, "IDENTIFIER")
+	reference := "var:" + variableName("RESOURCE_SERVER", rsID, "IDENTIFIER")
 	ts.Require().Contains(exported.Resources, "identifier: "+reference)
 
 	ts.Require().NoError(testutils.DeleteResourceServer(rsID))
@@ -434,7 +440,7 @@ func (ts *ControlPlaneTestSuite) TestAnImportedMCPResourceServerKeepsItsIdentifi
 	}
 	status, raw = ts.call(http.MethodPost, "/export", map[string]any{"resourceServers": []string{rsID}}, &exported)
 	ts.Require().Equal(http.StatusOK, status, string(raw))
-	reference := "var:" + variableName("RESOURCE_SERVER", name, "IDENTIFIER")
+	reference := "var:" + variableName("RESOURCE_SERVER", rsID, "IDENTIFIER")
 	ts.Require().Contains(exported.Resources, "identifier: "+reference)
 
 	ts.Require().NoError(testutils.DeleteResourceServer(rsID))
@@ -461,7 +467,7 @@ func (ts *ControlPlaneTestSuite) TestAnImportedMCPResourceServerKeepsItsIdentifi
 	}
 	status, raw = ts.call(http.MethodPut, "/resource-servers/"+rsID, map[string]any{
 		"name":       name,
-		"identifier": "sec:" + variableName("RESOURCE_SERVER", name, "IDENTIFIER"),
+		"identifier": "sec:" + variableName("RESOURCE_SERVER", rsID, "IDENTIFIER"),
 		"ouId":       ts.ouID,
 	}, nil)
 	ts.Require().Equal(http.StatusBadRequest, status, string(raw))

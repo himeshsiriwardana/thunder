@@ -7,14 +7,14 @@ import {describe, it, expect, vi, beforeEach} from 'vitest';
 import type {Agent} from '../../../../models/agent';
 import AttributesSummarySection from '../AttributesSummarySection';
 
-const {mockUseGetAgentTypes, mockUseGetAgentType} = vi.hoisted(() => ({
-  mockUseGetAgentTypes: vi.fn(),
+const {mockUseGetAllAgentTypes, mockUseGetAgentType} = vi.hoisted(() => ({
+  mockUseGetAllAgentTypes: vi.fn(),
   mockUseGetAgentType: vi.fn(),
 }));
 
 vi.mock('@thunderid/configure-agent-types', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@thunderid/configure-agent-types')>()),
-  useGetAgentTypes: () => mockUseGetAgentTypes(),
+  useGetAllAgentTypes: () => mockUseGetAllAgentTypes(),
   useGetAgentType: (id?: string) => mockUseGetAgentType(id),
 }));
 
@@ -33,8 +33,8 @@ describe('AttributesSummarySection', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseGetAgentTypes.mockReturnValue({
-      data: {types: [{id: 'schema-1', handle: 'default', displayName: 'Default', ouId: 'ou-1'}]},
+    mockUseGetAllAgentTypes.mockReturnValue({
+      data: [{id: 'schema-1', handle: 'default', displayName: 'Default', ouId: 'ou-1'}],
     });
     mockUseGetAgentType.mockReturnValue({
       data: {
@@ -66,6 +66,35 @@ describe('AttributesSummarySection', () => {
     expect(screen.getByText('Yes')).toBeInTheDocument();
     expect(screen.getByText('tags')).toBeInTheDocument();
     expect(screen.getByText('a, b')).toBeInTheDocument();
+  });
+
+  it("lists the attributes in the agent type's order, with any the schema does not hold last", () => {
+    mockUseGetAgentType.mockReturnValue({
+      data: {
+        id: 'schema-1',
+        handle: 'default',
+        displayName: 'Default',
+        ouId: 'ou-1',
+        systemAttributes: {display: 'label'},
+        schema: {
+          model: {type: 'string'},
+          environment: {type: 'string', required: true},
+          apiKey: {type: 'string', required: true, credential: true},
+          function: {type: 'string'},
+          label: {type: 'string', required: true},
+        },
+      },
+      isLoading: false,
+    });
+    render(
+      <AttributesSummarySection
+        agent={{...baseAgent, attributes: {extra: 'x', function: 'f', model: 'm', environment: 'e', label: 'l'}}}
+      />,
+    );
+
+    expect(
+      screen.getAllByText(/^(extra|function|model|environment|label)$/).map((element) => element.textContent),
+    ).toEqual(['environment', 'label', 'function', 'model', 'extra']);
   });
 
   it('shows an empty state when there are no attribute values', () => {
@@ -111,6 +140,33 @@ describe('AttributesSummarySection', () => {
       render(<AttributesSummarySection agent={{...baseAgent, attributes: {}}} variant="bare" />);
 
       expect(screen.getByText('No attributes available.')).toBeInTheDocument();
+    });
+
+    it('adds a chip for when the lifespan ends, once one is set', () => {
+      const validUntil = '2027-01-27T08:30:00Z';
+      render(<AttributesSummarySection agent={{...baseAgent, validUntil}} variant="bare" />);
+
+      const expected = new Date(validUntil).toLocaleString('en-US', {dateStyle: 'medium', timeStyle: 'short'});
+      expect(screen.getByText(`Valid Until: ${expected}`)).toBeInTheDocument();
+      expect(screen.getByText('email: a@b.com')).toBeInTheDocument();
+    });
+
+    it('shows no lifespan chip for an agent that does not expire', () => {
+      render(<AttributesSummarySection agent={baseAgent} variant="bare" />);
+
+      expect(screen.queryByText(/^Valid Until:/)).not.toBeInTheDocument();
+    });
+
+    it('shows the lifespan chip instead of the empty state when there are no attribute values', () => {
+      render(
+        <AttributesSummarySection
+          agent={{...baseAgent, attributes: {}, validUntil: '2027-01-27T08:30:00Z'}}
+          variant="bare"
+        />,
+      );
+
+      expect(screen.getByText(/^Valid Until:/)).toBeInTheDocument();
+      expect(screen.queryByText('No attributes available.')).not.toBeInTheDocument();
     });
 
     it('still shows a loading spinner while the schema is loading', () => {

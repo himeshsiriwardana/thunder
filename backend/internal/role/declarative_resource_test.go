@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"gopkg.in/yaml.v3"
 
 	"github.com/thunder-id/thunderid/internal/group"
 	"github.com/thunder-id/thunderid/internal/sharing"
@@ -195,6 +196,7 @@ func (suite *RoleExporterTestSuite) TestGetResourceByID_Success() {
 		Name:        "Admin",
 		Description: "Admin role",
 		OUID:        "ou1",
+		ProjectID:   "project-1",
 		Permissions: []ResourcePermissions{
 			{ResourceServerID: "rs1", Permissions: []string{"read", "write"}},
 		},
@@ -229,10 +231,40 @@ func (suite *RoleExporterTestSuite) TestGetResourceByID_Success() {
 	role, ok := resource.(*roleDeclarativeResource)
 	assert.True(suite.T(), ok)
 	assert.Equal(suite.T(), "role1", role.ID)
+	assert.Equal(suite.T(), "project-1", role.ProjectID)
 	assert.Equal(suite.T(), []RoleAssignment{
 		{ID: "user1", Type: AssigneeTypeUser, OUID: "ou1"},
 		{ID: "group1", Type: AssigneeTypeGroup, OUID: "ou-child"},
 	}, role.Assignments)
+}
+
+// A mandated assignment follows its sharing policy, so the export leaves it out and an import of the
+// document writes back only the direct assignments.
+func (suite *RoleExporterTestSuite) TestGetResourceByID_LeavesMandatedAssignmentsOut() {
+	suite.exportingPolicies(nil, nil)
+	suite.mockAssignmentService.On(
+		"GetRoleAssignments", suite.ctx, "role1", "", serverconst.MaxPageSize, 0, false,
+	).Return(&AssignmentList{Assignments: []RoleAssignmentWithDisplay{
+		{ID: "user1", Type: AssigneeTypeUser, OUID: "ou-child"},
+		{ID: "user1", Type: AssigneeTypeUser, OUID: "ou-child", PolicyID: "policy-1"},
+		{ID: "user2", Type: AssigneeTypeUser, OUID: "ou-child", PolicyID: "policy-2"},
+	}, TotalResults: 3}, nil)
+	suite.mockAssignmentService.On(
+		"GetRoleAssignments", suite.ctx, "role1", "", serverconst.MaxPageSize, 3, false,
+	).Return(&AssignmentList{Assignments: []RoleAssignmentWithDisplay{}, TotalResults: 3}, nil)
+
+	resource, _, err := suite.exporter.GetResourceByID(suite.ctx, "role1")
+
+	suite.Require().Nil(err)
+	role, ok := resource.(*roleDeclarativeResource)
+	suite.Require().True(ok)
+	suite.Equal([]RoleAssignment{{ID: "user1", Type: AssigneeTypeUser, OUID: "ou-child"}}, role.Assignments)
+
+	document, marshalErr := yaml.Marshal(role)
+	suite.Require().NoError(marshalErr)
+	var imported roleDeclarativeResource
+	suite.Require().NoError(yaml.Unmarshal(document, &imported))
+	suite.Equal(role.Assignments, imported.Assignments)
 }
 
 // exportingPolicies rebuilds the exporter around a sharing service that answers the role's policies.
@@ -325,6 +357,7 @@ id: role1
 name: Admin
 description: Admin role
 ouId: ou1
+projectId: project-1
 permissions:
   - resourceServerId: rs1
     permissions:
@@ -343,6 +376,7 @@ assignments:
 	assert.Equal(suite.T(), "Admin", role.Name)
 	assert.Equal(suite.T(), "Admin role", role.Description)
 	assert.Equal(suite.T(), "ou1", role.OUID)
+	assert.Equal(suite.T(), "project-1", role.ProjectID)
 	assert.Len(suite.T(), role.Permissions, 1)
 	assert.Len(suite.T(), role.Assignments, 1)
 }
@@ -610,6 +644,7 @@ func TestPlaceDeclaredAssignmentsTestSuite(t *testing.T) {
 
 func (suite *PlaceDeclaredAssignmentsTestSuite) SetupTest() {
 	suite.entities = entitymock.NewEntityServiceInterfaceMock(suite.T())
+	registerSharedCategories(suite.entities)
 	suite.groups = groupmock.NewGroupServiceInterfaceMock(suite.T())
 	suite.sharing = sharingmock.NewSharingServiceInterfaceMock(suite.T())
 }

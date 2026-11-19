@@ -3,8 +3,11 @@
 
 import type {UseQueryResult, UseMutationResult} from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
+import {useGetFlows} from '@thunderid/configure-flows';
+import {CapabilitiesProvider, HiddenResourcesProvider, ProjectScopeProvider} from '@thunderid/contexts';
 import {render, screen, waitFor, fireEvent, within} from '@thunderid/test-utils';
 import {useState} from 'react';
+import {useNavigate} from 'react-router';
 import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest';
 import useGetApplication from '../../api/useGetApplication';
 import useUpdateApplication from '../../api/useUpdateApplication';
@@ -18,6 +21,7 @@ import EditTokenSettings from '../../components/edit-application/token-settings/
 import EditTokenSettingsTabs from '../../components/edit-application/token-settings/EditTokenSettingsTabs';
 import ApplicationConstants from '../../constants/application-constants';
 import type {Application} from '../../models/application';
+import {OAuth2GrantTypes} from '../../models/oauth';
 import {getIntegrationGuideForTemplate} from '../../utils/getIntegrationGuidesForTemplate';
 import getTemplateMetadata from '../../utils/getTemplateMetadata';
 import ApplicationEditPage from '../ApplicationEditPage';
@@ -56,6 +60,7 @@ const APPLICATIONS_TRANSLATIONS: Record<string, string> = {
 };
 
 vi.mock('react-i18next', () => ({
+  Trans: () => null,
   useTranslation: () => ({
     t: (key: string, fallbackOrOptions?: string | {defaultValue?: string}) => {
       if (APPLICATIONS_TRANSLATIONS[key] !== undefined) return APPLICATIONS_TRANSLATIONS[key];
@@ -91,6 +96,11 @@ vi.mock('../../api/useUpdateApplication', () => ({
   default: vi.fn(),
 }));
 
+vi.mock('@thunderid/configure-flows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-flows')>()),
+  useGetFlows: vi.fn(),
+}));
+
 vi.mock('../../utils/getTemplateMetadata', () => ({
   default: vi.fn(),
 }));
@@ -110,7 +120,14 @@ vi.mock('../../components/edit-application/credentials/EditCredentialsSettings',
 }));
 
 vi.mock('../../components/edit-application/flows-settings/EditFlowsSettings', () => ({
-  default: vi.fn(() => <div data-testid="edit-flows-settings">Flows Settings</div>),
+  default: vi.fn(({onFieldChange}: {onFieldChange: (field: keyof Application, value: unknown) => void}) => (
+    <div data-testid="edit-flows-settings">
+      Flows Settings
+      <button type="button" data-testid="change-flow-draft" onClick={() => onFieldChange('description', 'changed')}>
+        Change flow settings
+      </button>
+    </div>
+  )),
 }));
 
 vi.mock('../../components/edit-application/customization-settings/EditCustomizationSettings', () => ({
@@ -349,6 +366,11 @@ async function editFieldAndResetSection<P>(
   return {initialKey, keyAfterReset};
 }
 
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
+
 describe('ApplicationEditPage', () => {
   const mockApplication: Application = {
     id: 'test-app-id',
@@ -376,6 +398,7 @@ describe('ApplicationEditPage', () => {
   };
 
   const mockUpdateApplicationMutate = vi.fn();
+  const mockUpdateApplicationMutateAsync = vi.fn().mockResolvedValue(mockApplication);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -395,10 +418,13 @@ describe('ApplicationEditPage', () => {
       isError: false,
       error: null,
     } as UseQueryResult<Application>);
+    vi.mocked(useGetFlows).mockReturnValue({data: {flows: []}, isLoading: false} as unknown as ReturnType<
+      typeof useGetFlows
+    >);
 
     mockUseUpdateApplication.mockReturnValue({
       mutate: mockUpdateApplicationMutate,
-      mutateAsync: vi.fn().mockResolvedValue(mockApplication),
+      mutateAsync: mockUpdateApplicationMutateAsync,
       isPending: false,
       isError: false,
       error: null,
@@ -407,6 +433,167 @@ describe('ApplicationEditPage', () => {
   });
 
   const renderComponent = () => render(<ApplicationEditPage />);
+
+  describe('Project scope', () => {
+    it("goes to the selected project's applications when the application belongs to another project", async () => {
+      const navigate = vi.fn();
+      vi.mocked(useNavigate).mockReturnValue(navigate);
+      mockUseGetApplication.mockReturnValue({
+        data: {...mockApplication, projectId: 'project-b'},
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as UseQueryResult<Application>);
+
+      render(
+        <ProjectScopeProvider project={{id: 'project-a'}}>
+          <ApplicationEditPage />
+        </ProjectScopeProvider>,
+      );
+
+      await waitFor(() => {
+        expect(navigate).toHaveBeenCalledWith('/applications', {replace: true});
+      });
+      expect(screen.queryByRole('button', {name: 'Save Changes'})).not.toBeInTheDocument();
+    });
+
+    it('shows the application when it belongs to the selected project', () => {
+      const navigate = vi.fn();
+      vi.mocked(useNavigate).mockReturnValue(navigate);
+      mockUseGetApplication.mockReturnValue({
+        data: {...mockApplication, projectId: 'project-a'},
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as UseQueryResult<Application>);
+
+      render(
+        <ProjectScopeProvider project={{id: 'project-a'}}>
+          <ApplicationEditPage />
+        </ProjectScopeProvider>,
+      );
+
+      expect(navigate).not.toHaveBeenCalledWith('/applications', {replace: true});
+    });
+  });
+
+  describe('Hidden applications', () => {
+    it('goes to the applications when the application is hidden by its client id', async () => {
+      const navigate = vi.fn();
+      vi.mocked(useNavigate).mockReturnValue(navigate);
+      mockUseGetApplication.mockReturnValue({
+        data: mockApplication,
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as UseQueryResult<Application>);
+
+      render(
+        <HiddenResourcesProvider hidden={{applicationClientIds: ['TEST-CLIENT-ID']}}>
+          <ApplicationEditPage />
+        </HiddenResourcesProvider>,
+      );
+
+      await waitFor(() => {
+        expect(navigate).toHaveBeenCalledWith('/applications', {replace: true});
+      });
+      expect(screen.queryByRole('button', {name: 'Save Changes'})).not.toBeInTheDocument();
+    });
+
+    it('shows the application when another client id is hidden', () => {
+      const navigate = vi.fn();
+      vi.mocked(useNavigate).mockReturnValue(navigate);
+      mockUseGetApplication.mockReturnValue({
+        data: mockApplication,
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as UseQueryResult<Application>);
+
+      render(
+        <HiddenResourcesProvider hidden={{applicationClientIds: ['ADMIN_CONSOLE']}}>
+          <ApplicationEditPage />
+        </HiddenResourcesProvider>,
+      );
+
+      expect(navigate).not.toHaveBeenCalledWith('/applications', {replace: true});
+    });
+  });
+
+  describe('Device Grant flow selection', () => {
+    const deviceGrantApplication = (): Application => ({
+      ...mockApplication,
+      inboundAuthConfig: [
+        {
+          ...mockApplication.inboundAuthConfig![0],
+          config: {
+            ...mockApplication.inboundAuthConfig![0].config,
+            grantTypes: ['authorization_code', OAuth2GrantTypes.DEVICE_CODE],
+          },
+        },
+      ],
+    });
+
+    it('assigns the default Device Grant flow and saves its ID', async () => {
+      const user = userEvent.setup();
+      mockUseGetApplication.mockReturnValue({
+        data: deviceGrantApplication(),
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn().mockResolvedValue({data: deviceGrantApplication()}),
+      } as unknown as UseQueryResult<Application>);
+      vi.mocked(useGetFlows).mockReturnValue({
+        data: {flows: [{id: 'default-device-flow', name: 'Default Device Grant', handle: 'default-device-grant-flow'}]},
+        isLoading: false,
+      } as unknown as ReturnType<typeof useGetFlows>);
+
+      renderComponent();
+
+      const saveButton = await screen.findByRole('button', {name: 'Save Changes'});
+      await user.click(saveButton);
+      await waitFor(() => expect(mockUpdateApplicationMutateAsync).toHaveBeenCalled());
+      const updateRequest = mockUpdateApplicationMutateAsync.mock.calls.at(-1)?.[0] as {data: Application} | undefined;
+      expect(updateRequest?.data.deviceGrantFlowId).toBe('default-device-flow');
+    });
+
+    it('blocks saving when Device Grant is enabled but no flow is available', async () => {
+      const user = userEvent.setup();
+      mockUseGetApplication.mockReturnValue({
+        data: deviceGrantApplication(),
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as UseQueryResult<Application>);
+
+      renderComponent();
+      await user.click(screen.getByRole('tab', {name: 'Flows'}));
+      await user.click(await screen.findByTestId('change-flow-draft'));
+
+      expect(screen.getByText('Select a Device Grant flow in the Flows tab before saving.')).toBeInTheDocument();
+      expect(screen.getByRole('button', {name: 'Save Changes'})).toBeDisabled();
+    });
+
+    it('asks the user to wait while the Device Grant flow list is loading', async () => {
+      const user = userEvent.setup();
+      mockUseGetApplication.mockReturnValue({
+        data: deviceGrantApplication(),
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as UseQueryResult<Application>);
+      vi.mocked(useGetFlows).mockReturnValue({data: undefined, isLoading: true} as ReturnType<typeof useGetFlows>);
+
+      renderComponent();
+      await user.click(screen.getByRole('tab', {name: 'Flows'}));
+      await user.click(await screen.findByTestId('change-flow-draft'));
+
+      expect(
+        screen.getByText('The default Device Grant flow is loading. Please wait before saving.'),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', {name: 'Save Changes'})).toBeDisabled();
+    });
+  });
 
   describe('Loading State', () => {
     it('should display loading state while fetching application', () => {
@@ -1060,6 +1247,25 @@ describe('ApplicationEditPage', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('button', {name: /save changes/i})).toBeEnabled();
+      });
+    });
+
+    it('disables save when the admin may not update applications', async () => {
+      const user = userEvent.setup();
+      render(
+        <CapabilitiesProvider capabilities={viewOnly}>
+          <ApplicationEditPage />
+        </CapabilitiesProvider>,
+      );
+
+      const nameSection = screen.getByText('Test Application').closest('div');
+      await user.click(nameSection!.querySelector('button')!);
+      const nameInput = screen.getByRole('textbox');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Updated Application{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', {name: /save changes/i})).toBeDisabled();
       });
     });
 
@@ -2179,8 +2385,7 @@ describe('ApplicationEditPage', () => {
       expect(screen.getByRole('tab', {name: 'Customization'})).toBeInTheDocument();
       expect(screen.getByRole('tab', {name: 'Token'})).toBeInTheDocument();
       expect(screen.getByRole('tab', {name: 'Advanced'})).toBeInTheDocument();
-      // Organization Access is only offered to clients with the client credentials grant for now.
-      expect(screen.queryByRole('tab', {name: 'Organization Access'})).not.toBeInTheDocument();
+      expect(screen.getByRole('tab', {name: 'Organization Access'})).toBeInTheDocument();
     });
 
     it('renders the Overview tab panel by default, and the General tab panel once selected', async () => {
@@ -2655,8 +2860,6 @@ describe('ApplicationEditPage', () => {
   });
 
   describe('Organization Access', () => {
-    // Organization Access is only offered to applications with the client credentials grant, so
-    // these tests use a client-credentials application.
     const m2mApplication: Application = {
       ...mockApplication,
       inboundAuthConfig: [
@@ -2689,27 +2892,12 @@ describe('ApplicationEditPage', () => {
       mockOrganizationAccess.reset.mockReset();
     });
 
-    it('is not offered to an application without the client credentials grant', () => {
+    it.each([
+      ['signs users in', mockApplication],
+      ['only requests tokens for itself', m2mApplication],
+    ])('is offered to an application that %s', (_kind, application) => {
       mockUseGetApplication.mockReturnValue({
-        data: mockApplication,
-        isLoading: false,
-        isError: false,
-        error: null,
-      } as unknown as UseQueryResult<Application>);
-      renderComponent();
-
-      expect(screen.queryByRole('tab', {name: 'Organization Access'})).not.toBeInTheDocument();
-    });
-
-    it('is offered to a client credentials application that also signs users in', () => {
-      const oauth2 = m2mApplication.inboundAuthConfig![0];
-      mockUseGetApplication.mockReturnValue({
-        data: {
-          ...m2mApplication,
-          inboundAuthConfig: [
-            {...oauth2, config: {...oauth2.config, grantTypes: ['authorization_code', 'client_credentials']}},
-          ],
-        },
+        data: application,
         isLoading: false,
         isError: false,
         error: null,

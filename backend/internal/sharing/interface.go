@@ -36,6 +36,14 @@ type OwnerResolver interface {
 	OwningOUID(ctx context.Context, resourceID string) (string, *tidcommon.ServiceError)
 }
 
+// ShareAuthorizer is the optional capability of a declaration whose resources may be shared into a direct child of
+// their owner.
+type ShareAuthorizer interface {
+	// AuthorizeShareInto refuses unless the caller may bring the resource into targetOUID; resourceID is empty for a
+	// resource about to be created.
+	AuthorizeShareInto(ctx context.Context, resourceID, targetOUID string) *tidcommon.ServiceError
+}
+
 // FieldDelimiterResolver reports the separator joining the segments of a hierarchical path.
 //
 // Optional only for a type that declares no field of kind FieldHierarchy. A type that declares one
@@ -77,9 +85,24 @@ type PolicyHooks interface {
 // every value it holds for the resource is dead, not just the ones the removed policy happened to
 // govern. Neither hook is field-scoped, because a field the removed policy never named can still
 // hold state that is just as dead.
+//
+// A client error wrapped with NewResourceTypeError refuses the change and reaches its caller as given.
 type OverlayCleaner interface {
 	// DeleteOverlayValues removes every value ouID holds for resourceID.
 	DeleteOverlayValues(ctx context.Context, resourceID, ouID string) error
+}
+
+// PolicyWriteHooks is an optional capability letting a resource type act, inside the same transaction, whenever one
+// of its policies is written or removed: through the API, an import or a declaration being loaded, or by the
+// framework itself re-narrowing or removing the reshares beneath a changed policy.
+//
+// A client error refuses the change, which rolls back and reaches the caller as given. Any other error rolls it back
+// as an internal failure.
+type PolicyWriteHooks interface {
+	// OnPolicyWritten is called once per policy created or rewritten, with the policy as stored.
+	OnPolicyWritten(ctx context.Context, p Policy) *tidcommon.ServiceError
+	// OnPolicyRemoved is called once per policy removed, with the policy as it stood before.
+	OnPolicyRemoved(ctx context.Context, p Policy) *tidcommon.ServiceError
 }
 
 // MemberValidator is an optional capability letting a resource type reject members the initiating

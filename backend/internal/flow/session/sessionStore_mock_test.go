@@ -276,16 +276,16 @@ func (_c *sessionStoreMock_DeleteBySessionID_Call) RunAndReturn(run func(ctx con
 }
 
 // DeleteParticipant provides a mock function for the type sessionStoreMock
-func (_mock *sessionStoreMock) DeleteParticipant(ctx context.Context, sessionID string, appID string) error {
-	ret := _mock.Called(ctx, sessionID, appID)
+func (_mock *sessionStoreMock) DeleteParticipant(ctx context.Context, sessionID string, appID string, ouID string) error {
+	ret := _mock.Called(ctx, sessionID, appID, ouID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for DeleteParticipant")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
-		r0 = returnFunc(ctx, sessionID, appID)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, string) error); ok {
+		r0 = returnFunc(ctx, sessionID, appID, ouID)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -301,11 +301,12 @@ type sessionStoreMock_DeleteParticipant_Call struct {
 //   - ctx context.Context
 //   - sessionID string
 //   - appID string
-func (_e *sessionStoreMock_Expecter) DeleteParticipant(ctx any, sessionID any, appID any) *sessionStoreMock_DeleteParticipant_Call {
-	return &sessionStoreMock_DeleteParticipant_Call{Call: _e.mock.On("DeleteParticipant", ctx, sessionID, appID)}
+//   - ouID string
+func (_e *sessionStoreMock_Expecter) DeleteParticipant(ctx any, sessionID any, appID any, ouID any) *sessionStoreMock_DeleteParticipant_Call {
+	return &sessionStoreMock_DeleteParticipant_Call{Call: _e.mock.On("DeleteParticipant", ctx, sessionID, appID, ouID)}
 }
 
-func (_c *sessionStoreMock_DeleteParticipant_Call) Run(run func(ctx context.Context, sessionID string, appID string)) *sessionStoreMock_DeleteParticipant_Call {
+func (_c *sessionStoreMock_DeleteParticipant_Call) Run(run func(ctx context.Context, sessionID string, appID string, ouID string)) *sessionStoreMock_DeleteParticipant_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -319,10 +320,15 @@ func (_c *sessionStoreMock_DeleteParticipant_Call) Run(run func(ctx context.Cont
 		if args[2] != nil {
 			arg2 = args[2].(string)
 		}
+		var arg3 string
+		if args[3] != nil {
+			arg3 = args[3].(string)
+		}
 		run(
 			arg0,
 			arg1,
 			arg2,
+			arg3,
 		)
 	})
 	return _c
@@ -333,7 +339,7 @@ func (_c *sessionStoreMock_DeleteParticipant_Call) Return(err error) *sessionSto
 	return _c
 }
 
-func (_c *sessionStoreMock_DeleteParticipant_Call) RunAndReturn(run func(ctx context.Context, sessionID string, appID string) error) *sessionStoreMock_DeleteParticipant_Call {
+func (_c *sessionStoreMock_DeleteParticipant_Call) RunAndReturn(run func(ctx context.Context, sessionID string, appID string, ouID string) error) *sessionStoreMock_DeleteParticipant_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -943,38 +949,39 @@ func (_c *sessionStoreMock_Record_Call) RunAndReturn(run func(ctx context.Contex
 	return _c
 }
 
-// TouchAuthenticatedAt provides a mock function for the type sessionStoreMock
-func (_mock *sessionStoreMock) TouchAuthenticatedAt(ctx context.Context, sessionID string, authenticatedAt time.Time, idleExpiresAt time.Time) error {
-	ret := _mock.Called(ctx, sessionID, authenticatedAt, idleExpiresAt)
+// SlideIdleDeadline provides a mock function for the type sessionStoreMock
+func (_mock *sessionStoreMock) SlideIdleDeadline(ctx context.Context, sessionID string, now time.Time, idleExpiresAt time.Time, refreshedBefore time.Time) error {
+	ret := _mock.Called(ctx, sessionID, now, idleExpiresAt, refreshedBefore)
 
 	if len(ret) == 0 {
-		panic("no return value specified for TouchAuthenticatedAt")
+		panic("no return value specified for SlideIdleDeadline")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, time.Time, time.Time) error); ok {
-		r0 = returnFunc(ctx, sessionID, authenticatedAt, idleExpiresAt)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, time.Time, time.Time, time.Time) error); ok {
+		r0 = returnFunc(ctx, sessionID, now, idleExpiresAt, refreshedBefore)
 	} else {
 		r0 = ret.Error(0)
 	}
 	return r0
 }
 
-// sessionStoreMock_TouchAuthenticatedAt_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'TouchAuthenticatedAt'
-type sessionStoreMock_TouchAuthenticatedAt_Call struct {
+// sessionStoreMock_SlideIdleDeadline_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SlideIdleDeadline'
+type sessionStoreMock_SlideIdleDeadline_Call struct {
 	*mock.Call
 }
 
-// TouchAuthenticatedAt is a helper method to define mock.On call
+// SlideIdleDeadline is a helper method to define mock.On call
 //   - ctx context.Context
 //   - sessionID string
-//   - authenticatedAt time.Time
+//   - now time.Time
 //   - idleExpiresAt time.Time
-func (_e *sessionStoreMock_Expecter) TouchAuthenticatedAt(ctx any, sessionID any, authenticatedAt any, idleExpiresAt any) *sessionStoreMock_TouchAuthenticatedAt_Call {
-	return &sessionStoreMock_TouchAuthenticatedAt_Call{Call: _e.mock.On("TouchAuthenticatedAt", ctx, sessionID, authenticatedAt, idleExpiresAt)}
+//   - refreshedBefore time.Time
+func (_e *sessionStoreMock_Expecter) SlideIdleDeadline(ctx any, sessionID any, now any, idleExpiresAt any, refreshedBefore any) *sessionStoreMock_SlideIdleDeadline_Call {
+	return &sessionStoreMock_SlideIdleDeadline_Call{Call: _e.mock.On("SlideIdleDeadline", ctx, sessionID, now, idleExpiresAt, refreshedBefore)}
 }
 
-func (_c *sessionStoreMock_TouchAuthenticatedAt_Call) Run(run func(ctx context.Context, sessionID string, authenticatedAt time.Time, idleExpiresAt time.Time)) *sessionStoreMock_TouchAuthenticatedAt_Call {
+func (_c *sessionStoreMock_SlideIdleDeadline_Call) Run(run func(ctx context.Context, sessionID string, now time.Time, idleExpiresAt time.Time, refreshedBefore time.Time)) *sessionStoreMock_SlideIdleDeadline_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -992,11 +999,91 @@ func (_c *sessionStoreMock_TouchAuthenticatedAt_Call) Run(run func(ctx context.C
 		if args[3] != nil {
 			arg3 = args[3].(time.Time)
 		}
+		var arg4 time.Time
+		if args[4] != nil {
+			arg4 = args[4].(time.Time)
+		}
 		run(
 			arg0,
 			arg1,
 			arg2,
 			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *sessionStoreMock_SlideIdleDeadline_Call) Return(err error) *sessionStoreMock_SlideIdleDeadline_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *sessionStoreMock_SlideIdleDeadline_Call) RunAndReturn(run func(ctx context.Context, sessionID string, now time.Time, idleExpiresAt time.Time, refreshedBefore time.Time) error) *sessionStoreMock_SlideIdleDeadline_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// TouchAuthenticatedAt provides a mock function for the type sessionStoreMock
+func (_mock *sessionStoreMock) TouchAuthenticatedAt(ctx context.Context, sessionID string, authenticatedAt time.Time, idleExpiresAt time.Time, properties SessionProperties) error {
+	ret := _mock.Called(ctx, sessionID, authenticatedAt, idleExpiresAt, properties)
+
+	if len(ret) == 0 {
+		panic("no return value specified for TouchAuthenticatedAt")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, time.Time, time.Time, SessionProperties) error); ok {
+		r0 = returnFunc(ctx, sessionID, authenticatedAt, idleExpiresAt, properties)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// sessionStoreMock_TouchAuthenticatedAt_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'TouchAuthenticatedAt'
+type sessionStoreMock_TouchAuthenticatedAt_Call struct {
+	*mock.Call
+}
+
+// TouchAuthenticatedAt is a helper method to define mock.On call
+//   - ctx context.Context
+//   - sessionID string
+//   - authenticatedAt time.Time
+//   - idleExpiresAt time.Time
+//   - properties SessionProperties
+func (_e *sessionStoreMock_Expecter) TouchAuthenticatedAt(ctx any, sessionID any, authenticatedAt any, idleExpiresAt any, properties any) *sessionStoreMock_TouchAuthenticatedAt_Call {
+	return &sessionStoreMock_TouchAuthenticatedAt_Call{Call: _e.mock.On("TouchAuthenticatedAt", ctx, sessionID, authenticatedAt, idleExpiresAt, properties)}
+}
+
+func (_c *sessionStoreMock_TouchAuthenticatedAt_Call) Run(run func(ctx context.Context, sessionID string, authenticatedAt time.Time, idleExpiresAt time.Time, properties SessionProperties)) *sessionStoreMock_TouchAuthenticatedAt_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 time.Time
+		if args[2] != nil {
+			arg2 = args[2].(time.Time)
+		}
+		var arg3 time.Time
+		if args[3] != nil {
+			arg3 = args[3].(time.Time)
+		}
+		var arg4 SessionProperties
+		if args[4] != nil {
+			arg4 = args[4].(SessionProperties)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
 		)
 	})
 	return _c
@@ -1007,7 +1094,7 @@ func (_c *sessionStoreMock_TouchAuthenticatedAt_Call) Return(err error) *session
 	return _c
 }
 
-func (_c *sessionStoreMock_TouchAuthenticatedAt_Call) RunAndReturn(run func(ctx context.Context, sessionID string, authenticatedAt time.Time, idleExpiresAt time.Time) error) *sessionStoreMock_TouchAuthenticatedAt_Call {
+func (_c *sessionStoreMock_TouchAuthenticatedAt_Call) RunAndReturn(run func(ctx context.Context, sessionID string, authenticatedAt time.Time, idleExpiresAt time.Time, properties SessionProperties) error) *sessionStoreMock_TouchAuthenticatedAt_Call {
 	_c.Call.Return(run)
 	return _c
 }

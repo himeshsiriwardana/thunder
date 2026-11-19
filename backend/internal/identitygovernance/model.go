@@ -26,6 +26,12 @@ type GovernedEntity struct {
 	Revision int64
 	// AccessState is the parsed access-state document.
 	AccessState AccessState
+	// ValidUntil is the UTC RFC 3339 instant the entity's lifespan ends, from its system attributes.
+	// Empty when it does not end.
+	ValidUntil string
+	// ValidUntilErr is set when the stored lifespan end does not read. An access check fails on it, so a
+	// corrupt value never admits; a lifecycle operation such as a suspension ignores it.
+	ValidUntilErr error
 }
 
 // RuntimeAttributes is the runtime attribute document governance reads and writes.
@@ -40,19 +46,15 @@ type AccessState struct {
 	// Suspend is set while the entity is suspended. It is written together with the state column, and
 	// either one marks the entity suspended.
 	Suspend *SuspendState `json:"suspend"`
+	// OwnerSuspend is set while the identity's owner, such as the owner of a personal agent, holds it
+	// suspended. It is independent of Suspend: either one marks the entity suspended, and lifting one
+	// leaves the other.
+	OwnerSuspend *OwnerSuspendState `json:"ownerSuspend,omitempty"`
+	// CascadeSuspend is set while the identity this one depends on is suspended, such as a personal agent's owner.
+	// It is placed and lifted with that identity's suspension, apart from Suspend and OwnerSuspend.
+	CascadeSuspend *CascadeSuspendState `json:"cascadeSuspend,omitempty"`
 	// LastLoginAt is when access was last granted. A lock clear keeps it.
 	LastLoginAt string `json:"lastLoginAt"`
-}
-
-// observedFor returns the entry recorded for a method, whether or not it is currently locked.
-func (a AccessState) observedFor(method providers.AuthenticationMethod) LockEntry {
-	if method == AuthenticationMethodAccount {
-		if a.Lock.Account == nil {
-			return LockEntry{}
-		}
-		return *a.Lock.Account
-	}
-	return a.Lock.AuthenticationMethods[method]
 }
 
 // LockState holds the account-wide entry and the per-method entries. A live account entry holds under
@@ -70,6 +72,18 @@ type SuspendState struct {
 	SuspendedAt string `json:"suspendedAt"`
 	// OperatorNote is an optional operator note. Returned on management reads, never on a refusal.
 	OperatorNote string `json:"operatorNote"`
+}
+
+// OwnerSuspendState is the owner's suspension member.
+type OwnerSuspendState struct {
+	// SuspendedAt is when the owner placed the hold.
+	SuspendedAt string `json:"suspendedAt"`
+}
+
+// CascadeSuspendState is the cascaded suspension member.
+type CascadeSuspendState struct {
+	// SuspendedAt is when the hold was placed.
+	SuspendedAt string `json:"suspendedAt"`
 }
 
 // LockEntry is one entry's stored failure and lock state, whichever member it sits under.
@@ -191,6 +205,8 @@ type lifecycleAudit struct {
 	message           string
 	// operatorNoteRecorded says whether a suspension carried a note. The note is never recorded.
 	operatorNoteRecorded *bool
+	// appliedBy is whose suspension was placed or lifted.
+	appliedBy providers.SuspensionAppliedBy
 }
 
 // lockNotice is one queued lock email. It holds no address; the address is read at delivery.

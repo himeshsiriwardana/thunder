@@ -22,6 +22,10 @@ var (
 
 	// ErrDefinitionDataCorrupted is returned when declarative store data is malformed.
 	ErrDefinitionDataCorrupted = errors.New("presentation definition data is corrupted")
+
+	// errInvalidCertificatePEM is returned when a trusted authority certificate is not a single
+	// PEM-encoded X.509 certificate.
+	errInvalidCertificatePEM = errors.New("certificate must be a single PEM-encoded X.509 certificate")
 )
 
 // Client-facing API errors for the presentation-definition management endpoints.
@@ -172,6 +176,170 @@ var (
 				"declarative-only mode. Definitions must be defined in declarative configuration files",
 		},
 	}
+
+	// ErrorDefinitionEmptyTrustedAuthorityName indicates a trusted authority was declared without a name.
+	ErrorDefinitionEmptyTrustedAuthorityName = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2011",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_empty_trusted_authority_name",
+			DefaultValue: "Invalid trusted authority",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_empty_trusted_authority_name_description",
+			DefaultValue: "Trusted authority names must not be empty",
+		},
+	}
+
+	// ErrorDefinitionDuplicateTrustedAuthority indicates a trusted authority name or certificate
+	// appears more than once in the same presentation definition.
+	ErrorDefinitionDuplicateTrustedAuthority = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2012",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_duplicate_trusted_authority",
+			DefaultValue: "Duplicate trusted authority",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.vp.definition_duplicate_trusted_authority_description",
+			DefaultValue: "Trusted authority '{{param(name)}}' repeats a name or certificate " +
+				"already registered on this presentation definition",
+		},
+	}
+
+	// ErrorDefinitionInvalidTrustedAuthorityCertificate indicates a trusted authority has no
+	// certificate, or its certificate is not a valid PEM-encoded X.509 certificate.
+	ErrorDefinitionInvalidTrustedAuthorityCertificate = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2013",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_invalid_trusted_authority_certificate",
+			DefaultValue: "Invalid trusted authority certificate",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.vp.definition_invalid_trusted_authority_certificate_description",
+			DefaultValue: "Trusted authority '{{param(name)}}' requires a single PEM-encoded X.509 " +
+				"certificate. Supply the certificate when adding a trusted authority",
+		},
+	}
+
+	// ErrorDefinitionExpiredTrustedAuthorityCertificate indicates a trusted authority certificate has expired.
+	ErrorDefinitionExpiredTrustedAuthorityCertificate = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2014",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_expired_trusted_authority_certificate",
+			DefaultValue: "Expired trusted authority certificate",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_expired_trusted_authority_certificate_description",
+			DefaultValue: "The certificate of trusted authority '{{param(name)}}' has expired",
+		},
+	}
+
+	// ErrorDefinitionTooManyTrustedAuthorities indicates more trusted authorities were supplied than allowed.
+	ErrorDefinitionTooManyTrustedAuthorities = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2015",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_too_many_trusted_authorities",
+			DefaultValue: "Too many trusted authorities",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_too_many_trusted_authorities_description",
+			DefaultValue: "A presentation definition supports at most {{param(max)}} trusted authorities",
+		},
+	}
+
+	// ErrorDefinitionTrustedIssuerWithoutAuthorities indicates issuer trust is enforced
+	// on a presentation definition that has no trusted authorities.
+	ErrorDefinitionTrustedIssuerWithoutAuthorities = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2016",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_trusted_issuer_without_authorities",
+			DefaultValue: "No trusted authorities",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_trusted_issuer_without_authorities_description",
+			DefaultValue: "Add at least one trusted authority certificate before enforcing issuer trust",
+		},
+	}
+
+	// ErrorDefinitionIDConflict indicates a create named an ID that another presentation definition already holds.
+	ErrorDefinitionIDConflict = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2017",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_id_conflict",
+			DefaultValue: "Presentation definition ID conflict",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_id_conflict_description",
+			DefaultValue: "A presentation definition with the specified ID already exists",
+		},
+	}
+
+	// ErrorDefinitionInvalidProject is returned when a presentation definition names a project that does not exist.
+	ErrorDefinitionInvalidProject = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2018",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_invalid_project",
+			DefaultValue: "Invalid project",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_invalid_project_description",
+			DefaultValue: "No project exists with the given project ID",
+		},
+	}
+
+	// ErrorDefinitionOUNotInProject is returned when a presentation definition names an organization unit outside
+	// its project.
+	ErrorDefinitionOUNotInProject = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2019",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_ou_not_in_project",
+			DefaultValue: "Organization unit not in project",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_ou_not_in_project_description",
+			DefaultValue: "The organization unit must belong to the project",
+		},
+	}
+
+	// ErrorDefinitionProjectRequired is returned when a presentation definition is created without a project on a
+	// deployment that requires one.
+	ErrorDefinitionProjectRequired = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2020",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_project_required",
+			DefaultValue: "Project required",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.vp.definition_project_required_description",
+			DefaultValue: "A presentation definition must belong to a project. " +
+				"Set projectId to the project it belongs to",
+		},
+	}
+
+	// ErrorManagedDefinition is returned when attempting to change a presentation definition a control plane deployed.
+	// Only a deploy from the control plane changes or removes it.
+	ErrorManagedDefinition = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "VP-2021",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.vp.definition_managed",
+			DefaultValue: "Cannot modify a presentation definition deployed by the control plane",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.vp.definition_managed_description",
+			DefaultValue: "The presentation definition was deployed by the control plane and can only be " +
+				"changed there",
+		},
+	}
 )
 
 // definitionClientErrorStatus maps a client-facing definition error to its HTTP status.
@@ -179,8 +347,11 @@ func definitionClientErrorStatus(code string) int {
 	switch code {
 	case ErrorDefinitionNotFound.Code:
 		return http.StatusNotFound
-	case ErrorDefinitionAlreadyExists.Code, ErrorDefinitionImmutable.Code:
+	case ErrorDefinitionAlreadyExists.Code, ErrorDefinitionImmutable.Code, ErrorManagedDefinition.Code,
+		ErrorDefinitionIDConflict.Code:
 		return http.StatusConflict
+	case tidcommon.ErrorUnauthorized.Code:
+		return http.StatusForbidden
 	default:
 		return http.StatusBadRequest
 	}

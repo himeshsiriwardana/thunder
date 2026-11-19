@@ -3,6 +3,7 @@
 
 import {screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import {CapabilitiesProvider} from '@thunderid/contexts';
 import {renderWithProviders} from '@thunderid/test-utils';
 import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
 import type {Group} from '../../models/group';
@@ -29,11 +30,13 @@ vi.mock('../edit-group/members-settings/ManageMembersSection', () => ({
 vi.mock('../edit-group/members-settings/AddMemberDialog', () => ({
   default: ({
     open,
+    ouId = undefined,
     onClose,
     onAdd,
     error,
   }: {
     open: boolean;
+    ouId?: string;
     onClose: () => void;
     onAdd: (members: {id: string; type: string}[]) => void;
     error?: string | null;
@@ -41,6 +44,7 @@ vi.mock('../edit-group/members-settings/AddMemberDialog', () => ({
   }) =>
     open ? (
       <div data-testid="add-member-dialog">
+        <span data-testid="dialog-ou-id">{ouId}</span>
         {error && <div role="alert">{error}</div>}
         <button type="button" onClick={onClose}>
           Close
@@ -61,6 +65,11 @@ const mockRemoveMutate = vi.fn();
 vi.mock('../../api/useRemoveGroupMember', () => ({
   default: () => ({mutate: mockRemoveMutate}),
 }));
+
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
 
 describe('EditMembersSettings', () => {
   const mockGroup: Group = {
@@ -89,6 +98,16 @@ describe('EditMembersSettings', () => {
     expect(screen.getByText('Add member')).toBeInTheDocument();
   });
 
+  it('should hide the Add Member button when the admin may not update groups', () => {
+    renderWithProviders(
+      <CapabilitiesProvider capabilities={viewOnly}>
+        <EditMembersSettings group={mockGroup} />
+      </CapabilitiesProvider>,
+    );
+
+    expect(screen.queryByText('Add member')).not.toBeInTheDocument();
+  });
+
   it('should open add member dialog when button clicked', async () => {
     const user = userEvent.setup();
     renderWithProviders(<EditMembersSettings group={mockGroup} />);
@@ -98,6 +117,15 @@ describe('EditMembersSettings', () => {
     await waitFor(() => {
       expect(screen.getByTestId('add-member-dialog')).toBeInTheDocument();
     });
+  });
+
+  it("should pass the group's organization unit to the dialog", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<EditMembersSettings group={mockGroup} />);
+
+    await user.click(screen.getByText('Add member'));
+
+    expect(screen.getByTestId('dialog-ou-id')).toHaveTextContent('ou1');
   });
 
   it('should call addGroupMembers when members are added', async () => {

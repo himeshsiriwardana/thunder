@@ -468,6 +468,62 @@ describe('TokenUserAttributesSection', () => {
     });
   });
 
+  describe('ID-JAG note', () => {
+    const oauthProps = {
+      ...baseProps,
+      accessTokenAttributes: ['email'],
+      idTokenAttributes: ['email'],
+      userInfoAttributes: [],
+      onTabChange: vi.fn(),
+    };
+    const idJagNote = /Identity assertions \(ID-JAG\) this agent requests also include the allowed attributes below/i;
+
+    it('tells on the ID token tab that the attributes also go into ID-JAGs when ID-JAG is on', () => {
+      render(<TokenUserAttributesSection {...oauthProps} activeTab="id" entityLabel="agent" idJagEnabled />);
+
+      expect(screen.getByText(idJagNote)).toBeInTheDocument();
+    });
+
+    it('does not show the note when ID-JAG is off', () => {
+      render(<TokenUserAttributesSection {...oauthProps} activeTab="id" entityLabel="agent" />);
+
+      expect(screen.queryByText(idJagNote)).not.toBeInTheDocument();
+    });
+
+    it('does not show the note on the access token tab', () => {
+      render(<TokenUserAttributesSection {...oauthProps} activeTab="access" entityLabel="agent" idJagEnabled />);
+
+      expect(screen.queryByText(idJagNote)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Attributes privacy note', () => {
+    const privacyNote = /Attributes you add are shared with this agent and anyone it passes the token to/i;
+
+    it('warns about sharing sensitive personal data on the access token attribute picker', () => {
+      render(
+        <TokenUserAttributesSection
+          {...baseProps}
+          userAttributes={['email', 'national_id']}
+          accessTokenAttributes={[]}
+          idTokenAttributes={[]}
+          userInfoAttributes={[]}
+          activeTab="access"
+          onTabChange={vi.fn()}
+          entityLabel="agent"
+        />,
+      );
+
+      expect(screen.getByText(privacyNote)).toHaveTextContent(/avoid sensitive personal data/i);
+    });
+
+    it('does not show the note when there are no attributes to pick', () => {
+      render(<TokenUserAttributesSection {...baseProps} sharedAttributes={[]} entityLabel="agent" />);
+
+      expect(screen.queryByText(privacyNote)).not.toBeInTheDocument();
+    });
+  });
+
   describe('ID token response format', () => {
     it('renders response type select in ID Token tab', () => {
       render(
@@ -833,8 +889,8 @@ describe('TokenUserAttributesSection', () => {
     it('should show the access token note above the attributes', () => {
       render(<TokenUserAttributesSection {...accessOnlyProps} accessTokenNote="Only carried attributes are kept." />);
 
-      const note = screen.getByRole('alert');
-      expect(note).toHaveTextContent('Only carried attributes are kept.');
+      const note = screen.getByText('Only carried attributes are kept.').closest('[role="alert"]')!;
+      expect(note).toBeInTheDocument();
       expect(
         note.compareDocumentPosition(screen.getByText('Add or remove attributes')) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
@@ -877,7 +933,7 @@ describe('TokenUserAttributesSection', () => {
       );
 
       expect(screen.getByRole('tab', {name: /access token/i})).toBeInTheDocument();
-      expect(screen.getByRole('alert')).toHaveTextContent('A tabbed note.');
+      expect(screen.getByText('A tabbed note.').closest('[role="alert"]')).toBeInTheDocument();
     });
   });
 

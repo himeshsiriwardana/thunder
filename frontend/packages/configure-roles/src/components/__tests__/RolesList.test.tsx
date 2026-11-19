@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import userEvent from '@testing-library/user-event';
+import {CapabilitiesProvider, ProjectScopeProvider} from '@thunderid/contexts';
 import {render, screen, waitFor} from '@thunderid/test-utils';
 import type {NavigateFunction} from 'react-router';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
@@ -36,31 +37,8 @@ vi.mock('@wso2/oxygen-ui', async (importOriginal) => {
     ...actual,
     OxygenUIThemeProvider: ({children}: {children: React.ReactNode}) => children,
     ListingTable: {
-      Provider: ({children, variant = undefined}: {children: React.ReactNode; variant?: string}) => (
-        <div data-testid="listing-table-provider" data-variant={variant}>
-          {children}
-        </div>
-      ),
-      Container: ({children, disablePaper = false}: {children: React.ReactNode; disablePaper?: boolean}) => (
-        <div data-testid="listing-table-container" data-disable-paper={disablePaper ? 'true' : undefined}>
-          {children}
-        </div>
-      ),
-      CellIcon: ({
-        icon,
-        primary,
-        secondary = undefined,
-      }: {
-        icon: React.ReactNode;
-        primary: React.ReactNode;
-        secondary?: React.ReactNode;
-      }) => (
-        <div data-testid="cell-icon">
-          {icon}
-          <span>{primary}</span>
-          {secondary && <span>{secondary}</span>}
-        </div>
-      ),
+      Provider: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
+      Container: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
       DataGrid: ({
         rows,
         columns,
@@ -153,6 +131,11 @@ const {default: useGetRoles} = await import('../../api/useGetRoles');
 const {useNavigate} = await import('react-router');
 const {useDataGridLocaleText} = await import('@thunderid/hooks');
 
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
+
 describe('RolesList', () => {
   let mockNavigate: ReturnType<typeof vi.fn>;
 
@@ -229,7 +212,7 @@ describe('RolesList', () => {
     expect(screen.getByText('Administrator role')).toBeInTheDocument();
   });
 
-  it('should render the description as a secondary line only when present', () => {
+  it('should display "-" for missing description', () => {
     vi.mocked(useGetRoles).mockReturnValue({
       data: mockRolesData,
       isLoading: false,
@@ -238,51 +221,26 @@ describe('RolesList', () => {
 
     renderComponent();
 
-    const nameCells = screen.getAllByTestId('cell-icon');
-    expect(nameCells[0]).toHaveTextContent('Admin RoleAdministrator role');
-    expect(nameCells[1]).toHaveTextContent(/^Viewer Role$/);
+    const dashElements = screen.getAllByText('-');
+    expect(dashElements.length).toBeGreaterThan(0);
   });
 
-  it('should not render a secondary line for an empty description', () => {
-    vi.mocked(useGetRoles).mockReturnValue({
-      data: {...mockRolesData, roles: [{id: 'role-3', name: 'Auditor Role', description: '', ouId: 'ou-1'}]},
-      isLoading: false,
-      error: null,
-    } as ReturnType<typeof useGetRoles>);
-
-    renderComponent();
-
-    expect(screen.getByTestId('cell-icon')).toHaveTextContent(/^Auditor Role$/);
-  });
-
-  it('should render the data grid variant inside a paper container', () => {
+  it('should hide the edit and delete row actions when the admin may only view roles', () => {
     vi.mocked(useGetRoles).mockReturnValue({
       data: mockRolesData,
       isLoading: false,
       error: null,
     } as ReturnType<typeof useGetRoles>);
 
-    renderComponent();
+    render(
+      <CapabilitiesProvider capabilities={viewOnly}>
+        <RolesList />
+      </CapabilitiesProvider>,
+    );
 
-    expect(screen.getByTestId('listing-table-provider')).toHaveAttribute('data-variant', 'data-grid');
-    expect(screen.getByTestId('listing-table-container')).not.toHaveAttribute('data-disable-paper');
-  });
-
-  it('should label the row action buttons', () => {
-    vi.mocked(useGetRoles).mockReturnValue({
-      data: {
-        ...mockRolesData,
-        roles: [...mockRolesData.roles, {id: 'role-3', name: 'System Role', ouId: 'ou-1', isReadOnly: true}],
-      },
-      isLoading: false,
-      error: null,
-    } as ReturnType<typeof useGetRoles>);
-
-    renderComponent();
-
-    expect(screen.getAllByRole('button', {name: 'Edit'})).toHaveLength(2);
-    expect(screen.getAllByRole('button', {name: 'Delete'})).toHaveLength(2);
-    expect(screen.getByRole('button', {name: 'Read only'})).toBeInTheDocument();
+    expect(screen.getByText('Admin Role')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: /edit/i})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: /delete/i})).not.toBeInTheDocument();
   });
 
   it('should open delete dialog when clicking Delete action', async () => {
@@ -430,5 +388,35 @@ describe('RolesList', () => {
     });
 
     expect(screen.getByRole('grid')).toBeInTheDocument();
+  });
+
+  it('should list the roles of the selected project', () => {
+    vi.mocked(useGetRoles).mockReturnValue({
+      data: {totalResults: 0, startIndex: 1, count: 0, roles: []},
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useGetRoles>);
+
+    render(
+      <ProjectScopeProvider project={{id: 'project-1'}}>
+        <RolesList />
+      </ProjectScopeProvider>,
+    );
+
+    expect(vi.mocked(useGetRoles)).toHaveBeenCalledWith(expect.objectContaining({projectId: 'project-1'}));
+  });
+
+  it('should list every role without a selected project', () => {
+    vi.mocked(useGetRoles).mockReturnValue({
+      data: {totalResults: 0, startIndex: 1, count: 0, roles: []},
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useGetRoles>);
+
+    render(<RolesList />);
+
+    expect(vi.mocked(useGetRoles)).toHaveBeenCalledWith(expect.objectContaining({projectId: undefined}));
   });
 });

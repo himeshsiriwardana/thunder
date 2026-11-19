@@ -15,10 +15,12 @@ import FormAdapter from './adapters/FormAdapter';
 import IconAdapter from './adapters/IconAdapter';
 import ImageAdapter from './adapters/ImageAdapter';
 import CheckboxAdapter from './adapters/input/CheckboxAdapter';
+import DateTimeInputAdapter from './adapters/input/DateTimeInputAdapter';
 import DefaultInputAdapter from './adapters/input/DefaultInputAdapter';
 import OTPInputAdapter from './adapters/input/OTPInputAdapter';
 import PhoneNumberInputAdapter from './adapters/input/PhoneNumberInputAdapter';
 import SelectAdapter from './adapters/input/SelectAdapter';
+import UserSelectAdapter from './adapters/input/UserSelectAdapter';
 import KeyValueListAdapter from './adapters/KeyValueListAdapter';
 import QrCodeAdapter from './adapters/QrCodeAdapter';
 import ResendButtonAdapter from './adapters/ResendButtonAdapter';
@@ -100,6 +102,9 @@ function CommonElementFactory({
   if (resource.type === ElementTypes.OtpInput) {
     return <OTPInputAdapter resource={resource} stepId={stepId} />;
   }
+  if (resource.type === ElementTypes.DateTimeInput) {
+    return <DateTimeInputAdapter resource={resource} />;
+  }
   if (
     resource.type === ElementTypes.TextInput ||
     resource.type === ElementTypes.PasswordInput ||
@@ -114,6 +119,9 @@ function CommonElementFactory({
   }
   if (resource.type === ElementTypes.Select) {
     return <SelectAdapter resource={resource} />;
+  }
+  if (resource.type === ElementTypes.UserSelect) {
+    return <UserSelectAdapter resource={resource} />;
   }
   if (resource.type === ElementTypes.Action) {
     return <ButtonAdapter resource={resource} elementIndex={elementIndex} />;

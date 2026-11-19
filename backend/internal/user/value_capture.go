@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
@@ -21,34 +20,23 @@ import (
 func (us *userService) captureSubmittedCredentials(ctx context.Context, user *providers.User,
 	submitted json.RawMessage) {
 	// Only a control plane has a capturer, so only there does a user create look up the user type.
-	if us.valueCapturer == nil || us.entityTypeService == nil || len(submitted) == 0 {
+	if us.valueCapturer == nil || len(submitted) == 0 {
 		return
 	}
-	var attrs map[string]interface{}
-	if err := json.Unmarshal(submitted, &attrs); err != nil {
-		return
-	}
-	declared, svcErr := us.entityTypeService.GetAttributes(ctx, entitytype.TypeCategoryUser, user.Type,
-		entitytype.AttributeFilter{AllowCredential: true})
-	if svcErr != nil {
+	credentials, err := us.entityService.GetDeclaredCredentialValues(ctx, providers.EntityCategoryUser,
+		user.Type, submitted)
+	if err != nil {
 		log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName)).Warn(ctx,
 			"Failed to read which attributes are credentials, so none were captured",
-			log.MaskedString(log.LoggerKeyUserID, user.ID))
+			log.MaskedString(log.LoggerKeyUserID, user.ID), log.Error(err))
 		return
-	}
-	credentials := make(map[string]string, len(declared))
-	for _, attribute := range declared {
-		if value, ok := attrs[attribute.Attribute].(string); ok {
-			credentials[attribute.Attribute] = value
-		}
 	}
 	us.captureCredentials(ctx, user, submitted, credentials)
 }
 
 // captureCredentials hands a user's credentials to the value capturer, in the shape its exporter
 // reads back: the attributes, which name the user, and the credentials beside them. The export names
-// each credential after the username, so a user without one has nothing captured, as it has nothing
-// exported.
+// each credential after the user's ID.
 func (us *userService) captureCredentials(ctx context.Context, user *providers.User,
 	attributes json.RawMessage, credentials map[string]string) {
 	if us.valueCapturer == nil || len(credentials) == 0 {
@@ -56,9 +44,6 @@ func (us *userService) captureCredentials(ctx context.Context, user *providers.U
 	}
 	var attrs map[string]interface{}
 	if err := json.Unmarshal(attributes, &attrs); err != nil {
-		return
-	}
-	if username, _ := attrs["username"].(string); username == "" {
 		return
 	}
 	resource := &userDeclarativeResource{

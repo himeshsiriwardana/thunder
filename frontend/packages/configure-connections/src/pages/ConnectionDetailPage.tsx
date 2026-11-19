@@ -1,8 +1,19 @@
 // Copyright 2025 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import {DocumentTitle, QueryErrorNotice, SettingsCard, UnsavedChangesBar} from '@thunderid/components';
-import {useConfig} from '@thunderid/contexts';
+import {
+  AUTHENTICATION_METHOD_FIELD_NAMES,
+  decodeKeyValuePairs,
+  DocumentTitle,
+  getServiceAuthenticationState,
+  MASKED_SECRET,
+  outboundAuthenticationFromFormValues,
+  QueryErrorNotice,
+  ServiceAuthenticationMethods,
+  SettingsCard,
+  UnsavedChangesBar,
+} from '@thunderid/components';
+import {useCapabilitiesContext, useConfig, useGateCallbackUrl} from '@thunderid/contexts';
 import {getErrorMessage} from '@thunderid/utils';
 import {
   Alert,
@@ -38,17 +49,11 @@ import ConnectionForm from '../components/ConnectionForm';
 import ConnectionUsagesSection from '../components/ConnectionUsagesSection';
 import OrganizationUnitSection from '../components/OrganizationUnitSection';
 import ReadOnlyCopyField from '../components/ReadOnlyCopyField';
-import ServiceAuthenticationMethods from '../components/ServiceAuthenticationMethods';
 import SetDefaultEmailSenderDialog from '../components/SetDefaultEmailSenderDialog';
 import SubjectMappingSection from '../components/SubjectMappingSection';
 import {CONNECTION_FORM_FIELDS} from '../config/connectionFormFields';
 import {VENDOR_META_BY_TYPE} from '../config/connectionVendorMeta';
 import useConnectionRoutes from '../hooks/useConnectionRoutes';
-import {
-  AUTHENTICATION_METHOD_FIELD_NAMES,
-  AuthenticationMethods,
-  type AuthenticationMethod,
-} from '../models/authentication-methods';
 import type {
   AccountLinking,
   AttributeConfiguration,
@@ -70,14 +75,12 @@ import {
   type ConnectionFormValues,
   formValuesToRequest,
   HTTPS_REQUIRED_WITH_AUTHENTICATION_ERROR,
-  MASKED_SECRET,
-  outboundAuthenticationFromFormValues,
   responseToFormValues,
+  smtpServerChanged,
   urlOriginChanged,
   validateConnectionForm,
 } from '../utils/connectionFormMapping';
 import isConflictError from '../utils/isConflictError';
-import {decodeKeyValuePairs, parseKeyValuePairs} from '../utils/keyValuePairs';
 import {hasDuplicateSubjectAttributes, normalizeSubjectAttributeMappings} from '../utils/subjectMapping';
 
 interface TabPanelProps {
@@ -116,9 +119,11 @@ function canonicalAttr(config: AttributeConfiguration | undefined): string {
 
 export default function ConnectionDetailPage(): JSX.Element | null {
   const {t} = useTranslation('connections');
+  const {can} = useCapabilitiesContext();
   const navigate = useNavigate();
   const routes = useConnectionRoutes();
-  const {getGateCallbackUrl} = useConfig();
+  const {config: appConfig} = useConfig();
+  const productName: string = appConfig.brand.product_name;
   const {type, id} = useParams<{type: string; id?: string}>();
 
   const connectionType = type as ConnectionType;
@@ -189,7 +194,7 @@ export default function ConnectionDetailPage(): JSX.Element | null {
   }, [meta, navigate, routes]);
 
   const fields = useMemo(() => (meta ? CONNECTION_FORM_FIELDS[connectionType] : []), [meta, connectionType]);
-  const redirectUri = getGateCallbackUrl();
+  const redirectUri = useGateCallbackUrl();
   const data = connectionQuery.data;
 
   const baseline = useMemo<ConnectionFormValues>(
@@ -255,26 +260,26 @@ export default function ConnectionDetailPage(): JSX.Element | null {
     linkingDirty ||
     !authzMappingsValid ||
     !directMappingsValid;
-  const selectedAuthenticationScheme =
-    (values['authenticationScheme'] as AuthenticationMethod | undefined) ?? AuthenticationMethods.NONE;
-  const persistedAuthenticationScheme = data?.authentication?.type?.toUpperCase() ?? AuthenticationMethods.NONE;
   const authenticationTargetChanged =
     supportsAuthentication &&
     (connectionType === ConnectionTypes.SMS_GATEWAY
       ? (values['url'] ?? '').trim() !== (data?.url ?? '').trim()
       : (values['endpoint'] ?? '').trim() !== (data?.endpoint ?? '').trim() ||
         (values['batchEndpoint'] ?? '').trim() !== (data?.batchEndpoint ?? '').trim());
-  const requiresFreshCredentials =
-    authenticationTargetChanged && selectedAuthenticationScheme !== AuthenticationMethods.NONE;
-  const hasStoredCredentialForSelectedScheme =
-    !authenticationTargetChanged &&
-    selectedAuthenticationScheme === persistedAuthenticationScheme &&
-    (selectedAuthenticationScheme === AuthenticationMethods.BEARER
-      ? Boolean(data?.authentication?.properties?.['token'])
-      : selectedAuthenticationScheme === AuthenticationMethods.BASIC
-        ? Boolean(data?.authentication?.properties?.['username']) &&
-          Boolean(data?.authentication?.properties?.['password'])
-        : false);
+  const {
+    selectedAuthenticationScheme,
+    requiresFreshCredentials,
+    hasStoredCredentialForSelectedScheme,
+    hasStoredHTTPHeaders,
+    storedHTTPHeaders,
+    authenticationErrors,
+    hasRequiredAuthenticationCredential,
+    authenticationChanged,
+  } = getServiceAuthenticationState(values, data?.authentication, {
+    replacing: secretReplacing,
+    targetChanged: authenticationTargetChanged,
+    requiredMessage: t('validation.required', 'This field is required.'),
+  });
   // A provider's credential is stored only for the method it was saved with, and comes back
   // masked. Switching to another method leaves nothing stored for it, so its credential has to
   // be entered rather than shown as kept.
@@ -282,17 +287,23 @@ export default function ConnectionDetailPage(): JSX.Element | null {
     (values[AUTH_TYPE_FIELD] || AUTH_TYPE_NONE) === data?.authentication?.type &&
     Object.values(data?.authentication?.properties ?? {}).includes(MASKED_SECRET);
   const reentersCredentialsOnOriginChange: boolean = meta?.reentersCredentialsOnOriginChange ?? false;
-  // The stored credentials must not follow the URL to another origin, so they are entered again.
-  const credentialsMustBeReentered: boolean =
-    reentersCredentialsOnOriginChange &&
-    hasStoredOutboundCredential &&
-    urlOriginChanged(baseline['url'] ?? '', values['url'] ?? '');
   const selectedOutboundMethod: OutboundAuthMethod | undefined = authenticationMethods.find(
     (method) => method.type === (values[AUTH_TYPE_FIELD] || AUTH_TYPE_NONE),
   );
   const selectedOutboundFields: OutboundAuthField[] = selectedOutboundMethod?.fields ?? [];
   const outboundAdditionalProperties = decodeKeyValuePairs(values[AUTH_ADDITIONAL_PROPERTIES_FIELD] ?? '', 'pairs');
   const outboundFieldValue = (field: OutboundAuthField): string => (values[authPropertyField(field.key)] ?? '').trim();
+  const smtpUsernameChanged: boolean = selectedOutboundFields.some(
+    (field) => !field.credential && outboundFieldValue(field) !== (baseline[authPropertyField(field.key)] ?? '').trim(),
+  );
+  // The stored credentials must not follow the URL to another origin, or an SMTP password to another
+  // server or username, so they are entered again.
+  const credentialsMustBeReentered: boolean =
+    reentersCredentialsOnOriginChange &&
+    hasStoredOutboundCredential &&
+    (connectionType === ConnectionTypes.SMTP
+      ? smtpServerChanged(baseline, values) || smtpUsernameChanged
+      : urlOriginChanged(baseline['url'] ?? '', values['url'] ?? ''));
   // A credential typed while the origin gate was engaged stays visible if the URL is changed back.
   const outboundSecretReplacing: boolean =
     secretReplacing ||
@@ -314,51 +325,6 @@ export default function ConnectionDetailPage(): JSX.Element | null {
     values,
     authenticationMethods,
   );
-  const hasStoredHTTPHeaders =
-    selectedAuthenticationScheme === AuthenticationMethods.API_KEY &&
-    selectedAuthenticationScheme === persistedAuthenticationScheme &&
-    Boolean(Object.keys(data?.authentication?.properties ?? {}).length);
-  const requiredCredentialError = t('validation.required', 'This field is required.');
-  const enteredHeaders = parseKeyValuePairs(values['httpHeaders'] ?? '');
-  const authenticationErrors = {
-    bearerToken:
-      selectedAuthenticationScheme === AuthenticationMethods.BEARER &&
-      (secretReplacing || !hasStoredCredentialForSelectedScheme) &&
-      ((values['bearerToken'] ?? '').trim() === '' || (values['bearerToken'] ?? '').trim() === MASKED_SECRET)
-        ? requiredCredentialError
-        : undefined,
-    basicUsername:
-      selectedAuthenticationScheme === AuthenticationMethods.BASIC &&
-      (secretReplacing || !hasStoredCredentialForSelectedScheme) &&
-      (values['basicUsername'] ?? '').trim() === ''
-        ? requiredCredentialError
-        : undefined,
-    basicPassword:
-      selectedAuthenticationScheme === AuthenticationMethods.BASIC &&
-      (secretReplacing || !hasStoredCredentialForSelectedScheme) &&
-      ((values['basicPassword'] ?? '').trim() === '' || (values['basicPassword'] ?? '').trim() === MASKED_SECRET)
-        ? requiredCredentialError
-        : undefined,
-    httpHeaders:
-      selectedAuthenticationScheme === AuthenticationMethods.API_KEY &&
-      ((requiresFreshCredentials &&
-        (enteredHeaders.length === 0 ||
-          enteredHeaders.some(
-            ({name, value}) => name.trim() === '' || value.trim() === '' || value === MASKED_SECRET,
-          ))) ||
-        (!hasStoredHTTPHeaders && (values['httpHeaders'] ?? '').trim() === ''))
-        ? requiredCredentialError
-        : undefined,
-  };
-  const hasRequiredAuthenticationCredential = Object.values(authenticationErrors).every((error) => !error);
-  const hasEnteredAuthenticationCredential =
-    selectedAuthenticationScheme === AuthenticationMethods.BEARER
-      ? (values['bearerToken'] ?? '').trim() !== ''
-      : selectedAuthenticationScheme === AuthenticationMethods.BASIC
-        ? (values['basicUsername'] ?? '').trim() !== '' && (values['basicPassword'] ?? '').trim() !== ''
-        : selectedAuthenticationScheme === AuthenticationMethods.API_KEY
-          ? (values['httpHeaders'] ?? '').trim() !== ''
-          : false;
   const fieldErrors: Record<string, string> = validateConnectionForm(values, fields, 'edit');
   const valid: boolean =
     Object.keys(fieldErrors).length === 0 &&
@@ -424,13 +390,6 @@ export default function ConnectionDetailPage(): JSX.Element | null {
             accountLinking: hasLinking ? effectiveLinking : undefined,
           }
         : undefined;
-    const authenticationChanged =
-      selectedAuthenticationScheme !== persistedAuthenticationScheme ||
-      ((selectedAuthenticationScheme === AuthenticationMethods.BEARER ||
-        selectedAuthenticationScheme === AuthenticationMethods.BASIC) &&
-        (secretReplacing || hasEnteredAuthenticationCredential)) ||
-      (selectedAuthenticationScheme === AuthenticationMethods.API_KEY &&
-        values['httpHeaders'] !== baseline['httpHeaders']);
     const requestFields = supportsAuthentication
       ? fields.filter((field) => !AUTHENTICATION_METHOD_FIELD_NAMES.has(field.name))
       : fields;
@@ -645,11 +604,13 @@ export default function ConnectionDetailPage(): JSX.Element | null {
                 data-testid="connection-tab-subject-mapping"
               />
             )}
-            <Tab
-              label={t('detail.tabs.advanced', 'Advanced')}
-              sx={{textTransform: 'none'}}
-              data-testid="connection-tab-advanced"
-            />
+            {can('connection', 'delete') && (
+              <Tab
+                label={t('detail.tabs.advanced', 'Advanced')}
+                sx={{textTransform: 'none'}}
+                data-testid="connection-tab-advanced"
+              />
+            )}
           </Tabs>
 
           <TabPanel value={activeTab} index={0}>
@@ -675,7 +636,8 @@ export default function ConnectionDetailPage(): JSX.Element | null {
                   generalSettingsCardCopy === 'configuration'
                     ? t(
                         'detail.configuration.description',
-                        'Provide the details ThunderID needs to connect to this service.',
+                        'Provide the details {{productName}} needs to connect to this service.',
+                        {productName},
                       )
                     : t(
                         'detail.credentials.description',
@@ -699,10 +661,15 @@ export default function ConnectionDetailPage(): JSX.Element | null {
                 />
                 {credentialsMustBeReentered && (
                   <Alert severity="warning" sx={{mt: 2}}>
-                    {t(
-                      'detail.authentication.originChanged',
-                      'The URL origin changed. Enter the credentials again under Authentication before saving.',
-                    )}
+                    {connectionType === ConnectionTypes.SMTP
+                      ? t(
+                          'detail.authentication.smtpServerChanged',
+                          'The SMTP host, port, or username changed. Enter the password again under Authentication before saving.',
+                        )
+                      : t(
+                          'detail.authentication.originChanged',
+                          'The URL origin changed. Enter the credentials again under Authentication before saving.',
+                        )}
                   </Alert>
                 )}
               </SettingsCard>
@@ -715,7 +682,7 @@ export default function ConnectionDetailPage(): JSX.Element | null {
               {hasGenericAuthenticationSection && !isConnectionMetaError && authenticationMethods.length > 0 && (
                 <SettingsCard
                   title={t('detail.authentication.title')}
-                  description={t('detail.outboundAuthentication.description')}
+                  description={t('detail.outboundAuthentication.description', {productName})}
                 >
                   <AuthenticationSection
                     methods={authenticationMethods}
@@ -752,11 +719,13 @@ export default function ConnectionDetailPage(): JSX.Element | null {
                   connectionType === ConnectionTypes.SMS_GATEWAY
                     ? t(
                         'detail.authentication.gatewayDescription',
-                        'Configure how ThunderID authenticates requests sent to this SMS gateway.',
+                        'Configure how {{productName}} authenticates requests sent to this SMS gateway.',
+                        {productName},
                       )
                     : t(
                         'detail.authentication.description',
-                        'Configure how ThunderID authenticates requests sent to this policy decision point.',
+                        'Configure how {{productName}} authenticates requests sent to this policy decision point.',
+                        {productName},
                       )
                 }
               >
@@ -767,6 +736,7 @@ export default function ConnectionDetailPage(): JSX.Element | null {
                   basicPassword={values['basicPassword'] ?? ''}
                   httpHeaders={values['httpHeaders'] ?? ''}
                   hasStoredHTTPHeaders={hasStoredHTTPHeaders}
+                  storedHTTPHeaders={storedHTTPHeaders}
                   hasStoredSecret={hasStoredCredentialForSelectedScheme}
                   replacing={secretReplacing}
                   errors={authenticationErrors}
@@ -805,6 +775,7 @@ export default function ConnectionDetailPage(): JSX.Element | null {
                 />
                 <AuthorizationMappingSection
                   key={`authz-${resolvedId}-${attrsKey}`}
+                  ouId={data?.ouId}
                   initialRuleConfig={baselineAuthzMappings}
                   initialDirectConfig={baselineDirectMappings}
                   onRuleChange={(mappings, isValid) => {
@@ -837,30 +808,32 @@ export default function ConnectionDetailPage(): JSX.Element | null {
             </TabPanel>
           )}
 
-          <TabPanel value={activeTab} index={advancedTabIndex}>
-            <Stack direction="column" spacing={4}>
-              <SettingsCard title={t('detail.dangerZone.title')} description={t('detail.dangerZone.description')}>
-                <Typography variant="h6" gutterBottom color="error">
-                  {t('detail.dangerZone.delete.title')}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{mb: 3}}>
-                  {t('detail.dangerZone.delete.description')}
-                </Typography>
-                <Button
-                  variant="contained"
-                  color="error"
-                  startIcon={<Trash2 size={16} />}
-                  onClick={() => {
-                    setDeleteError(null);
-                    setDeleteOpen(true);
-                  }}
-                  data-testid="connection-delete-button"
-                >
-                  {t('form.actions.delete')}
-                </Button>
-              </SettingsCard>
-            </Stack>
-          </TabPanel>
+          {can('connection', 'delete') && (
+            <TabPanel value={activeTab} index={advancedTabIndex}>
+              <Stack direction="column" spacing={4}>
+                <SettingsCard title={t('detail.dangerZone.title')} description={t('detail.dangerZone.description')}>
+                  <Typography variant="h6" gutterBottom color="error">
+                    {t('detail.dangerZone.delete.title')}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{mb: 3}}>
+                    {t(meta.deleteDescriptionKey ?? 'detail.dangerZone.delete.description')}
+                  </Typography>
+                  <Button
+                    variant="contained"
+                    color="error"
+                    startIcon={<Trash2 size={16} />}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setDeleteOpen(true);
+                    }}
+                    data-testid="connection-delete-button"
+                  >
+                    {t('form.actions.delete')}
+                  </Button>
+                </SettingsCard>
+              </Stack>
+            </TabPanel>
+          )}
 
           {dirty && (
             <UnsavedChangesBar
@@ -869,7 +842,7 @@ export default function ConnectionDetailPage(): JSX.Element | null {
               saveLabel={t('detail.saveBar.save', 'Save changes')}
               savingLabel={t('detail.saveBar.saving', 'Saving changes...')}
               isSaving={updateMutation.isPending}
-              saveDisabled={!valid}
+              saveDisabled={!valid || !can('connection', 'update')}
               onReset={resetEdits}
               onSave={handleSave}
             />

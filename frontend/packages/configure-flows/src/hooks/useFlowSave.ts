@@ -40,6 +40,8 @@ export interface UseFlowSaveProps {
   flowType: string;
   /** ID of the organization unit that owns the flow. It cannot change, so an update must send the flow's own. */
   ouId?: string;
+  /** ID of the project a new flow is created in. An update leaves it out, which keeps the flow's own. */
+  projectId?: string;
   /** Callback to show error notification. */
   showError: (message: string) => void;
   /** Callback to show success notification. */
@@ -53,6 +55,8 @@ export interface UseFlowSaveProps {
    * graph at success time.
    */
   onSaved?: (savedCanvas: CanvasData) => void;
+  /** Called after a new flow is created, with its persisted ID. */
+  onCreated?: (flowId: string) => void;
 }
 
 /**
@@ -80,10 +84,12 @@ const useFlowSave = (props: UseFlowSaveProps): UseFlowSaveReturn => {
     flowHandle,
     flowType,
     ouId,
+    projectId,
     showError,
     showSuccess,
     setOpenValidationPanel,
     onSaved,
+    onCreated,
   } = props;
 
   const {t} = useTranslation();
@@ -151,22 +157,26 @@ const useFlowSave = (props: UseFlowSaveProps): UseFlowSaveReturn => {
         );
       } else {
         // Create new flow
-        createFlow.mutate(flowConfig as CreateFlowRequest, {
-          onSuccess: () => {
-            showSuccess(t('flows:core.loginFlowBuilder.success.flowCreated'));
-            onSaved?.(canvasData);
+        createFlow.mutate(
+          {...flowConfig, ...(ouId ? {ouId} : {}), ...(projectId ? {projectId} : {})} as CreateFlowRequest,
+          {
+            onSuccess: (createdFlow) => {
+              showSuccess(t('flows:core.loginFlowBuilder.success.flowCreated'));
+              onSaved?.(canvasData);
+              onCreated?.(createdFlow.id);
+            },
+            onError: (err: Error) => {
+              showError(
+                getErrorMessage(
+                  err,
+                  tForErrors,
+                  'core.loginFlowBuilder.errors.saveFailed',
+                  'Failed to save flow. Please try again.',
+                ),
+              );
+            },
           },
-          onError: (err: Error) => {
-            showError(
-              getErrorMessage(
-                err,
-                tForErrors,
-                'core.loginFlowBuilder.errors.saveFailed',
-                'Failed to save flow. Please try again.',
-              ),
-            );
-          },
-        });
+        );
       }
     },
     [
@@ -177,10 +187,12 @@ const useFlowSave = (props: UseFlowSaveProps): UseFlowSaveReturn => {
       flowHandle,
       flowType,
       ouId,
+      projectId,
       showError,
       showSuccess,
       setOpenValidationPanel,
       onSaved,
+      onCreated,
       t,
       tForErrors,
       createFlow,

@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {QueryErrorNotice} from '@thunderid/components';
+import {useCapabilitiesContext, useProjectScope} from '@thunderid/contexts';
 import {useDataGridLocaleText} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
 import {IconButton, Typography, Tooltip, DataGrid, ListingTable} from '@wso2/oxygen-ui';
-import {IdCard, Pencil, QrCode as QrCodeIcon, Trash2} from '@wso2/oxygen-ui-icons-react';
+import {Pencil, QrCode as QrCodeIcon, Trash2} from '@wso2/oxygen-ui-icons-react';
 import {useMemo, useCallback, useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
@@ -15,17 +16,26 @@ import useGetVerifiableCredentials from '../api/useGetVerifiableCredentials';
 import useVerifiableCredentialRoutes from '../hooks/useVerifiableCredentialRoutes';
 import type {VerifiableCredentialSummary} from '../models/vc';
 
+export interface VerifiableCredentialsListProps {
+  /**
+   * Shows the QR action that generates an OpenID4VCI credential offer.
+   */
+  showWalletQr?: boolean;
+}
+
 /**
  * DataGrid listing of OpenID4VCI credential configurations.
  */
-export default function VerifiableCredentialsList(): JSX.Element {
+export default function VerifiableCredentialsList({showWalletQr = false}: VerifiableCredentialsListProps): JSX.Element {
   const navigate = useNavigate();
   const {t} = useTranslation();
   const logger = useLogger('VerifiableCredentialsList');
   const dataGridLocaleText = useDataGridLocaleText();
+  const {can} = useCapabilitiesContext();
   const routes = useVerifiableCredentialRoutes();
 
-  const {data, isLoading, error, refetch} = useGetVerifiableCredentials();
+  const {projectId} = useProjectScope();
+  const {data, isLoading, error, refetch} = useGetVerifiableCredentials(projectId);
 
   // Resolves an error through the `verifiable-credentials` catalog. `t` defaults to the `common`
   // namespace, so this forwards explicit `ns:` prefixes unchanged and prefixes bare keys with
@@ -69,12 +79,7 @@ export default function VerifiableCredentialsList(): JSX.Element {
         flex: 1,
         minWidth: 180,
         renderCell: (params: DataGrid.GridRenderCellParams<VerifiableCredentialSummary>): JSX.Element => (
-          <ListingTable.CellIcon
-            icon={<IdCard size={20} />}
-            primary={params.row.name ?? '-'}
-            secondary={params.row.handle}
-            sx={{width: '100%'}}
-          />
+          <Typography variant="body2">{params.row.name ?? '-'}</Typography>
         ),
       },
       {
@@ -99,48 +104,54 @@ export default function VerifiableCredentialsList(): JSX.Element {
         hideable: false,
         renderCell: (params: DataGrid.GridRenderCellParams<VerifiableCredentialSummary>): JSX.Element => (
           <ListingTable.RowActions>
-            <Tooltip title={t('verifiable-credentials:listing.offer', 'Generate offer')}>
-              <IconButton
-                size="small"
-                aria-label={t('verifiable-credentials:listing.offer', 'Generate offer')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setOfferHandle(params.row.handle);
-                }}
-              >
-                <QrCodeIcon size={16} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={t('common:actions.edit', 'Edit')}>
-              <IconButton
-                size="small"
-                aria-label={t('common:actions.edit', 'Edit')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleEditClick(params.row.id);
-                }}
-              >
-                <Pencil size={16} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={t('common:actions.delete', 'Delete')}>
-              <IconButton
-                size="small"
-                color="error"
-                aria-label={t('common:actions.delete', 'Delete')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteClick(params.row.id);
-                }}
-              >
-                <Trash2 size={16} />
-              </IconButton>
-            </Tooltip>
+            {showWalletQr && (
+              <Tooltip title={t('verifiable-credentials:listing.offer', 'Generate offer')}>
+                <IconButton
+                  aria-label={t('verifiable-credentials:listing.offer', 'Generate offer')}
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOfferHandle(params.row.handle);
+                  }}
+                >
+                  <QrCodeIcon size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
+            {can('vc', 'update') && (
+              <Tooltip title={t('common:actions.edit', 'Edit')}>
+                <IconButton
+                  aria-label={t('common:actions.edit', 'Edit')}
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleEditClick(params.row.id);
+                  }}
+                >
+                  <Pencil size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
+            {can('vc', 'delete') && (
+              <Tooltip title={t('common:actions.delete', 'Delete')}>
+                <IconButton
+                  aria-label={t('common:actions.delete', 'Delete')}
+                  size="small"
+                  color="error"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteClick(params.row.id);
+                  }}
+                >
+                  <Trash2 size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
           </ListingTable.RowActions>
         ),
       },
     ],
-    [handleDeleteClick, handleEditClick, t],
+    [can, handleDeleteClick, handleEditClick, showWalletQr, t],
   );
 
   if (error) {
@@ -157,8 +168,8 @@ export default function VerifiableCredentialsList(): JSX.Element {
 
   return (
     <>
-      <ListingTable.Provider variant="data-grid" loading={isLoading}>
-        <ListingTable.Container>
+      <ListingTable.Provider variant="data-grid-card" loading={isLoading}>
+        <ListingTable.Container disablePaper>
           <ListingTable.DataGrid
             rows={data ?? []}
             columns={columns}
@@ -166,7 +177,6 @@ export default function VerifiableCredentialsList(): JSX.Element {
             onRowClick={(params) => {
               handleEditClick((params.row as VerifiableCredentialSummary).id);
             }}
-            rowHeight={64}
             pageSizeOptions={[5, 10, 25]}
             disableRowSelectionOnClick
             // Filtering is not wired end to end, so the column filter panel stays hidden.
@@ -182,11 +192,13 @@ export default function VerifiableCredentialsList(): JSX.Element {
 
       <VerifiableCredentialDeleteDialog open={deleteDialogOpen} vcId={selectedId} onClose={handleDeleteDialogClose} />
 
-      <CredentialOfferDialog
-        open={offerHandle !== null}
-        handle={offerHandle}
-        onClose={(): void => setOfferHandle(null)}
-      />
+      {showWalletQr && (
+        <CredentialOfferDialog
+          open={offerHandle !== null}
+          handle={offerHandle}
+          onClose={(): void => setOfferHandle(null)}
+        />
+      )}
     </>
   );
 }

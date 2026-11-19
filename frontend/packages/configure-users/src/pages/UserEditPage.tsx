@@ -4,6 +4,7 @@
 import {
   AccessStatusBanner,
   AccountStatusAction,
+  type CredentialResetField,
   DocumentTitle,
   PageLoadingAnimation,
   QueryErrorNotice,
@@ -13,6 +14,7 @@ import {
   getInitials,
 } from '@thunderid/components';
 import {useOrganizationAccess} from '@thunderid/configure-resource-sharing';
+import {useCapabilitiesContext, useProjectScope} from '@thunderid/contexts';
 import {useResolveDisplayName} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
 import {useThunderID} from '@thunderid/react';
@@ -33,8 +35,6 @@ import {
   IconButton,
   PageContent,
   PageTitle,
-  FormControl,
-  FormLabel,
 } from '@wso2/oxygen-ui';
 import {ArrowLeft, Copy, Check} from '@wso2/oxygen-ui-icons-react';
 import {useState, useEffect, useMemo, useCallback, useRef, type SyntheticEvent, type ReactNode, type JSX} from 'react';
@@ -45,10 +45,12 @@ import useGetUserType from '../api/useGetUserType';
 import useGetUserTypes from '../api/useGetUserTypes';
 import useUpdateUser from '../api/useUpdateUser';
 import AttributesSummarySection from '../components/edit-user/AttributesSummarySection';
-import CredentialsTabPanel, {type CredentialFieldInfo} from '../components/edit-user/CredentialsTabPanel';
+import CredentialsTabPanel from '../components/edit-user/CredentialsTabPanel';
 import EditUserAttributes from '../components/edit-user/EditUserAttributes';
 import EditOrganizationAccessSettings from '../components/edit-user/organization-access/EditOrganizationAccessSettings';
+import OwnedAgentsSection from '../components/edit-user/OwnedAgentsSection';
 import QuickCopySection from '../components/edit-user/QuickCopySection';
+import UserRolesSection from '../components/edit-user/UserRolesSection';
 import UserDeleteDialog from '../components/UserDeleteDialog';
 import UserConstants from '../constants/user-constants';
 import UserQueryKeys from '../constants/user-query-keys';
@@ -85,6 +87,7 @@ interface TabConfig {
 export default function UserEditPage() {
   const navigate = useNavigate();
   const {t} = useTranslation();
+  const {can} = useCapabilitiesContext();
   const logger = useLogger('UserEditPage');
   const {resolveDisplayName} = useResolveDisplayName({handlers: {t}});
   const {userId} = useParams<{userId: string}>();
@@ -100,6 +103,13 @@ export default function UserEditPage() {
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {data: user, isLoading: isUserLoading, error: userError, refetch} = useGetUser(userId);
+  const {projectId} = useProjectScope();
+  // Inside a project, a user of another project or of the organization is not shown: the page returns to
+  // the list.
+  const isOtherProject = Boolean(projectId && user && user.projectId !== projectId);
+  useEffect(() => {
+    if (isOtherProject) void navigate(routes.list(), {replace: true});
+  }, [isOtherProject, navigate, routes]);
   const updateUserMutation = useUpdateUser();
   const {user: signedInUser} = useThunderID() as {user?: Record<string, unknown> | null};
   // The server refuses every lifecycle operation on the operator's own account.
@@ -128,7 +138,7 @@ export default function UserEditPage() {
     refetch: refetchUserType,
   } = useGetUserType(schemaId);
 
-  const credentialFields: CredentialFieldInfo[] = useMemo(() => {
+  const credentialFields: CredentialResetField[] = useMemo(() => {
     if (!userTypeDetails?.schema) return [];
     return Object.entries(userTypeDetails.schema)
       .filter(([, fieldDef]) => (fieldDef.type === 'string' || fieldDef.type === 'number') && fieldDef.credential)
@@ -263,7 +273,7 @@ export default function UserEditPage() {
   };
 
   // Loading state
-  if (isUserLoading || isUserTypeListLoading || isSchemaLoading) {
+  if (isUserLoading || isOtherProject || isUserTypeListLoading || isSchemaLoading) {
     return (
       <>
         <DocumentTitle title={t('navigation:pages.users', 'Users')} />
@@ -345,91 +355,85 @@ export default function UserEditPage() {
             )}
           >
             <Stack spacing={2}>
-              <FormControl fullWidth>
-                <FormLabel htmlFor="ou-handle-input">
-                  {t('users:manageUser.sections.organizationUnit.handleLabel', 'Handle')}
-                </FormLabel>
-                <TextField
-                  id="ou-handle-input"
-                  value={user.ouHandle ?? '-'}
-                  fullWidth
-                  size="small"
-                  slotProps={{
-                    input: {
-                      readOnly: true,
-                      endAdornment: user.ouHandle ? (
-                        <InputAdornment position="end">
-                          <Tooltip
-                            title={
-                              copiedField === 'ouHandle'
-                                ? t('common:actions.copied')
-                                : t(
-                                    'users:manageUser.sections.organizationUnit.copyHandle',
-                                    'Copy organization unit handle',
-                                  )
-                            }
+              <TextField
+                labelPlacement="top"
+                label={t('users:manageUser.sections.organizationUnit.handleLabel', 'Handle')}
+                id="ou-handle-input"
+                value={user.ouHandle ?? '-'}
+                fullWidth
+                size="small"
+                slotProps={{
+                  input: {
+                    readOnly: true,
+                    endAdornment: user.ouHandle ? (
+                      <InputAdornment position="end">
+                        <Tooltip
+                          title={
+                            copiedField === 'ouHandle'
+                              ? t('common:actions.copied')
+                              : t(
+                                  'users:manageUser.sections.organizationUnit.copyHandle',
+                                  'Copy organization unit handle',
+                                )
+                          }
+                        >
+                          <IconButton
+                            aria-label={t(
+                              'users:manageUser.sections.organizationUnit.copyHandle',
+                              'Copy organization unit handle',
+                            )}
+                            onClick={() => {
+                              handleCopyToClipboard(user.ouHandle!, 'ouHandle').catch(() => null);
+                            }}
+                            edge="end"
                           >
-                            <IconButton
-                              aria-label={t(
-                                'users:manageUser.sections.organizationUnit.copyHandle',
-                                'Copy organization unit handle',
-                              )}
-                              onClick={() => {
-                                handleCopyToClipboard(user.ouHandle!, 'ouHandle').catch(() => null);
-                              }}
-                              edge="end"
-                            >
-                              {copiedField === 'ouHandle' ? <Check size={16} /> : <Copy size={16} />}
-                            </IconButton>
-                          </Tooltip>
-                        </InputAdornment>
-                      ) : undefined,
-                    },
-                  }}
-                  sx={{'& input': {fontFamily: 'monospace', fontSize: '0.875rem'}}}
-                />
-              </FormControl>
-              <FormControl fullWidth>
-                <FormLabel htmlFor="ou-id-input">
-                  {t('users:manageUser.sections.organizationUnit.idLabel', 'ID')}
-                </FormLabel>
-                <TextField
-                  id="ou-id-input"
-                  value={user.ouId}
-                  fullWidth
-                  size="small"
-                  slotProps={{
-                    input: {
-                      readOnly: true,
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          <Tooltip
-                            title={
-                              copiedField === 'ouId'
-                                ? t('common:actions.copied')
-                                : t('users:manageUser.sections.organizationUnit.copyId', 'Copy organization unit ID')
-                            }
+                            {copiedField === 'ouHandle' ? <Check size={16} /> : <Copy size={16} />}
+                          </IconButton>
+                        </Tooltip>
+                      </InputAdornment>
+                    ) : undefined,
+                  },
+                }}
+                sx={{'& input': {fontFamily: 'monospace', fontSize: '0.875rem'}}}
+              />
+              <TextField
+                labelPlacement="top"
+                label={t('users:manageUser.sections.organizationUnit.idLabel', 'ID')}
+                id="ou-id-input"
+                value={user.ouId}
+                fullWidth
+                size="small"
+                slotProps={{
+                  input: {
+                    readOnly: true,
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <Tooltip
+                          title={
+                            copiedField === 'ouId'
+                              ? t('common:actions.copied')
+                              : t('users:manageUser.sections.organizationUnit.copyId', 'Copy organization unit ID')
+                          }
+                        >
+                          <IconButton
+                            aria-label={t(
+                              'users:manageUser.sections.organizationUnit.copyId',
+                              'Copy organization unit ID',
+                            )}
+                            onClick={() => {
+                              handleCopyToClipboard(user.ouId, 'ouId').catch(() => null);
+                            }}
+                            edge="end"
                           >
-                            <IconButton
-                              aria-label={t(
-                                'users:manageUser.sections.organizationUnit.copyId',
-                                'Copy organization unit ID',
-                              )}
-                              onClick={() => {
-                                handleCopyToClipboard(user.ouId, 'ouId').catch(() => null);
-                              }}
-                              edge="end"
-                            >
-                              {copiedField === 'ouId' ? <Check size={16} /> : <Copy size={16} />}
-                            </IconButton>
-                          </Tooltip>
-                        </InputAdornment>
-                      ),
-                    },
-                  }}
-                  sx={{'& input': {fontFamily: 'monospace', fontSize: '0.875rem'}}}
-                />
-              </FormControl>
+                            {copiedField === 'ouId' ? <Check size={16} /> : <Copy size={16} />}
+                          </IconButton>
+                        </Tooltip>
+                      </InputAdornment>
+                    ),
+                  },
+                }}
+                sx={{'& input': {fontFamily: 'monospace', fontSize: '0.875rem'}}}
+              />
             </Stack>
           </SettingsCard>
         </Stack>
@@ -458,12 +462,24 @@ export default function UserEditPage() {
   }
 
   tabs.push({
+    key: 'roles',
+    label: t('users:manageUser.tabs.roles', 'Roles'),
+    render: () => <UserRolesSection userId={user.id} />,
+  });
+
+  tabs.push({
+    key: 'agents',
+    label: t('users:manageUser.tabs.agents', 'Agents'),
+    render: () => <OwnedAgentsSection userId={user.id} />,
+  });
+
+  tabs.push({
     key: 'affiliations',
     label: t('users:manageUser.tabs.affiliations', 'Affiliations'),
     render: () => <EditOrganizationAccessSettings user={user} access={organizationAccess} />,
   });
 
-  if (!user.isReadOnly) {
+  if (!user.isReadOnly && can('user', 'delete')) {
     tabs.push({
       key: 'advanced',
       label: t('users:manageUser.tabs.advanced', 'Advanced'),
@@ -576,7 +592,7 @@ export default function UserEditPage() {
           savingLabel={t('users:manageUser.saving', 'Saving…')}
           isSaving={isSubmitting || updateUserMutation.isPending || organizationAccess.isSaving}
           resetDisabled={isSubmitting || updateUserMutation.isPending || organizationAccess.isSaving}
-          saveDisabled={user.isReadOnly === true}
+          saveDisabled={user.isReadOnly === true || !can('user', 'update')}
           error={
             (updateUserMutation.error
               ? getUserErrorMessage(

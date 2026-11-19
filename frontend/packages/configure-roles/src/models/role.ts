@@ -15,6 +15,8 @@ export interface RoleAssignment {
   type: 'user' | 'group' | 'app' | 'agent';
   /** Display name (resolved when include=display is used) */
   display?: string;
+  /** True when a user share mandates the assignment, so the organization unit cannot remove it. */
+  isReadOnly?: boolean;
 }
 
 /**
@@ -31,6 +33,8 @@ export interface RoleSummary {
   ouId: string;
   /** Handle of the organization unit (resolved when include=display is used) */
   ouHandle?: string;
+  /** ID of the project this role belongs to; absent when it belongs to no project */
+  projectId?: string;
   /** Whether this role is read-only (declarative/immutable) */
   isReadOnly?: boolean;
 }

@@ -16,7 +16,18 @@ import {
   useConsentDetailField,
 } from '@thunderid/react';
 import {cn} from '@thunderid/utils';
-import {Box, Button, Chip, Divider, FormControlLabel, Switch, TextField, Typography} from '@wso2/oxygen-ui';
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Divider,
+  FormControlLabel,
+  Switch,
+  TextField,
+  TreeView,
+  Typography,
+} from '@wso2/oxygen-ui';
 import {useState, type ChangeEvent, type JSX, type KeyboardEvent, type ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
 import getAuthorizationDetailRowLayout from '../../../utils/getAuthorizationDetailRowLayout';
@@ -60,6 +71,13 @@ function isPermissionPurpose(purpose: ConsentPurpose): boolean {
   return purpose.type === 'permissions';
 }
 
+// The server sets permissionDelimiter on a permission purpose whose resource server declared its
+// permissions hierarchical. The SDK's envelope predates the field, so it is read off an extension of
+// the published type rather than added to it.
+function getPermissionDelimiter(purpose: ConsentPurpose): string {
+  return (purpose as ConsentPurpose & {permissionDelimiter?: string}).permissionDelimiter ?? '';
+}
+
 // Groups permission elements by rollup parent. Permissions whose `parent` is empty or whose
 // parent is not itself a prompted permission appear under topLevel; the rest appear under their
 // parent's entry in childrenOf.
@@ -89,9 +107,53 @@ interface ConsentAdapterProps {
   consentData?: string | ConsentPurpose[] | {purposes: ConsentPurpose[]};
   formValues: Record<string, string>;
   onInputChange: (name: string, value: string) => void;
+  /** Host of the client ID, shown with the redirect URI host when the server supplies both. */
+  clientIdHost?: string;
+  /** Host of the redirect URI the client returns to. */
+  redirectUriHost?: string;
+  /** Whether the redirect URI host is a loopback host, so the client runs on the user's device. */
+  redirectUriLoopback?: boolean;
 }
 
-// Permissions are opt-in: an absent form value means the user has not granted the permission. This
+interface ClientHostsProps {
+  clientIdHost: string;
+  redirectUriHost: string;
+  redirectUriLoopback: boolean;
+}
+
+// Shows where the client is published and where it returns to, and warns when it returns to the user's
+// device, since any program on the device can use a loopback redirect URI.
+function ClientHosts({clientIdHost, redirectUriHost, redirectUriLoopback}: ClientHostsProps): JSX.Element {
+  const {t} = useTranslation();
+
+  return (
+    <Box className={cn('Flow--consentClient')} sx={{display: 'flex', flexDirection: 'column', gap: 1}}>
+      <Typography
+        className={cn('Text--body2')}
+        variant="body2"
+        color="text.secondary"
+        sx={{minWidth: 0, overflowWrap: 'anywhere'}}
+      >
+        {t('consent:client.hosts', 'Published by {{clientIdHost}}. Returns to {{redirectUriHost}}.', {
+          clientIdHost,
+          redirectUriHost,
+        })}
+      </Typography>
+      {redirectUriLoopback && (
+        <Alert className={cn('Flow--consentDeviceWarning', 'Alert--root')} severity="warning">
+          <Typography className={cn('Text--body2')} variant="body2">
+            {t(
+              'consent:client.deviceWarning',
+              'This app runs on your device. Other programs on your device can use the same address, so continue only if you started this app.',
+            )}
+          </Typography>
+        </Alert>
+      )}
+    </Box>
+  );
+}
+
+// Optional permissions are opt-in: an absent form value means the user has not granted the permission. This
 // must match how the SDK compiles consent_decisions on submit, or the screen and the token disagree.
 function isPermissionChecked(formValues: Record<string, string>, purposeId: string, name: string): boolean {
   return formValues[getConsentOptionalKey(purposeId, name)] === 'true';
@@ -644,17 +706,99 @@ function AuthorizationDetailCard({
   );
 }
 
+// PermissionBranch renders one root switch with read-only descendants.
+// A root grant cannot represent child exceptions.
+function PermissionBranch({
+  purposeId,
+  name,
+  childrenOf,
+  decisionDescendants,
+  formValues,
+  onInputChange,
+}: {
+  purposeId: string;
+  name: string;
+  childrenOf: Record<string, string[]>;
+  decisionDescendants: string[];
+  formValues: Record<string, string>;
+  onInputChange: (key: string, value: string) => void;
+}): JSX.Element {
+  const descendants = collectDescendants(name, childrenOf);
+  const checked = isPermissionChecked(formValues, purposeId, name);
+
+  const handleToggle = (next: boolean): void => {
+    onInputChange(getConsentOptionalKey(purposeId, name), next ? 'true' : 'false');
+    decisionDescendants.forEach((descendant) => {
+      onInputChange(getConsentOptionalKey(purposeId, descendant), next ? 'true' : 'false');
+    });
+  };
+
+  const renderNode = (child: string): JSX.Element => (
+    <TreeView.TreeItem
+      key={child}
+      itemId={`${name}/${child}`}
+      label={
+        <Typography className={cn('Text--body2')} variant="body2" sx={{fontWeight: 500}}>
+          {child}
+        </Typography>
+      }
+    >
+      {(childrenOf[child] ?? []).map(renderNode)}
+    </TreeView.TreeItem>
+  );
+
+  return (
+    <Box sx={{px: 1}}>
+      <FormControlLabel
+        className={cn('FormControlLabel--root')}
+        control={
+          <Switch
+            className={cn('Switch--root')}
+            checked={checked}
+            onChange={(e): void => handleToggle((e.target as HTMLInputElement).checked)}
+            size="small"
+          />
+        }
+        label={
+          <Typography className={cn('Text--body2')} variant="body2" sx={{fontWeight: 500}}>
+            {name}
+          </Typography>
+        }
+        labelPlacement="start"
+        sx={{m: 0, width: '100%', justifyContent: 'space-between', py: 0.5}}
+      />
+      {descendants.length > 0 && (
+        <TreeView.SimpleTreeView disableSelection aria-label={name}>
+          {(childrenOf[name] ?? []).map(renderNode)}
+        </TreeView.SimpleTreeView>
+      )}
+      <Divider className={cn('Divider--root')} sx={{opacity: 0.5}} />
+    </Box>
+  );
+}
+
 export default function ConsentAdapter({
   consentData = undefined,
   formValues,
   onInputChange,
+  clientIdHost = undefined,
+  redirectUriHost = undefined,
+  redirectUriLoopback = false,
 }: ConsentAdapterProps): JSX.Element | null {
+  const {t} = useTranslation();
   if (!consentData) return null;
 
   return (
     <Consent consentData={consentData} formValues={formValues} onInputChange={onInputChange}>
       {({purposes}: ConsentRenderProps) => (
         <Box className={cn('Flow--consent')} sx={{display: 'flex', flexDirection: 'column', gap: 2, mt: 1}}>
+          {clientIdHost && redirectUriHost && (
+            <ClientHosts
+              clientIdHost={clientIdHost}
+              redirectUriHost={redirectUriHost}
+              redirectUriLoopback={redirectUriLoopback}
+            />
+          )}
           {purposes.map((purpose, idx) => (
             <Box key={purpose.purposeId ?? idx}>
               {isAuthorizationDetailPurpose(purpose) &&
@@ -670,10 +814,52 @@ export default function ConsentAdapter({
               {isPermissionPurpose(purpose) && purpose.optional && purpose.optional.length > 0 && (
                 <Box sx={{mt: 1}}>
                   <Typography className={cn('Text--subtitle2')} variant="subtitle2" fontWeight="bold" sx={{mb: 0.5}}>
-                    Permissions
+                    {t('consent:permissions.title', 'Permissions')}
                   </Typography>
                   {(() => {
+                    const delimiter = getPermissionDelimiter(purpose);
                     const grouped = groupPermissionsByParent(purpose.optional);
+                    if (delimiter) {
+                      const displayElements =
+                        (
+                          purpose as ConsentPurpose & {
+                            displayElements?: ConsentPurpose['optional'];
+                          }
+                        ).displayElements ?? purpose.optional;
+                      const displayTree = groupPermissionsByParent(displayElements);
+                      return (
+                        <>
+                          <Typography className={cn('Text--body2')} variant="body2" sx={{mb: 1}}>
+                            {t('consent:permissions.reviewPermissions', 'Review the permissions being requested')}
+                          </Typography>
+                          <Box sx={{display: 'flex', flexDirection: 'column'}}>
+                            {grouped.topLevel.map((name) => (
+                              <PermissionBranch
+                                key={name}
+                                purposeId={purpose.purposeId}
+                                name={name}
+                                childrenOf={displayTree.childrenOf}
+                                decisionDescendants={collectDescendants(name, grouped.childrenOf)}
+                                formValues={formValues}
+                                onInputChange={onInputChange}
+                              />
+                            ))}
+                          </Box>
+                          <Alert
+                            className={cn('Flow--consentHierarchyNotice', 'Alert--root')}
+                            severity="info"
+                            sx={{mt: 1}}
+                          >
+                            <Typography className={cn('Text--body2')} variant="body2">
+                              {t(
+                                'consent:permissions.subtreeNotice',
+                                'Granting a resource includes current and future permissions beneath it.',
+                              )}
+                            </Typography>
+                          </Alert>
+                        </>
+                      );
+                    }
                     const renderNode = (name: string, depth: number): JSX.Element => {
                       const direct = grouped.childrenOf[name] ?? [];
                       const descendants = collectDescendants(name, grouped.childrenOf);

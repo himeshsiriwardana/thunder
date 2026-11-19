@@ -1,6 +1,7 @@
 // Copyright 2025 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
+import type {OutboundAuthentication} from '@thunderid/components';
 import type {ServerConfigLayers} from '@thunderid/utils';
 import type {JSX} from 'react';
 
@@ -326,17 +327,10 @@ export interface VonageConnectionRequest {
 }
 
 /**
- * How ThunderID authenticates itself on an outbound call. `type` selects the method and
- * `properties` carries that method's field values, so a method the console was not built
- * against still round-trips. The fields each method takes come from GET /connections/meta.
- *
- * A field the method marks as a credential is write-only: returned masked as "******", and
- * omitted on update to keep the stored value.
+ * How ThunderID authenticates itself on an outbound call. The fields each method takes come from
+ * GET /connections/meta.
  */
-export interface OutboundAuthConfig {
-  type: string;
-  properties?: Record<string, string>;
-}
+export type OutboundAuthConfig = OutboundAuthentication;
 
 /**
  * Request payload for an SMTP email connection.
@@ -382,7 +376,7 @@ export interface AuthZENPDPConnectionRequest {
   subjectAttributeMappings?: AuthZENPDPSubjectAttributeMapping[];
 }
 
-export type OutboundAuthentication = OutboundAuthConfig;
+export type {OutboundAuthentication};
 export type OutboundAuthenticationResponse = OutboundAuthConfig;
 
 /**
@@ -509,7 +503,7 @@ export interface ConnectionVendorMeta {
   supportsAttributeMapping?: boolean;
   /** Whether this connection exposes outbound service authentication settings. */
   supportsAuthentication?: boolean;
-  /** Changing the `url` origin requires the stored credentials to be entered again. */
+  /** Changing the `url` origin, or an SMTP host or port, requires the stored credentials to be entered again. */
   reentersCredentialsOnOriginChange?: boolean;
   /** Whether the detail page lists the resources that use this connection. */
   showsUsages?: boolean;
@@ -519,6 +513,8 @@ export interface ConnectionVendorMeta {
   generalSettingsCardCopy?: ConnectionGeneralSettingsCardCopy;
   /** i18n key for the create-wizard setup hint (vendors that need an OAuth app registered first). */
   createHintKey?: string;
+  /** i18n key for the Danger zone delete description, for connections that are not used to sign in. */
+  deleteDescriptionKey?: string;
 }
 
 /**

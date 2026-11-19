@@ -12,15 +12,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thunder-id/thunderid/tests/integration/mockservices"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
 )
 
 const (
-	serverPort = "8095"
-
 	// controlPlanePackages holds the suites that run against the Control Plane binary rather than
 	// the all-in-one server. Each run tests only its own plane's suites.
 	controlPlanePackages = "./controlplane/..."
+
+	// serverStartTimeout bounds the wait for the server to answer after it starts.
+	serverStartTimeout = 2 * time.Minute
 
 	// managementTokenLifetime outlasts any run, since a token from the trusted issuer is never
 	// refreshed.
@@ -28,6 +30,9 @@ const (
 )
 
 var (
+	// serverPort is the port of this run's server. Each test group has its own.
+	serverPort = testutils.ServerPort()
+
 	zipFilePattern string
 	testRun        string
 	testPackage    string
@@ -37,6 +42,29 @@ var (
 
 func main() {
 	parseFlags()
+	controlPlane = testutils.IsControlPlaneRun()
+
+	// The external services the tests stand in for run once for the whole run, shared by every group.
+	if testutils.TestGroup() == "" {
+		stopMockServices, err := mockservices.Start()
+		if err != nil {
+			fmt.Printf("Failed to start the mock services: %v\n", err)
+			os.Exit(1)
+		}
+		defer stopMockServices()
+	}
+	if testutils.IsPackRun() {
+		if shouldRunGroups() {
+			os.Exit(runGroups())
+		}
+		if code := runPack(); code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
+	if shouldRunGroups() {
+		os.Exit(runGroups())
+	}
 	initTests()
 
 	// The Control Plane run also boots the all-in-one server as the Data Plane the Control Plane
@@ -71,6 +99,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	if group := testutils.TestGroup(); group != "" {
+		err = testutils.ConfigureTestGroup(group, serverPort)
+		if err != nil {
+			fmt.Printf("Failed to configure test group %s: %v\n", group, err)
+			os.Exit(1)
+		}
+	}
+
 	// Step 3: Copy declarative resource fixtures for composite mode testing. The Control Plane
 	// suite configures no composite store, so it has no use for them.
 	if !controlPlane {
@@ -99,7 +135,7 @@ func main() {
 
 	// A Control Plane issues no tokens, so the identity provider it trusts must be up before it
 	// serves a request.
-	var issuer *testutils.MockOIDCServer
+	var issuer *testutils.TrustedIssuer
 	if controlPlane {
 		issuer, err = testutils.StartTrustedIssuer()
 		if err != nil {
@@ -129,9 +165,15 @@ func main() {
 		defer testutils.StopDataPlane()
 	}
 
-	// Wait for the server to start
+	// Wait for the server to start. Test groups start their servers at the same time, so allow for a
+	// slow start on a busy machine.
 	fmt.Println("Waiting for the server to start...")
-	time.Sleep(5 * time.Second)
+	if err := testutils.WaitForServerReady(serverStartTimeout); err != nil {
+		fmt.Printf("Server did not start: %v\n", err)
+		testutils.StopServer()
+		testutils.StopDataPlane()
+		os.Exit(1)
+	}
 
 	// Step 7: Obtain admin access token once for all test packages
 	fmt.Println("Obtaining admin access token...")
@@ -167,8 +209,9 @@ func parseFlags() {
 
 // useTrustedIssuerTokens makes the trusted issuer's tokens the ones the Control Plane suites send:
 // one carrying the system scope for every test client, one without it for the test that it is
-// refused, and one for a user the issuer's user endpoint does not know.
-func useTrustedIssuerTokens(issuer *testutils.MockOIDCServer) error {
+// refused, one for a user the issuer's user endpoint does not know, one for each child permission
+// of system in ControlPlaneChildScopes, and the ones the MCP endpoint's tests send.
+func useTrustedIssuerTokens(issuer *testutils.TrustedIssuer) error {
 	admin, err := testutils.IssueManagementToken(issuer, "system", managementTokenLifetime)
 	if err != nil {
 		return err
@@ -188,11 +231,46 @@ func useTrustedIssuerTokens(issuer *testutils.MockOIDCServer) error {
 	if err != nil {
 		return err
 	}
-	return os.Setenv(testutils.StrangerTokenEnv, stranger)
+	if err := os.Setenv(testutils.StrangerTokenEnv, stranger); err != nil {
+		return err
+	}
+	for _, scope := range testutils.ControlPlaneChildScopes {
+		token, err := testutils.IssueManagementToken(issuer, scope, managementTokenLifetime)
+		if err != nil {
+			return err
+		}
+		if err := os.Setenv(testutils.ControlPlaneScopedTokenEnv(scope), token); err != nil {
+			return err
+		}
+	}
+
+	now := time.Now()
+	mcp := testutils.MCPResource()
+	mcpTokens := []struct {
+		env                 string
+		audience            any
+		scope               string
+		issuedAt, expiresAt time.Time
+	}{
+		{testutils.MCPScopedTokenEnv, mcp, "system", now, now.Add(managementTokenLifetime)},
+		{testutils.MCPUnscopedTokenEnv, mcp, "", now, now.Add(managementTokenLifetime)},
+		{testutils.MCPExpiredTokenEnv, mcp, "system", now.Add(-2 * time.Hour), now.Add(-time.Hour)},
+		{testutils.OtherResourceTokenEnv, testutils.OtherResource, "system", now, now.Add(managementTokenLifetime)},
+	}
+	for _, t := range mcpTokens {
+		token, err := testutils.IssueToken(issuer, t.audience, testutils.TrustedIssuerAdminSubject, t.scope,
+			t.issuedAt, t.expiresAt)
+		if err != nil {
+			return err
+		}
+		if err := os.Setenv(t.env, token); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func initTests() {
-	controlPlane = os.Getenv("INTEGRATION_PLANE") == "control"
 	if controlPlane {
 		fmt.Println("Plane: control")
 		testutils.UseControlPlane()
@@ -218,49 +296,49 @@ func initTests() {
 }
 
 func runTests() error {
-	// Clean the test cache to avoid getting results from previous runs.
-	// This is important to avoid false positives in test results as the
-	// server and integration test suite are two separate applications.
-	cmd := exec.Command("go", "clean", "-testcache")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("failed to clean test cache: %w", err)
+	if group := testutils.TestGroup(); group != "" {
+		return runGroupTests(group)
 	}
 
-	// Determine command and build args
-	_, err = exec.LookPath("gotestsum")
-	useGotestsum := err == nil
-
-	var cmdName string
-	var args []string
-
-	if useGotestsum {
-		fmt.Println("Running integration tests using gotestsum...")
-		cmdName = "gotestsum"
-		args = append(args, "--format", "testname", "--", "-p=1")
-	} else {
-		fmt.Println("Running integration tests using go test...")
-		cmdName = "go"
-		args = append(args, "test", "-p=1", "-v")
+	if err := cleanTestCache(); err != nil {
+		return err
 	}
 
-	// Add test filters if provided
+	var filter []string
 	if testRun != "" {
-		args = append(args, "-run", testRun)
+		filter = []string{"-run", testRun}
 		fmt.Printf("Test filter: -run %s\n", testRun)
 	}
 	packages, err := packagesToTest()
 	if err != nil {
 		return err
 	}
-	args = append(args, packages...)
 	fmt.Printf("Test package: %s\n", strings.Join(packages, " "))
 
-	cmd = exec.Command(cmdName, args...)
+	return goTestCommand(filter, packages).Run()
+}
+
+// cleanTestCache cleans the test cache to avoid getting results from previous runs.
+// This is important to avoid false positives in test results as the
+// server and integration test suite are two separate applications.
+func cleanTestCache() error {
+	cmd := exec.Command("go", "clean", "-testcache")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to clean test cache: %w", err)
+	}
+	return nil
+}
+
+// goTestCommand builds the go test run of the given packages against this run's server, with
+// gotestsum when it is installed.
+func goTestCommand(filter []string, packages []string) *exec.Cmd {
+	cmd := newGoTestCommand(filter, packages)
+	if testutils.IsPackRun() {
+		cmd.Env = append(os.Environ(), testutils.PackEnv()...)
+		return cmd
+	}
 
 	// Export test-context state so that test subprocesses can self-initialize
 	// via ensureInitialized() without requiring an explicit InitializeTestContext call.
@@ -270,8 +348,31 @@ func runTests() error {
 		"ZIP_PATTERN="+zipFilePattern,
 		"SERVER_PID="+strconv.Itoa(testutils.GetServerPID()),
 	)
+	return cmd
+}
 
-	return cmd.Run()
+// newGoTestCommand builds the go test run of the given packages, with gotestsum when it is installed,
+// leaving its environment for the caller to set.
+func newGoTestCommand(filter []string, packages []string) *exec.Cmd {
+	var cmdName string
+	var args []string
+
+	if _, err := exec.LookPath("gotestsum"); err == nil {
+		fmt.Println("Running integration tests using gotestsum...")
+		cmdName = "gotestsum"
+		args = append(args, "--format", "testname", "--", "-p=1")
+	} else {
+		fmt.Println("Running integration tests using go test...")
+		cmdName = "go"
+		args = append(args, "test", "-p=1", "-v")
+	}
+	args = append(args, filter...)
+	args = append(args, packages...)
+
+	cmd := exec.Command(cmdName, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd
 }
 
 // packagesToTest resolves the default of every package to the suites of the plane under test. A
@@ -283,17 +384,33 @@ func packagesToTest() ([]string, error) {
 	if controlPlane {
 		return []string{controlPlanePackages}, nil
 	}
+	if testutils.IsPackRun() {
+		return packTestPackages()
+	}
 	out, err := exec.Command("go", "list", "./...").Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list test packages: %w", err)
 	}
-	controlPlaneRoot := strings.TrimSuffix(strings.TrimPrefix(controlPlanePackages, "."), "/...")
+	var otherPlaneRoots []string
+	for _, planePackages := range []string{controlPlanePackages, packPackages} {
+		otherPlaneRoots = append(otherPlaneRoots, strings.TrimSuffix(strings.TrimPrefix(planePackages, "."), "/..."))
+	}
 	var packages []string
 	for _, pkg := range strings.Fields(string(out)) {
-		if strings.HasSuffix(pkg, controlPlaneRoot) || strings.Contains(pkg, controlPlaneRoot+"/") {
+		if inAnyRoot(pkg, otherPlaneRoots) {
 			continue
 		}
 		packages = append(packages, pkg)
 	}
 	return packages, nil
+}
+
+// inAnyRoot reports whether a package is one of the roots or below one.
+func inAnyRoot(pkg string, roots []string) bool {
+	for _, root := range roots {
+		if strings.HasSuffix(pkg, root) || strings.Contains(pkg, root+"/") {
+			return true
+		}
+	}
+	return false
 }

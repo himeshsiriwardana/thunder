@@ -238,14 +238,18 @@ func (suite *CIBAGrantHandlerTestSuite) TestHandleGrant_Authenticated_IssuesToke
 	record.AttributeCacheID = "cache-1"
 	record.CompletedACR = "urn:acr:pwd"
 	record.AuthTime = time.Now()
+	record.SubjectID = "entity-1"
+	record.SubjectCategory = string(providers.EntityCategoryUser)
 	suite.mockCIBAService.EXPECT().GetByAuthReqID(mock.Anything, "auth-req-1").Return(record, nil)
 	suite.mockAttrCacheService.EXPECT().GetAttributeCache(mock.Anything, "cache-1").Return(
 		&attributecache.AttributeCache{ID: "cache-1", Attributes: map[string]interface{}{"email": "a@b.c"}},
 		nil)
+	// The subject's resource ID and category recorded at the callback spare the builder a lookup.
 	suite.mockTokenBuilder.EXPECT().BuildAccessToken(mock.Anything, mock.MatchedBy(
 		func(ctx *tokenservice.AccessTokenBuildContext) bool {
 			return ctx.Subject == "user-1" && ctx.ClientID == "client-1" &&
-				ctx.GrantType == string(providers.GrantTypeCIBA)
+				ctx.GrantType == string(providers.GrantTypeCIBA) && ctx.SubjectEntityID == "entity-1" &&
+				ctx.SubjectCategory == string(providers.EntityCategoryUser)
 		})).Return(&model.TokenDTO{Token: "access-token", TokenType: "Bearer", ExpiresIn: 3600}, nil)
 	suite.mockTokenBuilder.EXPECT().BuildIDToken(mock.Anything, mock.MatchedBy(
 		func(ctx *tokenservice.IDTokenBuildContext) bool {
@@ -822,4 +826,18 @@ func (suite *CIBAGrantHandlerTestSuite) TestHandleGrant_DenyListUnavailableIsRef
 	suite.Equal(constants.ErrorServerError, errResp.Error)
 	suite.mockTokenBuilder.AssertNotCalled(suite.T(), "BuildAccessToken", mock.Anything, mock.Anything)
 	suite.mockCIBAService.AssertNotCalled(suite.T(), "MarkConsumed", mock.Anything, mock.Anything)
+}
+
+func (suite *CIBAGrantHandlerTestSuite) TestIssuedScopesCompactAfterSnapshotChecks() {
+	suite.mockResource.EXPECT().GetResourceServerByIdentifier(mock.Anything, testCIBAResourceURL).
+		Return(&providers.ResourceServer{ID: "rs-1", Identifier: testCIBAResourceURL,
+			HierarchicalPermissions: true, Delimiter: ":"}, nil)
+	suite.mockResource.EXPECT().ValidatePermissions(mock.Anything, "rs-1", mock.Anything).
+		Return([]string{}, nil)
+	record := suite.boundAuthenticatedRecord("openid reservations reservations:create")
+	_, scopes, errResp := suite.handler.(*cibaGrantHandler).resolveIssuedAudiencesAndScopes(
+		context.Background(), record, suite.oauthApp, record.AuthorizedScopes)
+	suite.Nil(errResp)
+	suite.Equal([]string{"openid", "reservations"}, scopes)
+	suite.Equal("openid reservations reservations:create", record.AuthorizedScopes)
 }

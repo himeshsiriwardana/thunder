@@ -82,6 +82,9 @@ func (f *flowFactory) CreateGraph(id string, _type providers.FlowType, version i
 		version: version,
 		nodes:   make(map[string]NodeInterface),
 		edges:   make(map[string][]string),
+
+		constantInputs: make(map[string]struct{}),
+		plainInputs:    make(map[string]struct{}),
 	}
 }
 
@@ -170,6 +173,14 @@ func (f *flowFactory) CloneNode(source NodeInterface) (NodeInterface, error) {
 			promptCopy.SetMessage(promptSource.GetMessage())
 		} else {
 			return nil, errors.New("mismatch in node types during cloning. copy is not a prompt node")
+		}
+	}
+
+	// Copy onSuccess and onFailure if the node is a variables node
+	if variablesSource, ok := source.(VariablesNodeInterface); ok {
+		if variablesCopy, ok := nodeCopy.(VariablesNodeInterface); ok {
+			variablesCopy.SetOnSuccess(variablesSource.GetOnSuccess())
+			variablesCopy.SetOnFailure(variablesSource.GetOnFailure())
 		}
 	}
 

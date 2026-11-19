@@ -12,8 +12,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/DATA-DOG/go-sqlmock"
+
 	"github.com/thunder-id/thunderid/internal/system/cache"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/transaction"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/cachemock"
 )
@@ -241,6 +244,36 @@ func (s *CacheBackedEntityStoreTestSuite) TestResolveLinkedAccounts_PassesThroug
 
 // UpdateSystemAttributes tests
 
+func (s *CacheBackedEntityStoreTestSuite) TestUpdateOwnership_InvalidatesEntityCache() {
+	entity := s.makeEntity(testEntityID, "client")
+	s.entityByIDData[entity.ID] = &entity
+	s.mockStore.On("UpdateOwnership", mock.Anything, entity.ID, "ou-2", testProjectID).Return(nil).Once()
+
+	s.Nil(s.cachedStore.UpdateOwnership(context.Background(), entity.ID, "ou-2", testProjectID))
+
+	_, ok := s.entityByIDCache.Get(context.Background(), cache.CacheKey{Key: entity.ID})
+	s.False(ok)
+}
+
+func (s *CacheBackedEntityStoreTestSuite) TestProjectReads_Delegate() {
+	ctx := context.Background()
+	s.mockStore.On("GetEntityListCountByProject", mock.Anything, "app", testProjectID, []string{"ou-1"}).
+		Return(2, nil).Once()
+	s.mockStore.On("GetEntityListByProject", mock.Anything, "app", testProjectID, []string{"ou-1"}, 10, 0).
+		Return([]providers.Entity{{ID: "a1"}}, nil).Once()
+	s.mockStore.On("ProjectHasEntities", mock.Anything, testProjectID).Return(true, nil).Once()
+
+	count, err := s.cachedStore.GetEntityListCountByProject(ctx, "app", testProjectID, []string{"ou-1"})
+	s.NoError(err)
+	s.Equal(2, count)
+	list, err := s.cachedStore.GetEntityListByProject(ctx, "app", testProjectID, []string{"ou-1"}, 10, 0)
+	s.NoError(err)
+	s.Len(list, 1)
+	found, err := s.cachedStore.ProjectHasEntities(ctx, testProjectID)
+	s.NoError(err)
+	s.True(found)
+}
+
 func (s *CacheBackedEntityStoreTestSuite) TestUpdateSystemAttributes_InvalidatesEntityCache() {
 	entity := s.makeEntity(testEntityID, "old-client")
 	s.entityByIDData[entity.ID] = &entity
@@ -255,6 +288,37 @@ func (s *CacheBackedEntityStoreTestSuite) TestUpdateSystemAttributes_Invalidates
 
 	_, ok := s.entityByIDCache.Get(context.Background(), cache.CacheKey{Key: entity.ID})
 	s.False(ok)
+}
+
+// A write inside a transaction drops the cached copies again once the transaction ends, so a copy a
+// concurrent read cached before the commit does not outlive it.
+func (s *CacheBackedEntityStoreTestSuite) TestUpdateSystemAttributes_DropsTheCacheAgainWhenTheTransactionEnds() {
+	db, sqlMock, err := sqlmock.New()
+	s.Require().NoError(err)
+	defer func() { _ = db.Close() }()
+	sqlMock.ExpectBegin()
+	sqlMock.ExpectCommit()
+	entity := s.makeEntity(testEntityID, "client")
+	s.entityByIDData[entity.ID] = &entity
+	s.mockStore.On("UpdateSystemAttributes", mock.Anything, entity.ID, mock.Anything).Return(nil).Once()
+
+	err = transaction.NewTransactioner(db, "entity").Transact(context.Background(),
+		func(txCtx context.Context) error {
+			if err := s.cachedStore.UpdateSystemAttributes(txCtx, entity.ID, nil); err != nil {
+				return err
+			}
+			// A concurrent read caches the row as it was before the commit.
+			s.entityByIDData[entity.ID] = &entity
+			s.entityWithCredsByIDData[entity.ID] = &entityWithCredentials{Entity: &entity}
+			return nil
+		})
+
+	s.Require().NoError(err)
+	_, ok := s.entityByIDCache.Get(context.Background(), cache.CacheKey{Key: entity.ID})
+	s.False(ok)
+	_, ok = s.entityWithCredentialsByIDCache.Get(context.Background(), cache.CacheKey{Key: entity.ID})
+	s.False(ok)
+	s.NoError(sqlMock.ExpectationsWereMet())
 }
 
 // GetEntityWithCredentials cache helper edge cases
@@ -730,6 +794,15 @@ func (s *CacheBackedEntityStoreTestSuite) TestGetEntityListBySystemAttributesAnd
 	s.Equal(2, count)
 	list, err := s.cachedStore.GetEntityListBySystemAttributesAndOUIDs(
 		context.Background(), "agent", sysQuery, ouIDs, 10, 0)
+	s.NoError(err)
+	s.Len(list, 1)
+}
+
+func (s *CacheBackedEntityStoreTestSuite) TestGetEntityListByType_PassThrough() {
+	s.mockStore.On("GetEntityListByType", mock.Anything, "agent", "tools", 10).
+		Return([]providers.Entity{{ID: "e1"}}, nil)
+
+	list, err := s.cachedStore.GetEntityListByType(context.Background(), "agent", "tools", 10)
 	s.NoError(err)
 	s.Len(list, 1)
 }

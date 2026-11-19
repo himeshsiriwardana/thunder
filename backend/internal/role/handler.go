@@ -54,7 +54,13 @@ func (rh *roleHandler) HandleRoleListRequest(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	roleList, svcErr := rh.roleService.GetRoleList(ctx, limit, offset, filters)
+	var roleList *RoleList
+	if query := r.URL.Query(); query.Has(projectIDQueryParam) {
+		roleList, svcErr = rh.roleService.GetRoleListByProject(
+			ctx, sysutils.SanitizeString(query.Get(projectIDQueryParam)), limit, offset, filters)
+	} else {
+		roleList, svcErr = rh.roleService.GetRoleList(ctx, limit, offset, filters)
+	}
 	if svcErr != nil {
 		handleError(ctx, w, svcErr)
 		return
@@ -114,7 +120,7 @@ func (rh *roleHandler) HandleRolePostRequest(w http.ResponseWriter, r *http.Requ
 
 	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, createdRole)
 
-	logger.Debug(ctx, "Successfully created role", log.String("roleId", createdRole.ID))
+	logger.Debug(ctx, "Successfully created role", log.String("roleID", createdRole.ID))
 }
 
 // HandleRoleGetRequest handles the get role by id request.
@@ -240,7 +246,9 @@ func (rh *roleHandler) HandleRoleAssignmentsGetRequest(w http.ResponseWriter, r 
 	// Convert service response to HTTP response
 	httpAssignments := make([]AssignmentResponse, len(serviceResponse.Assignments))
 	for i, sa := range serviceResponse.Assignments {
-		httpAssignments[i] = AssignmentResponse(sa)
+		httpAssignments[i] = AssignmentResponse{
+			ID: sa.ID, Type: sa.Type, OUID: sa.OUID, Display: sa.Display, IsReadOnly: sa.PolicyID != "" || sa.IsManaged,
+		}
 	}
 
 	assignmentListResponse := &AssignmentListResponse{
@@ -323,7 +331,8 @@ func handleError(ctx context.Context, w http.ResponseWriter,
 		switch svcErr.Code {
 		case ErrorRoleNotFound.Code, ErrorSharingPolicyNotFound.Code, ErrorRoleNotSharedToOU.Code:
 			statusCode = http.StatusNotFound
-		case ErrorRoleNameConflict.Code, ErrorSharingPolicyExists.Code, ErrorSharingPolicyVersionMismatch.Code:
+		case ErrorRoleNameConflict.Code, ErrorSharingPolicyExists.Code, ErrorSharingPolicyVersionMismatch.Code,
+			ErrorMandatedRoleCannotBeDeleted.Code, ErrorRoleMandatedInOU.Code:
 			statusCode = http.StatusConflict
 		case ErrorOrganizationUnitNotFound.Code,
 			ErrorInvalidRequestFormat.Code, ErrorMissingRoleID.Code,
@@ -331,9 +340,10 @@ func handleError(ctx context.Context, w http.ResponseWriter,
 			ErrorEmptyAssignments.Code,
 			ErrorInvalidAssignmentID.Code,
 			ErrorSharedRoleCannotMove.Code, ErrorAssigneeNotInOU.Code, ErrorSharedRoleFieldNotEditable.Code,
-			ErrorRoleWithAssignmentsCannotMove.Code, ErrorInvalidFilter.Code, ErrorSharedRoleNotEditable.Code:
+			ErrorRoleWithAssignmentsCannotMove.Code, ErrorInvalidFilter.Code, ErrorSharedRoleNotEditable.Code,
+			ErrorInvalidProject.Code, ErrorOUNotInProject.Code:
 			statusCode = http.StatusBadRequest
-		case tidcommon.ErrorUnauthorized.Code, sysauthz.ErrorGrantNotPermitted.Code:
+		case tidcommon.ErrorUnauthorized.Code, sysauthz.ErrorGrantNotPermitted.Code, ErrorSharedRoleReadOnly.Code:
 			statusCode = http.StatusForbidden
 		default:
 			statusCode = http.StatusBadRequest
@@ -355,6 +365,7 @@ func (rh *roleHandler) sanitizeCreateRoleRequest(request *CreateRoleRequest) Cre
 		Name:        sysutils.SanitizeString(request.Name),
 		Description: sysutils.SanitizeString(request.Description),
 		OUID:        sysutils.SanitizeString(request.OUID),
+		ProjectID:   sysutils.SanitizeString(request.ProjectID),
 	}
 
 	if request.Permissions != nil {
@@ -390,6 +401,7 @@ func (rh *roleHandler) sanitizeUpdateRoleRequest(request *UpdateRoleRequest) Upd
 		Name:        sysutils.SanitizeString(request.Name),
 		Description: sysutils.SanitizeString(request.Description),
 		OUID:        sysutils.SanitizeString(request.OUID),
+		ProjectID:   sysutils.SanitizeString(request.ProjectID),
 	}
 
 	if request.Permissions != nil {
@@ -465,6 +477,7 @@ func (rh *roleHandler) toRoleCreationDetail(req CreateRoleRequest) RoleCreationD
 		Name:        req.Name,
 		Description: req.Description,
 		OUID:        req.OUID,
+		ProjectID:   req.ProjectID,
 		Permissions: req.Permissions,
 		Assignments: serviceAssignments,
 	}
@@ -498,6 +511,7 @@ func (rh *roleHandler) toHTTPCreateRoleResponse(role *RoleWithPermissionsAndAssi
 		Description: role.Description,
 		OUID:        role.OUID,
 		OUHandle:    role.OUHandle,
+		ProjectID:   role.ProjectID,
 		Permissions: permissions,
 		Assignments: httpAssignments,
 	}

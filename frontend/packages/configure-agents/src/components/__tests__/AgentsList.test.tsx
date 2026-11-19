@@ -2,18 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import userEvent from '@testing-library/user-event';
-import {render, screen, waitFor} from '@thunderid/test-utils';
+import {DeployStatusProvider} from '@thunderid/components';
+import {CapabilitiesProvider, ProjectScopeProvider} from '@thunderid/contexts';
+import {render, screen, waitFor, within} from '@thunderid/test-utils';
 import type {NavigateFunction} from 'react-router';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
 import type {AgentListResponse} from '../../models/agent';
 import AgentsList from '../AgentsList';
 
-const {mockLoggerError} = vi.hoisted(() => ({
+const {mockLoggerError, mockUseGetAllAgentTypes} = vi.hoisted(() => ({
   mockLoggerError: vi.fn(),
+  mockUseGetAllAgentTypes: vi.fn(),
 }));
 
 // Mock the dependencies
 vi.mock('../../api/useGetAgents');
+vi.mock('@thunderid/configure-agent-types', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-agent-types')>()),
+  useGetAllAgentTypes: (): unknown => mockUseGetAllAgentTypes() as unknown,
+}));
 vi.mock('react-router', async () => {
   const actual = await vi.importActual('react-router');
   return {
@@ -33,16 +40,8 @@ vi.mock('@wso2/oxygen-ui', async (importOriginal) => {
     ...actual,
     OxygenUIThemeProvider: ({children}: {children: React.ReactNode}) => children,
     ListingTable: {
-      Provider: ({children, variant = undefined}: {children: React.ReactNode; variant?: string}) => (
-        <div data-testid="listing-provider" data-variant={variant}>
-          {children}
-        </div>
-      ),
-      Container: ({children, disablePaper = undefined}: {children: React.ReactNode; disablePaper?: boolean}) => (
-        <div data-testid="listing-container" data-disable-paper={disablePaper}>
-          {children}
-        </div>
-      ),
+      Provider: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
+      Container: ({children}: {children: React.ReactNode}): React.ReactElement => children as React.ReactElement,
       DataGrid: ({
         rows,
         columns,
@@ -152,6 +151,11 @@ const {default: useGetAgents} = await import('../../api/useGetAgents');
 const {useNavigate} = await import('react-router');
 const {useDataGridLocaleText} = await import('@thunderid/hooks');
 
+const viewOnly = {
+  can: (_resource: string, action = 'view') => action === 'view',
+  isLoading: false,
+};
+
 describe('AgentsList', () => {
   let mockNavigate: ReturnType<typeof vi.fn>;
 
@@ -183,6 +187,9 @@ describe('AgentsList', () => {
   beforeEach(() => {
     mockNavigate = vi.fn();
     mockLoggerError.mockReset();
+    mockUseGetAllAgentTypes.mockReturnValue({
+      data: [{id: 'type-1', handle: 'default', displayName: 'Default', ouId: 'ou-1'}],
+    });
     vi.mocked(useNavigate).mockReturnValue(mockNavigate as unknown as NavigateFunction);
     vi.mocked(useDataGridLocaleText).mockReturnValue({});
   });
@@ -261,38 +268,74 @@ describe('AgentsList', () => {
     expect(screen.getByText('Active')).toBeInTheDocument();
   });
 
+  it('should say when an agent expires, and how long ago one expired, on hovering its status', async () => {
+    const day = 24 * 3600 * 1000;
+    vi.mocked(useGetAgents).mockReturnValue({
+      data: {
+        ...mockAgentsData,
+        agents: [
+          {
+            ...mockAgentsData.agents[0],
+            validUntil: new Date(Date.now() + 90 * day).toISOString(),
+            lifespan: {phase: 'ACTIVE'},
+          },
+          {
+            ...mockAgentsData.agents[1],
+            validUntil: new Date(Date.now() - 13 * day).toISOString(),
+            lifespan: {phase: 'EXPIRED'},
+            status: {value: 'EXPIRED', details: {reason: 'LIFESPAN_ENDED'}},
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useGetAgents>);
+    const user = userEvent.setup();
+
+    renderComponent();
+
+    await user.hover(screen.getByRole('img', {name: 'Active'}));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Expires in 3 months');
+    await user.unhover(screen.getByRole('img', {name: 'Active'}));
+
+    await user.hover(screen.getByRole('img', {name: 'Expired'}));
+    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Expired 13 days ago'));
+  });
+
+  it('should say an agent has no expiry date when its lifespan has no end', async () => {
+    const user = userEvent.setup();
+    vi.mocked(useGetAgents).mockReturnValue({
+      data: {...mockAgentsData, agents: [{...mockAgentsData.agents[0], lifespan: {phase: 'UNBOUNDED'}}]},
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useGetAgents>);
+
+    renderComponent();
+
+    await user.hover(screen.getByRole('img', {name: 'Active'}));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('No expiry date');
+  });
+
+  it('should keep the plain status text when the read reports no lifespan', async () => {
+    const user = userEvent.setup();
+    vi.mocked(useGetAgents).mockReturnValue({
+      data: {...mockAgentsData, agents: [mockAgentsData.agents[0]]},
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useGetAgents>);
+
+    renderComponent();
+
+    await user.hover(screen.getByRole('img', {name: 'Active'}));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This agent can authenticate normally.');
+  });
+
   it("should keep the status indicators in the grid's roving focus rather than the page tab order", () => {
     renderComponent();
 
     const indicators = screen.getAllByRole('img', {name: 'Active'});
     expect(indicators.length).toBeGreaterThan(0);
     indicators.forEach((indicator) => expect(indicator).toHaveAttribute('tabindex', '-1'));
-  });
-
-  it('should render the listing as a papered data grid', () => {
-    vi.mocked(useGetAgents).mockReturnValue({
-      data: mockAgentsData,
-      isLoading: false,
-      error: null,
-    } as ReturnType<typeof useGetAgents>);
-
-    renderComponent();
-
-    expect(screen.getByTestId('listing-provider')).toHaveAttribute('data-variant', 'data-grid');
-    expect(screen.getByTestId('listing-container')).not.toHaveAttribute('data-disable-paper');
-  });
-
-  it('should give each row action button an accessible name', () => {
-    vi.mocked(useGetAgents).mockReturnValue({
-      data: mockAgentsData,
-      isLoading: false,
-      error: null,
-    } as ReturnType<typeof useGetAgents>);
-
-    renderComponent();
-
-    expect(screen.getAllByRole('button', {name: 'Edit'})).toHaveLength(2);
-    expect(screen.getAllByRole('button', {name: 'Delete'})).toHaveLength(2);
   });
 
   it('should fall back to the agent id when an agent has no display value', () => {
@@ -319,6 +362,40 @@ describe('AgentsList', () => {
 
     expect(screen.getByText('agent-1')).toBeInTheDocument();
     expect(screen.getByText('agent-2')).toBeInTheDocument();
+  });
+
+  it("should show each agent's type by its display name", () => {
+    mockUseGetAllAgentTypes.mockReturnValue({
+      data: [
+        {id: 'type-1', handle: 'default', displayName: 'Default', ouId: 'ou-1'},
+        {id: 'type-2', handle: 'assistant', displayName: 'Research assistant', ouId: 'ou-2'},
+      ],
+    });
+    vi.mocked(useGetAgents).mockReturnValue({
+      data: {...mockAgentsData, agents: [mockAgentsData.agents[0], {...mockAgentsData.agents[1], type: 'assistant'}]},
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useGetAgents>);
+
+    renderComponent();
+
+    const [firstRow, secondRow] = screen.getAllByRole('row');
+    expect(within(firstRow).getByText('Default')).toBeInTheDocument();
+    expect(within(secondRow).getByText('Research assistant')).toBeInTheDocument();
+    expect(within(secondRow).queryByText('Default')).not.toBeInTheDocument();
+  });
+
+  it('should show the type handle when the agent types have not loaded', () => {
+    mockUseGetAllAgentTypes.mockReturnValue({data: undefined});
+    vi.mocked(useGetAgents).mockReturnValue({
+      data: mockAgentsData,
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useGetAgents>);
+
+    renderComponent();
+
+    expect(screen.getAllByText('default')).toHaveLength(2);
   });
 
   it('should display ouHandle when present and ouId otherwise', () => {
@@ -355,6 +432,24 @@ describe('AgentsList', () => {
     renderComponent();
 
     expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  it('hides the edit and delete row actions when the admin may only view agents', () => {
+    vi.mocked(useGetAgents).mockReturnValue({
+      data: mockAgentsData,
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useGetAgents>);
+
+    render(
+      <CapabilitiesProvider capabilities={viewOnly}>
+        <AgentsList />
+      </CapabilitiesProvider>,
+    );
+
+    expect(screen.getByRole('grid')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: /delete/i})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: /edit/i})).not.toBeInTheDocument();
   });
 
   it('should open delete dialog when clicking Delete action', async () => {
@@ -478,5 +573,91 @@ describe('AgentsList', () => {
     renderComponent();
 
     expect(screen.getByRole('grid')).toBeInTheDocument();
+  });
+
+  it('shows where each agent is along the deploy path only where the app says so, in the grid focus', () => {
+    vi.mocked(useGetAgents).mockReturnValue({
+      data: mockAgentsData,
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useGetAgents>);
+    const {unmount} = renderComponent();
+    // Without the app saying where resources are, the list has no deployment column.
+    const cellsWithout = screen.getAllByRole('row')[0].children.length;
+    unmount();
+
+    render(
+      <DeployStatusProvider value={{statusOf: () => ({state: 'notPromoted', target: 'Prod'}), openDeploy: vi.fn()}}>
+        <AgentsList />
+      </DeployStatusProvider>,
+    );
+    expect(screen.getAllByRole('row')[0].children.length).toBe(cellsWithout + 1);
+    const chips = screen.getAllByTestId('resource-deploy-status');
+    expect(chips[0]).toHaveTextContent('Not in Prod');
+    chips.forEach((chip) => expect(chip).toHaveAttribute('tabindex', '-1'));
+  });
+
+  describe('personal agents', () => {
+    const personalAgentsData: AgentListResponse = {
+      ...mockAgentsData,
+      agents: [{...mockAgentsData.agents[0], kind: 'personal-assistant'}, mockAgentsData.agents[1]],
+    };
+
+    beforeEach(() => {
+      vi.mocked(useGetAgents).mockReturnValue({
+        data: personalAgentsData,
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useGetAgents>);
+    });
+
+    it('marks only the personal agent with a Personal chip', () => {
+      renderComponent();
+
+      const rows = screen.getAllByRole('row');
+      expect(within(rows[0]).getByText('Personal')).toBeInTheDocument();
+      expect(within(rows[1]).queryByText('Personal')).not.toBeInTheDocument();
+    });
+
+    it('lists every agent until Personal agents is chosen', async () => {
+      const user = userEvent.setup();
+      renderComponent();
+
+      expect(vi.mocked(useGetAgents)).toHaveBeenLastCalledWith(undefined);
+
+      await user.click(screen.getByRole('tab', {name: 'Personal agents'}));
+      expect(vi.mocked(useGetAgents)).toHaveBeenLastCalledWith({kind: 'personal-assistant'});
+
+      await user.click(screen.getByRole('tab', {name: 'All'}));
+      expect(vi.mocked(useGetAgents)).toHaveBeenLastCalledWith(undefined);
+    });
+
+    it('keeps the view tabs when the list fails to load, so another view can be chosen', async () => {
+      const user = userEvent.setup();
+      vi.mocked(useGetAgents).mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        error: new Error('Failed to load agents'),
+      } as ReturnType<typeof useGetAgents>);
+      renderComponent();
+
+      await user.click(screen.getByRole('tab', {name: 'Personal agents'}));
+      expect(vi.mocked(useGetAgents)).toHaveBeenLastCalledWith({kind: 'personal-assistant'});
+      expect(screen.getByText('Failed to load agents')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('tab', {name: 'All'}));
+      expect(vi.mocked(useGetAgents)).toHaveBeenLastCalledWith(undefined);
+    });
+
+    it('offers no personal view inside a project, whose list filters only by organization unit', () => {
+      render(
+        <ProjectScopeProvider project={{id: 'project-1'}}>
+          <AgentsList />
+        </ProjectScopeProvider>,
+      );
+
+      expect(screen.queryByRole('tab', {name: 'Personal agents'})).not.toBeInTheDocument();
+      expect(vi.mocked(useGetAgents)).toHaveBeenLastCalledWith(undefined);
+    });
   });
 });

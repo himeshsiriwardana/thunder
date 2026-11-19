@@ -25,10 +25,12 @@ export const INPUT_ELEMENT_TYPES = new Set<string>([
   ElementTypes.PhoneInput,
   ElementTypes.NumberInput,
   ElementTypes.DateInput,
+  ElementTypes.DateTimeInput,
   ElementTypes.OtpInput,
   ElementTypes.Checkbox,
   ElementTypes.Dropdown,
   ElementTypes.Select,
+  ElementTypes.UserSelect,
 ]);
 
 /**

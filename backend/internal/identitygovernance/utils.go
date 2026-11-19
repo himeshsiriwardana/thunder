@@ -4,6 +4,7 @@
 package identitygovernance
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -12,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/serverconfig"
 	sysconfig "github.com/thunder-id/thunderid/internal/system/config"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
@@ -25,9 +27,36 @@ func isLockable(method providers.AuthenticationMethod) bool {
 	return lockableMethods[method]
 }
 
-// isSuspended reports a suspension recorded in either the state column or the access-state document.
+// isSuspended reports a suspension by the organization, by the identity's owner, or carried from the identity it
+// depends on.
 func isSuspended(state providers.EntityState, accessState AccessState) bool {
+	return isSuspendedByOrganization(state, accessState) || accessState.OwnerSuspend != nil ||
+		accessState.CascadeSuspend != nil
+}
+
+// isSuspendedByOrganization reports the organization's suspension, recorded in either the state column or
+// the access-state document.
+func isSuspendedByOrganization(state providers.EntityState, accessState AccessState) bool {
 	return state == providers.EntityStateSuspended || accessState.Suspend != nil
+}
+
+// ownerApplierContextKey is the context key that marks a suspend or unsuspend call as the owner's.
+type ownerApplierContextKey struct{}
+
+// WithOwnerApplier marks a suspend or unsuspend call as made by the owner of the identity, such as the
+// owner of a personal agent, rather than by the organization. The owner's suspension is held apart from
+// the organization's: each party places and lifts only its own.
+func WithOwnerApplier(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ownerApplierContextKey{}, true)
+}
+
+// suspensionApplier returns who makes a suspend or unsuspend call: the owner when the call is marked
+// with WithOwnerApplier, otherwise the organization.
+func suspensionApplier(ctx context.Context) providers.SuspensionAppliedBy {
+	if owner, _ := ctx.Value(ownerApplierContextKey{}).(bool); owner {
+		return providers.SuspensionAppliedByOwner
+	}
+	return providers.SuspensionAppliedByOrganization
 }
 
 // hasLockEntries reports whether the entity has any recorded lock entry, live or lapsed.
@@ -144,8 +173,9 @@ func lockAppliesAt(plane providers.AccessPlane, method providers.AuthenticationM
 	case providers.AccessPlaneRecovery:
 		return heldAtRecovery[method]
 	default:
-		// Locks never apply at the session, issuance or application planes, so failed logins cannot
-		// end sessions. Unknown planes do not enforce locks.
+		// Locks never apply at the session, issuance, application or verification planes, so failed
+		// logins cannot end sessions and a locked user can still verify a contact. Unknown planes do
+		// not enforce locks.
 		return false
 	}
 }
@@ -296,29 +326,48 @@ func lockEnforcementFor(cfg accountAccessValue, category providers.EntityCategor
 }
 
 // accessReadFor derives what a management read reports for one entity at now. An unreadable document
-// reports suspended.
+// reports suspended. An ended lifespan reports EXPIRED over everything but a suspension, and a lifespan
+// end that does not parse reports expired, as the access checks refuse it.
 func accessReadFor(entity *providers.Entity, enforcement lockEnforcement, now time.Time) AccessRead {
 	var stored RuntimeAttributes
 	if len(entity.RuntimeAttributes) > 0 {
 		if err := json.Unmarshal(entity.RuntimeAttributes, &stored); err != nil {
 			return AccessRead{Status: providers.AccessStatusReport{
-				Value:   providers.AccessStatusSuspended,
-				Details: &providers.AccessStatusDetails{Reason: providers.AccessHoldReasonAdministrativeSuspension},
+				Value: providers.AccessStatusSuspended,
+				Details: &providers.AccessStatusDetails{Reason: providers.AccessHoldReasonAdministrativeSuspension,
+					AppliedBy: []providers.SuspensionAppliedBy{providers.SuspensionAppliedByOrganization}},
 			}}
 		}
 	}
+	status := reportFor(entity.State, stored.AccessState, now, enforcement)
+	if status.Value != providers.AccessStatusSuspended {
+		validUntil, bounded, err := authnprovidercm.ValidUntilOf(entity.SystemAttributes)
+		if err != nil || (bounded && !isLockLive(validUntil.Format(time.RFC3339), now)) {
+			status = expiredReport(validUntil)
+		}
+	}
 	return AccessRead{
-		Status:      reportFor(entity.State, stored.AccessState, now, enforcement),
+		Status:      status,
 		LastLoginAt: stored.AccessState.LastLoginAt,
 	}
 }
 
+// expiredReport builds the EXPIRED report. Since is the lifespan end, omitted when it is unknown.
+func expiredReport(validUntil time.Time) providers.AccessStatusReport {
+	details := providers.AccessStatusDetails{Reason: providers.AccessHoldReasonLifespanEnded}
+	if !validUntil.IsZero() {
+		details.Since = validUntil.UTC().Format(time.RFC3339)
+	}
+	return providers.AccessStatusReport{Value: providers.AccessStatusExpired, Details: &details}
+}
+
 // reportFor derives the status a management read reports, and what produced it. Precedence is
-// SUSPENDED, then LOCKED, then ACTIVE. Method locks that enforcement no longer applies are skipped.
+// SUSPENDED, then LOCKED, then ACTIVE; accessReadFor places EXPIRED after SUSPENDED. Method locks that
+// enforcement no longer applies are skipped.
 func reportFor(state providers.EntityState, accessState AccessState, now time.Time,
 	enforcement lockEnforcement) providers.AccessStatusReport {
 	if isSuspended(state, accessState) {
-		return suspendedReport(accessState.Suspend)
+		return suspendedReport(state, accessState)
 	}
 
 	if entry := accessState.Lock.Account; entry != nil && isLockLive(entry.UnlockAt, now) &&
@@ -336,13 +385,33 @@ func reportFor(state providers.EntityState, accessState AccessState, now time.Ti
 	return providers.AccessStatusReport{Value: providers.AccessStatusActive}
 }
 
-// suspendedReport builds the SUSPENDED report with any recorded details.
-func suspendedReport(suspend *SuspendState) providers.AccessStatusReport {
-	details := providers.AccessStatusDetails{Reason: providers.AccessHoldReasonAdministrativeSuspension}
-	if suspend != nil {
-		details.Since = suspend.SuspendedAt
-		// Reported only to callers authorized to read the record; never on a refusal.
-		details.OperatorNote = suspend.OperatorNote
+// suspendedReport builds the SUSPENDED report with any recorded details. It names every party holding the
+// identity suspended; the reason, time and note are the organization's when it holds one, otherwise the
+// owner's, otherwise the cascaded one's.
+func suspendedReport(state providers.EntityState, accessState AccessState) providers.AccessStatusReport {
+	details := providers.AccessStatusDetails{}
+	if isSuspendedByOrganization(state, accessState) {
+		details.Reason = providers.AccessHoldReasonAdministrativeSuspension
+		details.AppliedBy = append(details.AppliedBy, providers.SuspensionAppliedByOrganization)
+		if suspend := accessState.Suspend; suspend != nil {
+			details.Since = suspend.SuspendedAt
+			// Reported only to callers authorized to read the record; never on a refusal.
+			details.OperatorNote = suspend.OperatorNote
+		}
+	}
+	if owner := accessState.OwnerSuspend; owner != nil {
+		details.AppliedBy = append(details.AppliedBy, providers.SuspensionAppliedByOwner)
+		if details.Reason == "" {
+			details.Reason = providers.AccessHoldReasonOwnerSuspension
+			details.Since = owner.SuspendedAt
+		}
+	}
+	if cascade := accessState.CascadeSuspend; cascade != nil {
+		details.AppliedBy = append(details.AppliedBy, providers.SuspensionAppliedByCascade)
+		if details.Reason == "" {
+			details.Reason = providers.AccessHoldReasonCascadedSuspension
+			details.Since = cascade.SuspendedAt
+		}
 	}
 	return providers.AccessStatusReport{Value: providers.AccessStatusSuspended, Details: &details}
 }

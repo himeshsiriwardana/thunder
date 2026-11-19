@@ -11,6 +11,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/internal/system/deployment"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
@@ -24,6 +25,8 @@ type roleStoreInterface interface {
 	GetRoleList(ctx context.Context, limit, offset int) ([]Role, error)
 	GetRoleListCountByOUID(ctx context.Context, ouID string) (int, error)
 	GetRoleListByOUID(ctx context.Context, ouID string, limit, offset int) ([]Role, error)
+	GetRoleListCountByProject(ctx context.Context, projectID, ouID string) (int, error)
+	GetRoleListByProject(ctx context.Context, projectID, ouID string, limit, offset int) ([]Role, error)
 	CreateRole(ctx context.Context, id string, role RoleCreationDetail) error
 	GetRole(ctx context.Context, id string) (RoleWithPermissions, error)
 	GetRolesByNames(ctx context.Context, names []string) ([]Role, error)
@@ -38,11 +41,24 @@ type roleStoreInterface interface {
 	GetRoleAssignmentsCountByType(ctx context.Context, id, ouID string, assigneeType string) (int, error)
 	UpdateRole(ctx context.Context, id string, role RoleUpdateDetail) error
 	DeleteRole(ctx context.Context, id string) error
-	DeleteAssignmentsByRoleID(ctx context.Context, id string) error
+	DeleteAssignmentsByRoleID(ctx context.Context, id string) ([]RoleAssignment, error)
 	DeleteAssignmentsInOU(ctx context.Context, id, ouID string) error
 	DeleteAssignmentsByAssignee(ctx context.Context, assigneeType, assigneeID string) (int64, error)
+	HasAssigneeAssignments(ctx context.Context, assigneeType, assigneeID string) (bool, error)
 	AddAssignments(ctx context.Context, id string, assignments []RoleAssignment) error
 	RemoveAssignments(ctx context.Context, id string, assignments []RoleAssignment) error
+	// The mandated assignment methods write the rows a sharing policy owns. Direct assignments and
+	// the methods above never touch them, except the deletes that remove every row of a role,
+	// an assignee or an organization unit.
+	AddMandatedAssignments(ctx context.Context, policyID, roleID, ouID string, assignee RoleAssignment) error
+	ListMandatedAssignments(ctx context.Context, policyID string) ([]MandatedAssignment, error)
+	DeleteMandatedAssignments(ctx context.Context, policyID string, filter MandatedFilter) error
+	// ListMandatedRoleUnits lists each role a sharing policy mandates in an organization unit, once.
+	ListMandatedRoleUnits(ctx context.Context) ([]MandatedRoleUnit, error)
+	// ListMandatedAssignmentsForRole lists a role's mandated assignments in ouID, or in every unit when it is empty.
+	ListMandatedAssignmentsForRole(ctx context.Context, roleID, ouID string) ([]RoleAssignment, error)
+	// GetDirectAssignments returns the direct assignments of the role in ouID to any of assigneeIDs.
+	GetDirectAssignments(ctx context.Context, roleID, ouID string, assigneeIDs []string) ([]RoleAssignment, error)
 	CheckRoleNameExists(ctx context.Context, ouID, name string) (bool, error)
 	CheckRoleNameExistsExcludingID(ctx context.Context, ouID, name, excludeRoleID string) (bool, error)
 	// GetAuthorizedPermissionsByResourceServer counts only assignments made in assignmentOUID when
@@ -50,6 +66,9 @@ type roleStoreInterface interface {
 	GetAuthorizedPermissionsByResourceServer(
 		ctx context.Context, entityID string, groupIDs, roleIDs []string, assignmentOUID, resourceServerID string,
 		requestedPermissions []string) ([]string, error)
+	// GetHeldPermissionsByResourceServer lists held permissions, scoped to the assignment OU when given.
+	GetHeldPermissionsByResourceServer(ctx context.Context, entityID string, groupIDs, roleIDs []string,
+		assignmentOUID, resourceServerID string) ([]string, error)
 	// GetAllPermissionsForAssignees returns every permission the entity and/or groups hold through
 	// their assigned roles, grouped by resource server. It takes no filters: it enumerates.
 	GetAllPermissionsForAssignees(
@@ -59,6 +78,8 @@ type roleStoreInterface interface {
 	// GetReferencedPermissions returns the distinct permissions referenced by any role, grouped by
 	// resource server. Used to detect permissions left dangling by a resource deletion.
 	GetReferencedPermissions(ctx context.Context) ([]ResourcePermissions, error)
+	// GetRolesByPermission returns the roles that grant a permission on a resource server.
+	GetRolesByPermission(ctx context.Context, resourceServerID, permission string) ([]Role, error)
 	// DeleteRolePermission removes the given permission from every role that holds it.
 	DeleteRolePermission(ctx context.Context, resourceServerID, permission string) (int64, error)
 	// GetEntityRoleIDs returns the set of role IDs assigned to the entity directly or via
@@ -176,6 +197,61 @@ func (s *roleStore) GetRoleListByOUID(ctx context.Context, ouID string, limit, o
 	return roles, nil
 }
 
+// GetRoleListCountByProject retrieves the total count of the roles of a project, narrowed to the ones an
+// organization unit owns when ouID is set.
+func (s *roleStore) GetRoleListCountByProject(ctx context.Context, projectID, ouID string) (int, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return 0, err
+	}
+
+	var countResults []map[string]interface{}
+	if ouID == "" {
+		countResults, err = dbClient.QueryContext(ctx, queryGetRoleListCountByProject, projectID, s.scope(ctx))
+	} else {
+		countResults, err = dbClient.QueryContext(ctx, queryGetRoleListCountByProjectAndOUID,
+			projectID, ouID, s.scope(ctx))
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to execute count query: %w", err)
+	}
+
+	return parseCountResult(countResults)
+}
+
+// GetRoleListByProject retrieves the roles of a project with pagination, narrowed to the ones an
+// organization unit owns when ouID is set.
+func (s *roleStore) GetRoleListByProject(
+	ctx context.Context, projectID, ouID string, limit, offset int,
+) ([]Role, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []map[string]interface{}
+	if ouID == "" {
+		results, err = dbClient.QueryContext(ctx, queryGetRoleListByProject, projectID, limit, offset, s.scope(ctx))
+	} else {
+		results, err = dbClient.QueryContext(ctx, queryGetRoleListByProjectAndOUID,
+			projectID, ouID, limit, offset, s.scope(ctx))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute role list query: %w", err)
+	}
+
+	roles := make([]Role, 0, len(results))
+	for _, row := range results {
+		role, err := buildRoleBasicInfoFromResultRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build role from result row: %w", err)
+		}
+		roles = append(roles, role)
+	}
+
+	return roles, nil
+}
+
 // CreateRole creates a new role in the database.
 func (s *roleStore) CreateRole(ctx context.Context, id string, role RoleCreationDetail) error {
 	dbClient, err := s.getConfigDBClient()
@@ -187,6 +263,7 @@ func (s *roleStore) CreateRole(ctx context.Context, id string, role RoleCreation
 		queryCreateRole,
 		id,
 		role.OUID,
+		sysutils.NullableString(role.ProjectID),
 		role.Name,
 		role.Description,
 		s.scope(ctx),
@@ -247,6 +324,7 @@ func (s *roleStore) GetRole(ctx context.Context, id string) (RoleWithPermissions
 		Name:        roleBasicInfo.Name,
 		Description: roleBasicInfo.Description,
 		OUID:        roleBasicInfo.OUID,
+		ProjectID:   roleBasicInfo.ProjectID,
 		Permissions: permissions,
 	}, nil
 }
@@ -395,10 +473,15 @@ func parseAssignmentResults(results []map[string]interface{}) ([]RoleAssignment,
 		if err != nil {
 			return nil, err
 		}
+		policyID, err := parseStringField(row, "sharing_policy_id")
+		if err != nil {
+			return nil, err
+		}
 		assignments = append(assignments, RoleAssignment{
-			ID:   assigneeID,
-			Type: AssigneeType(assigneeType),
-			OUID: ouID,
+			ID:       assigneeID,
+			Type:     AssigneeType(assigneeType),
+			OUID:     ouID,
+			PolicyID: policyID,
 		})
 	}
 
@@ -459,6 +542,7 @@ func (s *roleStore) UpdateRole(ctx context.Context, id string, role RoleUpdateDe
 	rowsAffected, err := dbClient.ExecuteContext(ctx,
 		queryUpdateRole,
 		role.OUID,
+		sysutils.NullableString(role.ProjectID),
 		role.Name,
 		role.Description,
 		id,
@@ -500,18 +584,20 @@ func (s *roleStore) DeleteRole(ctx context.Context, id string) error {
 	return nil
 }
 
-// DeleteAssignmentsByRoleID deletes all assignments for a role. Used for cascade delete.
-func (s *roleStore) DeleteAssignmentsByRoleID(ctx context.Context, id string) error {
+// DeleteAssignmentsByRoleID deletes all assignments for a role and returns the ones it removed. Used for
+// cascade delete. The rows are those the delete itself removed, so an assignment changed concurrently is
+// reported exactly when it is removed.
+func (s *roleStore) DeleteAssignmentsByRoleID(ctx context.Context, id string) ([]RoleAssignment, error) {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	_, err = dbClient.ExecuteContext(ctx, queryDeleteAllRoleAssignments, id, s.scope(ctx))
+	results, err := dbClient.QueryContext(ctx, queryDeleteAllRoleAssignments, id, s.scope(ctx))
 	if err != nil {
-		return fmt.Errorf("failed to delete assignments for role: %w", err)
+		return nil, fmt.Errorf("failed to delete assignments for role: %w", err)
 	}
-	return nil
+	return parseAssignmentResults(results)
 }
 
 // DeleteAssignmentsInOU deletes the assignments made in one organization unit for a role.
@@ -545,6 +631,23 @@ func (s *roleStore) DeleteAssignmentsByAssignee(
 	return rowsAffected, nil
 }
 
+// HasAssigneeAssignments reports whether the assignee holds any role assignment.
+func (s *roleStore) HasAssigneeAssignments(
+	ctx context.Context, assigneeType, assigneeID string) (bool, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return false, err
+	}
+
+	countResults, err := dbClient.QueryContext(
+		ctx, queryCountAssigneeAssignments, assigneeType, assigneeID, s.scope(ctx))
+	if err != nil {
+		return false, fmt.Errorf("failed to count assignments for assignee: %w", err)
+	}
+
+	return parseBoolFromCount(countResults)
+}
+
 // GetReferencedPermissions returns the distinct permissions referenced by any role, grouped by
 // resource server.
 func (s *roleStore) GetReferencedPermissions(ctx context.Context) ([]ResourcePermissions, error) {
@@ -572,6 +675,30 @@ func (s *roleStore) GetReferencedPermissions(ctx context.Context) ([]ResourcePer
 	}
 
 	return resourcePermissionsFromMap(byResourceServer), nil
+}
+
+// GetRolesByPermission returns the roles that grant a permission on a resource server.
+func (s *roleStore) GetRolesByPermission(
+	ctx context.Context, resourceServerID, permission string) ([]Role, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := dbClient.QueryContext(ctx, queryGetRolesByPermission, resourceServerID, permission, s.scope(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get roles by permission: %w", err)
+	}
+
+	roles := make([]Role, 0, len(results))
+	for _, row := range results {
+		role, err := buildRoleBasicInfoFromResultRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build role from result row: %w", err)
+		}
+		roles = append(roles, role)
+	}
+	return roles, nil
 }
 
 // DeleteRolePermission removes the given permission from every role that holds it.
@@ -615,6 +742,150 @@ func (s *roleStore) RemoveAssignments(ctx context.Context, id string, assignment
 		}
 	}
 	return nil
+}
+
+// AddMandatedAssignments adds the assignment a sharing policy mandates for a role in an organization unit.
+func (s *roleStore) AddMandatedAssignments(
+	ctx context.Context, policyID, roleID, ouID string, assignee RoleAssignment) error {
+	if policyID == "" {
+		return errEmptyPolicyID
+	}
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return err
+	}
+
+	_, err = dbClient.ExecuteContext(
+		ctx, queryCreateRoleAssignment, roleID, ouID, assignee.Type, assignee.ID, policyID, s.scope(ctx))
+	if err != nil {
+		return fmt.Errorf("failed to add mandated assignment to role: %w", err)
+	}
+	return nil
+}
+
+// ListMandatedAssignments lists the assignments a sharing policy mandates.
+func (s *roleStore) ListMandatedAssignments(ctx context.Context, policyID string) ([]MandatedAssignment, error) {
+	if policyID == "" {
+		return nil, errEmptyPolicyID
+	}
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := dbClient.QueryContext(ctx, queryGetMandatedAssignmentsByPolicy, policyID, s.scope(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mandated assignments: %w", err)
+	}
+
+	mandated := make([]MandatedAssignment, 0, len(results))
+	for _, row := range results {
+		roleID, err := parseStringField(row, "role_id")
+		if err != nil {
+			return nil, err
+		}
+		assignments, err := parseAssignmentResults([]map[string]interface{}{row})
+		if err != nil {
+			return nil, err
+		}
+		mandated = append(mandated, MandatedAssignment{RoleID: roleID, Assignment: assignments[0]})
+	}
+	return mandated, nil
+}
+
+// DeleteMandatedAssignments deletes the assignments a sharing policy mandates, in one organization
+// unit when the filter names one, for one role there when it also names a role, and everywhere otherwise.
+func (s *roleStore) DeleteMandatedAssignments(ctx context.Context, policyID string, filter MandatedFilter) error {
+	if policyID == "" {
+		return errEmptyPolicyID
+	}
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case filter.OUID == "" && filter.RoleID != "":
+		return errMandatedRoleWithoutOU
+	case filter.OUID == "":
+		_, err = dbClient.ExecuteContext(ctx, queryDeleteMandatedAssignmentsByPolicy, policyID, s.scope(ctx))
+	case filter.RoleID == "":
+		_, err = dbClient.ExecuteContext(
+			ctx, queryDeleteMandatedAssignmentsByPolicyInOU, policyID, filter.OUID, s.scope(ctx))
+	default:
+		_, err = dbClient.ExecuteContext(ctx, queryDeleteMandatedAssignmentsByPolicyRoleInOU,
+			policyID, filter.OUID, filter.RoleID, s.scope(ctx))
+	}
+	if err != nil {
+		return fmt.Errorf("failed to delete mandated assignments: %w", err)
+	}
+	return nil
+}
+
+// ListMandatedRoleUnits lists each role a sharing policy mandates in an organization unit, once.
+func (s *roleStore) ListMandatedRoleUnits(ctx context.Context) ([]MandatedRoleUnit, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := dbClient.QueryContext(ctx, queryGetMandatedRoleUnits, s.scope(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mandated roles: %w", err)
+	}
+
+	units := make([]MandatedRoleUnit, 0, len(results))
+	for _, row := range results {
+		fields, err := parseStringFields(row, "sharing_policy_id", "role_id", "assignment_ou_id")
+		if err != nil {
+			return nil, err
+		}
+		units = append(units, MandatedRoleUnit{PolicyID: fields[0], RoleID: fields[1], OUID: fields[2]})
+	}
+	return units, nil
+}
+
+// ListMandatedAssignmentsForRole lists a role's mandated assignments in ouID, or in every unit when it is empty.
+func (s *roleStore) ListMandatedAssignmentsForRole(
+	ctx context.Context, roleID, ouID string) ([]RoleAssignment, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []map[string]interface{}
+	if ouID == "" {
+		results, err = dbClient.QueryContext(ctx, queryGetMandatedAssignmentsByRole, roleID, s.scope(ctx))
+	} else {
+		results, err = dbClient.QueryContext(
+			ctx, queryGetMandatedAssignmentsByRoleInOU, roleID, ouID, s.scope(ctx))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mandated assignments of role: %w", err)
+	}
+	return parseAssignmentResults(results)
+}
+
+// GetDirectAssignments returns the direct assignments of the role in ouID to any of assigneeIDs.
+func (s *roleStore) GetDirectAssignments(
+	ctx context.Context, roleID, ouID string, assigneeIDs []string) ([]RoleAssignment, error) {
+	if len(assigneeIDs) == 0 {
+		return []RoleAssignment{}, nil
+	}
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	query, args, err := buildGetDirectAssignmentsQuery(roleID, ouID, assigneeIDs, s.scope(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build direct assignments query: %w", err)
+	}
+	results, err := dbClient.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get direct assignments of role: %w", err)
+	}
+	return parseAssignmentResults(results)
 }
 
 // getRolePermissions retrieves all permissions for a role.
@@ -667,11 +938,15 @@ func buildRoleBasicInfoFromResultRow(row map[string]interface{}) (Role, error) {
 		return Role{}, err
 	}
 
+	// A role in no project has no project ID.
+	projectID, _ := row["project_id"].(string)
+
 	return Role{
 		ID:          fields[0],
 		Name:        fields[1],
 		Description: fields[2],
 		OUID:        fields[3],
+		ProjectID:   projectID,
 	}, nil
 }
 
@@ -705,7 +980,7 @@ func addAssignmentsToRole(
 ) error {
 	for _, assignment := range assignments {
 		_, err := dbClient.ExecuteContext(
-			ctx, queryCreateRoleAssignment, id, assignment.OUID, assignment.Type, assignment.ID, deploymentID)
+			ctx, queryCreateRoleAssignment, id, assignment.OUID, assignment.Type, assignment.ID, "", deploymentID)
 		if err != nil {
 			return fmt.Errorf("failed to add assignment to role: %w", err)
 		}
@@ -815,6 +1090,27 @@ func (s *roleStore) GetAuthorizedPermissionsByResourceServer(
 	entityID string,
 	groupIDs, roleIDs []string,
 	assignmentOUID, resourceServerID string,
+	requestedPermissions []string,
+) ([]string, error) {
+	if len(requestedPermissions) == 0 {
+		return []string{}, nil
+	}
+	return s.getPermissions(ctx, entityID, groupIDs, roleIDs, assignmentOUID, resourceServerID, requestedPermissions)
+}
+
+// GetHeldPermissionsByResourceServer retrieves all held permissions for one resource server in one query.
+func (s *roleStore) GetHeldPermissionsByResourceServer(
+	ctx context.Context, entityID string, groupIDs, roleIDs []string, assignmentOUID, resourceServerID string,
+) ([]string, error) {
+	if entityID == "" && len(groupIDs) == 0 && len(roleIDs) == 0 {
+		return []string{}, nil
+	}
+	return s.getPermissions(ctx, entityID, groupIDs, roleIDs, assignmentOUID, resourceServerID, nil)
+}
+
+// getPermissions retrieves held permissions, optionally restricted to requested names.
+func (s *roleStore) getPermissions(
+	ctx context.Context, entityID string, groupIDs, roleIDs []string, assignmentOUID, resourceServerID string,
 	requestedPermissions []string,
 ) ([]string, error) {
 	dbClient, err := s.getConfigDBClient()

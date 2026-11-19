@@ -125,6 +125,7 @@ func (e *roleExporter) GetResourceByID(
 		Name:            roleWithPermissions.Name,
 		Description:     roleWithPermissions.Description,
 		OUID:            roleWithPermissions.OUID,
+		ProjectID:       roleWithPermissions.ProjectID,
 		Permissions:     perms,
 		SharingPolicies: policies,
 		Assignments:     assignments,
@@ -171,6 +172,7 @@ func (e *roleExporter) ViewResource(_ context.Context, document *yaml.Node) (int
 			Description: role.Description,
 			OUID:        role.OUID,
 			OUHandle:    role.OUHandle,
+			ProjectID:   role.ProjectID,
 			Permissions: permissions,
 		}), nil
 	})
@@ -340,7 +342,7 @@ func placeRoleAssignments(
 		case a.Type == AssigneeTypeGroup && isGroup:
 			belongs = g.OUID == a.OUID
 		case a.Type != AssigneeTypeGroup && isEntity && e.OUID != a.OUID:
-			shared, svcErr := isEntitySharedWithOU(ctx, sharingSvc, e, a.OUID)
+			shared, svcErr := isEntitySharedWithOU(ctx, entitySvc, sharingSvc, e, a.OUID)
 			if svcErr != nil {
 				return fmt.Errorf("failed to check whether '%s' is shared with organization unit '%s': %s",
 					a.ID, a.OUID, svcErr.Error.DefaultValue)
@@ -397,6 +399,7 @@ type roleDeclarativeResource struct {
 	Description     string                      `yaml:"description,omitempty"`
 	OUID            string                      `yaml:"ouId,omitempty"`
 	OUHandle        string                      `yaml:"ouHandle,omitempty"`
+	ProjectID       string                      `yaml:"projectId,omitempty"`
 	Permissions     []roleDeclarativePermission `yaml:"permissions"`
 	SharingPolicies []sharing.PolicyRequest     `yaml:"sharingPolicies,omitempty"`
 	Assignments     []RoleAssignment            `yaml:"assignments,omitempty"`
@@ -432,6 +435,7 @@ func parseToRole(data []byte) (*RoleWithPermissionsAndAssignments, error) {
 		Description: roleResource.Description,
 		OUID:        roleResource.OUID,
 		OUHandle:    roleResource.OUHandle,
+		ProjectID:   roleResource.ProjectID,
 		Permissions: permissions,
 		Assignments: roleResource.Assignments,
 	}
@@ -515,6 +519,10 @@ func (e *roleExporter) getAllRoleAssignments(
 		}
 
 		for _, assignment := range list.Assignments {
+			// A mandated assignment follows its sharing policy and would import back as a direct one.
+			if assignment.PolicyID != "" {
+				continue
+			}
 			assignments = append(assignments, RoleAssignment{
 				ID:   assignment.ID,
 				Type: assignment.Type,

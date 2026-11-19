@@ -152,8 +152,15 @@ func (s *securityService) authorize(r *http.Request) error {
 		return nil
 	}
 	permissions := GetPermissions(r.Context())
-	if !HasSufficientPermission(permissions, required) {
+	if !HasSufficientSystemPermission(permissions, required) {
 		return errInsufficientPermissions
+	}
+	// A public path also serves callers without a token, so its service decides what a token that names no
+	// organization unit may do there.
+	if LacksOrganizationUnit(r.Context()) && !s.isPublicPath(r.Context(), r.URL.Path) {
+		s.logger.Debug(r.Context(), "Request refused: the token names no organization unit",
+			log.String("path", r.URL.Path))
+		return errForbidden
 	}
 	return nil
 }
@@ -168,13 +175,8 @@ func (s *securityService) authorize(r *http.Request) error {
 // sub-resources) are listed before broader wildcards in apiPermissionEntries to
 // ensure correct precedence — no manual prefix arithmetic is required.
 func (s *securityService) getRequiredPermissionForAPI(method, path string) string {
-	key := method + " " + path
-	for _, entry := range s.compiledAPIPermissions {
-		if entry.re.MatchString(key) {
-			return entry.permission
-		}
-	}
-	return GetSystemRootPermission()
+	permission, _ := matchAPIPermission(s.compiledAPIPermissions, method+" "+path)
+	return permission
 }
 
 // isPublicPath checks if the given request path matches any of the configured public path patterns.

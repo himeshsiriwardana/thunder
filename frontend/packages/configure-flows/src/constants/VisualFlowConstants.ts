@@ -3,7 +3,7 @@
 
 import {ActionTypes} from '../models/actions';
 import {BlockTypes, ElementTypes} from '../models/elements';
-import {ExecutionTypes, StepTypes} from '../models/steps';
+import {ExecutionTypes, StaticStepTypes, StepTypes} from '../models/steps';
 import {TemplateTypes} from '../models/templates';
 import {WidgetTypes} from '../models/widget';
 
@@ -49,6 +49,7 @@ class VisualFlowConstants {
     StepTypes.Rule,
     StepTypes.Execution,
     StepTypes.Call,
+    StaticStepTypes.Variables,
     TemplateTypes.Basic,
     TemplateTypes.BasicFederated,
     TemplateTypes.Blank,
@@ -61,10 +62,12 @@ class VisualFlowConstants {
     ElementTypes.PhoneInput,
     ElementTypes.NumberInput,
     ElementTypes.DateInput,
+    ElementTypes.DateTimeInput,
     ElementTypes.OtpInput,
     ElementTypes.Checkbox,
     ElementTypes.Dropdown,
     ElementTypes.Select,
+    ElementTypes.UserSelect,
     // Widgets are allowed for drop detection, but handled specially to show dialog
     WidgetTypes.GoogleFederation,
     WidgetTypes.IdentifierPassword,
@@ -108,10 +111,12 @@ class VisualFlowConstants {
     ElementTypes.PhoneInput,
     ElementTypes.NumberInput,
     ElementTypes.DateInput,
+    ElementTypes.DateTimeInput,
     ElementTypes.OtpInput,
     ElementTypes.Checkbox,
     ElementTypes.Dropdown,
     ElementTypes.Select,
+    ElementTypes.UserSelect,
     WidgetTypes.GoogleFederation,
     WidgetTypes.IdentifierPassword,
     WidgetTypes.SMSOTP,
@@ -142,10 +147,12 @@ class VisualFlowConstants {
     ElementTypes.PhoneInput,
     ElementTypes.NumberInput,
     ElementTypes.DateInput,
+    ElementTypes.DateTimeInput,
     ElementTypes.OtpInput,
     ElementTypes.Checkbox,
     ElementTypes.Dropdown,
     ElementTypes.Select,
+    ElementTypes.UserSelect,
     ElementTypes.Action,
     ElementTypes.Resend,
     ElementTypes.Icon,

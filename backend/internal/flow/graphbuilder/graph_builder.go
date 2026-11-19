@@ -73,10 +73,7 @@ func (b *graphBuilder) GetGraph(ctx context.Context, flow *providers.CompleteFlo
 	graph, err := b.buildGraph(ctx, flow)
 	if err != nil {
 		logger.Error(ctx, "Failed to build graph", log.Error(err))
-		return nil, tidcommon.CustomServiceError(errorGraphBuildFailure, tidcommon.I18nMessage{
-			Key:          "error.flow.graphbuilder.graph_build_failure_description",
-			DefaultValue: err.Error(),
-		})
+		return nil, &errorGraphBuildFailure
 	}
 
 	// Cache the built graph
@@ -265,6 +262,9 @@ func (b *graphBuilder) configureNodeNavigation(nodeDef *providers.NodeDefinition
 		if callNode, ok := node.(core.CallNodeInterface); ok {
 			callNode.SetOnFailure(nodeDef.OnFailure)
 		}
+		if variablesNode, ok := node.(core.VariablesNodeInterface); ok {
+			variablesNode.SetOnFailure(nodeDef.OnFailure)
+		}
 
 		// Add edge for graph structure
 		if _, exists := edges[nodeDef.ID]; !exists {
@@ -357,7 +357,7 @@ func (b *graphBuilder) configureNodeInputs(
 	nodeDef *providers.NodeDefinition,
 	node core.NodeInterface,
 ) {
-	logger := b.logger.With(log.String("nodeID", nodeDef.ID))
+	logger := b.logger.With(log.String(log.LoggerKeyNodeID, nodeDef.ID))
 
 	executorNode, ok := node.(core.ExecutorBackedNodeInterface)
 	if !ok {
@@ -374,34 +374,16 @@ func (b *graphBuilder) configureNodeInputs(
 	inputs := make([]providers.Input, len(nodeDef.Executor.Inputs))
 	for i, input := range nodeDef.Executor.Inputs {
 		inputs[i] = providers.Input{
-			Ref:        input.Ref,
-			Identifier: input.Identifier,
-			Type:       input.Type,
-			Required:   input.Required,
-			OneTimeUse: input.OneTimeUse,
+			Ref:          input.Ref,
+			Identifier:   input.Identifier,
+			Type:         input.Type,
+			Required:     input.Required,
+			OneTimeUse:   input.OneTimeUse,
+			DefaultValue: input.DefaultValue,
+			Constant:     input.Constant,
 		}
 	}
 	executorNode.SetInputs(inputs)
-}
-
-// toValidationRules converts mgt rule definitions to runtime ValidationRule
-// values and pre-compiles their regex patterns. Returns nil for an empty input.
-func toValidationRules(defs []providers.ValidationRuleDefinition) ([]providers.ValidationRule, error) {
-	if len(defs) == 0 {
-		return nil, nil
-	}
-	rules := make([]providers.ValidationRule, len(defs))
-	for i, d := range defs {
-		rules[i] = providers.ValidationRule{
-			Type:    providers.ValidationType(d.Type),
-			Value:   d.Value,
-			Message: d.Message,
-		}
-	}
-	if err := common.PrepareValidationRules(rules); err != nil {
-		return nil, err
-	}
-	return rules, nil
 }
 
 // configureNodeVariant sets the prompt node's variant from the node definition.
@@ -444,7 +426,7 @@ func (b *graphBuilder) configureNodePrompts(
 	node core.NodeInterface,
 	edges map[string][]string,
 ) error {
-	logger := b.logger.With(log.String("nodeID", nodeDef.ID))
+	logger := b.logger.With(log.String(log.LoggerKeyNodeID, nodeDef.ID))
 
 	if len(nodeDef.Prompts) == 0 {
 		logger.Debug(ctx, "No prompts to configure for this node")
@@ -462,18 +444,20 @@ func (b *graphBuilder) configureNodePrompts(
 		// Convert inputs
 		inputs := make([]providers.Input, len(promptDef.Inputs))
 		for j, inputDef := range promptDef.Inputs {
-			validation, err := toValidationRules(inputDef.Validation)
+			validation, err := common.ToValidationRules(inputDef.Validation)
 			if err != nil {
 				return fmt.Errorf("node %s, prompt %d, input %s: %w",
 					nodeDef.ID, i, inputDef.Identifier, err)
 			}
 			inputs[j] = providers.Input{
-				Ref:        inputDef.Ref,
-				Identifier: inputDef.Identifier,
-				Type:       inputDef.Type,
-				Required:   inputDef.Required,
-				OneTimeUse: inputDef.OneTimeUse,
-				Validation: validation,
+				Ref:          inputDef.Ref,
+				Identifier:   inputDef.Identifier,
+				Type:         inputDef.Type,
+				Required:     inputDef.Required,
+				OneTimeUse:   inputDef.OneTimeUse,
+				DefaultValue: inputDef.DefaultValue,
+				Constant:     inputDef.Constant,
+				Validation:   validation,
 			}
 		}
 		prompts[i].Inputs = inputs
@@ -504,7 +488,7 @@ func (b *graphBuilder) configureNodePrompts(
 func (b *graphBuilder) configureDisplayOnlyProperties(
 	ctx context.Context, nodeDef *providers.NodeDefinition, node core.NodeInterface,
 	edges map[string][]string, boundaries *[]segmentBoundary) error {
-	logger := b.logger.With(log.String("nodeID", nodeDef.ID))
+	logger := b.logger.With(log.String(log.LoggerKeyNodeID, nodeDef.ID))
 
 	if nodeDef.Next == "" {
 		return nil
@@ -573,7 +557,7 @@ func (b *graphBuilder) computeSegments(g core.GraphInterface, boundaries []segme
 // configureNodeExecutor configures the executor for a node.
 func (b *graphBuilder) configureNodeExecutor(
 	ctx context.Context, nodeDef *providers.NodeDefinition, node core.NodeInterface) error {
-	logger := b.logger.With(log.String("nodeID", nodeDef.ID))
+	logger := b.logger.With(log.String(log.LoggerKeyNodeID, nodeDef.ID))
 
 	if nodeDef.Executor == nil {
 		logger.Debug(ctx, "No executor to configure for this node")

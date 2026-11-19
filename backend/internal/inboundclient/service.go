@@ -73,6 +73,10 @@ type InboundClientServiceInterface interface {
 	IsClientAccessibleFromOU(
 		ctx context.Context, client *providers.OAuthClient, ouID string,
 	) (bool, *tidcommon.ServiceError)
+	// IsClientAccessibleFromOUByEntityID is IsClientAccessibleFromOU for any client, by its entity id.
+	IsClientAccessibleFromOUByEntityID(ctx context.Context, entityID, ouID string) (bool, *tidcommon.ServiceError)
+	// IsClientShared reports whether any sharing policy exists for the client of the given entity.
+	IsClientShared(ctx context.Context, entityID string) (bool, *tidcommon.ServiceError)
 	// GetOAuthClientByEntityID returns the runtime OAuth client of the entity, or (nil, nil) when the
 	// entity does not exist or has no OAuth client registered.
 	GetOAuthClientByEntityID(ctx context.Context, entityID string) (*providers.OAuthClient, error)
@@ -117,6 +121,8 @@ type inboundClientService struct {
 	logger         *log.Logger
 	// keepsReferences is set on a control plane, which keeps a value reference where a value belongs.
 	keepsReferences bool
+	// systemFlows is nil where system flows are off.
+	systemFlows systemFlowProvider
 }
 
 // newInboundClientService creates and returns an inboundClientService with all dependencies wired.
@@ -160,7 +166,7 @@ func (s *inboundClientService) CreateInboundClient(ctx context.Context, client *
 	if client.ID != "" && s.store.IsDeclarative(ctx, client.ID) {
 		return ErrCannotModifyDeclarative
 	}
-	if err := s.resolveFlowDefaults(ctx, client); err != nil {
+	if err := s.resolveFlowDefaults(ctx, client, oauthProfile); err != nil {
 		return err
 	}
 	if err := s.reconcileReferencedFlows(ctx, client); err != nil {
@@ -254,7 +260,7 @@ func (s *inboundClientService) UpdateInboundClient(ctx context.Context, client *
 	if s.store.IsDeclarative(ctx, client.ID) {
 		return ErrCannotModifyDeclarative
 	}
-	if err := s.resolveFlowDefaults(ctx, client); err != nil {
+	if err := s.resolveFlowDefaults(ctx, client, oauthProfile); err != nil {
 		return err
 	}
 	if err := s.reconcileReferencedFlows(ctx, client); err != nil {
@@ -327,7 +333,7 @@ func (s *inboundClientService) Validate(ctx context.Context, client *inboundmode
 	if client == nil {
 		return nil
 	}
-	if err := s.resolveFlowDefaults(ctx, client); err != nil {
+	if err := s.resolveFlowDefaults(ctx, client, oauthProfile); err != nil {
 		return err
 	}
 	if fkErr := s.validateFKs(ctx, client); fkErr != nil {
@@ -395,12 +401,22 @@ func (s *inboundClientService) ResolveInboundAuthProfileHandles(
 	if s.flowMgt == nil {
 		return nil
 	}
+	// A profile may name a flow of another organization unit, such as a default flow, so the flows are
+	// read without the caller's authorization.
+	ctx = security.WithRuntimeContext(ctx)
 	if profile.AuthFlowID == "" && profile.AuthFlowHandle != "" {
 		flow, svcErr := s.flowMgt.GetFlowByHandle(ctx, profile.AuthFlowHandle, providers.FlowTypeAuthentication)
 		if svcErr != nil {
 			return ErrFKInvalidAuthFlow
 		}
 		profile.AuthFlowID = flow.ID
+	}
+	if profile.DeviceGrantFlowID == "" && profile.DeviceGrantFlowHandle != "" {
+		flow, svcErr := s.flowMgt.GetFlowByHandle(ctx, profile.DeviceGrantFlowHandle, providers.FlowTypeDeviceGrant)
+		if svcErr != nil {
+			return ErrFKInvalidDeviceGrantFlow
+		}
+		profile.DeviceGrantFlowID = flow.ID
 	}
 	if profile.RegistrationFlowID == "" && profile.RegistrationFlowHandle != "" {
 		flow, svcErr := s.flowMgt.GetFlowByHandle(ctx, profile.RegistrationFlowHandle, providers.FlowTypeRegistration)
@@ -431,20 +447,41 @@ func (s *inboundClientService) resolveClientID(ctx context.Context, entityID str
 	if s.entityProvider == nil {
 		return ""
 	}
-	e, epErr := s.entityProvider.GetEntityProfile(entityID)
+	e, epErr := s.entityProvider.GetEntityProfile(ctx, entityID)
 	if epErr != nil {
 		s.logger.Warn(ctx, "Failed to resolve OAuth client_id from entity provider",
-			log.String("entityID", entityID), log.Error(epErr))
+			log.MaskedString(log.LoggerKeyEntityID, entityID), log.Error(epErr))
 		return ""
 	}
 	return clientIDFromEntity(e)
 }
 
-// DeleteInboundClient removes the inbound client, OAuth profile, and certificates for the given entity.
+// DeleteInboundClient removes the inbound client, OAuth profile, and certificates for the given entity. It
+// revokes what the client issued and detaches it from the sessions it took part in. A failure to revoke before
+// the deletion deletes nothing and is returned. A failure after it is logged and the deletion reported as done,
+// since the client is gone and deleting again could not revoke anything more.
 func (s *inboundClientService) DeleteInboundClient(ctx context.Context, entityID string) error {
 	if s.store.IsDeclarative(ctx, entityID) {
 		return ErrCannotModifyDeclarative
 	}
+	inputs := map[string]string{systemFlowInputEntity: entityID}
+	shared, svcErr := s.runSystemFlow(ctx, systemFlowInboundClientDeletePre, inputs, nil)
+	if svcErr != nil {
+		return fmt.Errorf("%w: %s", errRevocationFailed, svcErr.Code)
+	}
+	if err := s.deleteInboundClient(ctx, entityID); err != nil {
+		return err
+	}
+	if _, svcErr = s.runSystemFlow(ctx, systemFlowRevocationPost, inputs, shared); svcErr != nil {
+		s.logger.Error(ctx, "The inbound client was deleted, but revoking what it issued while it was deleted "+
+			"failed; a token issued in that window can stay valid until it expires",
+			log.MaskedString("entityID", entityID), log.String("code", svcErr.Code))
+	}
+	return nil
+}
+
+// deleteInboundClient removes the inbound client, OAuth profile, and certificates in one transaction.
+func (s *inboundClientService) deleteInboundClient(ctx context.Context, entityID string) error {
 	// Capture OAuth client_id before the caller deletes the entity itself.
 	oauthClientID := s.resolveClientID(ctx, entityID)
 	return s.transactioner.Transact(ctx, func(txCtx context.Context) error {
@@ -574,7 +611,7 @@ func (s *inboundClientService) GetOAuthClientByClientID(ctx context.Context, cli
 		return nil, nil
 	}
 
-	entityIDPtr, epErr := s.entityProvider.IdentifyEntity(map[string]interface{}{"clientId": clientID})
+	entityIDPtr, epErr := s.entityProvider.IdentifyEntity(ctx, map[string]interface{}{"clientId": clientID})
 	if epErr != nil {
 		if epErr.Code == entityprovider.ErrorCodeEntityNotFound {
 			return nil, nil
@@ -606,7 +643,7 @@ func (s *inboundClientService) GetOAuthClientByEntityID(ctx context.Context, ent
 // is missing.
 func (s *inboundClientService) oauthClientForEntity(ctx context.Context, entityID, clientID string) (
 	*providers.OAuthClient, error) {
-	e, epErr := s.entityProvider.GetEntityProfile(entityID)
+	e, epErr := s.entityProvider.GetEntityProfile(ctx, entityID)
 	if epErr != nil {
 		if epErr.Code == entityprovider.ErrorCodeEntityNotFound {
 			return nil, nil
@@ -655,9 +692,29 @@ func (s *inboundClientService) IsClientAccessibleFromOU(
 	if accessingOUID == "" || client == nil {
 		return true, nil
 	}
+	return s.isAccessibleFromOU(ctx, client.ID, client.OUID, client.EntityCategory, accessingOUID)
+}
+
+// IsClientAccessibleFromOUByEntityID reports whether a client may act for the given organization unit.
+func (s *inboundClientService) IsClientAccessibleFromOUByEntityID(
+	ctx context.Context, entityID, accessingOUID string,
+) (bool, *tidcommon.ServiceError) {
+	if accessingOUID == "" {
+		return true, nil
+	}
+	e, svcErr := s.getClientEntity(ctx, entityID)
+	if svcErr != nil || e == nil {
+		return false, svcErr
+	}
+	return s.isAccessibleFromOU(ctx, entityID, e.OUID, e.Category, accessingOUID)
+}
+
+// isAccessibleFromOU reports whether a client owned by ownerOUID may act for accessingOUID.
+func (s *inboundClientService) isAccessibleFromOU(ctx context.Context, entityID, ownerOUID string,
+	category providers.EntityCategory, accessingOUID string) (bool, *tidcommon.ServiceError) {
 	// A client's own organization unit needs no policy. The framework would answer the same, but
 	// only after resolving ownership, and this is the common case on the token path.
-	if client.OUID == accessingOUID {
+	if ownerOUID == accessingOUID {
 		return true, nil
 	}
 
@@ -666,17 +723,65 @@ func (s *inboundClientService) IsClientAccessibleFromOU(
 	if s.sharedTypes == nil || s.sharingService == nil {
 		return false, nil
 	}
-	rt, shareable := s.sharedTypes.GetSharedResourceType(client.EntityCategory)
+	rt, shareable := s.sharedTypes.GetSharedResourceType(category)
 	if !shareable {
 		return false, nil
 	}
-	accessible, svcErr := s.sharingService.IsVisible(ctx, rt, client.ID, accessingOUID)
+	accessible, svcErr := s.sharingService.IsVisible(ctx, rt, entityID, accessingOUID)
 	if svcErr != nil {
-		s.logger.Error(ctx, "Failed to resolve client access for an organization unit",
-			log.String("clientID", client.ID), log.Any("error", svcErr))
+		// A client error, such as an organization unit that does not exist, is caller input, not a failure.
+		if svcErr.Type == tidcommon.ClientErrorType {
+			s.logger.Debug(ctx, "Client access for an organization unit was not resolved",
+				log.String("clientID", entityID), log.String("errorCode", svcErr.Code))
+		} else {
+			s.logger.Error(ctx, "Failed to resolve client access for an organization unit",
+				log.String("clientID", entityID), log.Any("error", svcErr))
+		}
 		return false, svcErr
 	}
 	return accessible, nil
+}
+
+// IsClientShared reports whether any sharing policy exists for the client of the given entity.
+func (s *inboundClientService) IsClientShared(ctx context.Context, entityID string) (bool, *tidcommon.ServiceError) {
+	if s.sharedTypes == nil || s.sharingService == nil {
+		return false, nil
+	}
+	e, svcErr := s.getClientEntity(ctx, entityID)
+	if svcErr != nil || e == nil {
+		return false, svcErr
+	}
+	rt, shareable := s.sharedTypes.GetSharedResourceType(e.Category)
+	if !shareable {
+		return false, nil
+	}
+	policies, svcErr := s.sharingService.ListPolicies(ctx, rt, entityID)
+	if svcErr != nil {
+		s.logger.Error(ctx, "Failed to list the sharing policies of a client",
+			log.String("clientID", entityID), log.Any("error", svcErr))
+		return false, svcErr
+	}
+	return len(policies) > 0, nil
+}
+
+// getClientEntity returns the entity a client belongs to, or nil when it does not exist.
+func (s *inboundClientService) getClientEntity(
+	ctx context.Context, entityID string,
+) (*providers.Entity, *tidcommon.ServiceError) {
+	if s.entityProvider == nil {
+		s.logger.Error(ctx, "Entity provider not configured")
+		return nil, &tidcommon.InternalServerError
+	}
+	e, epErr := s.entityProvider.GetEntityProfile(ctx, entityID)
+	if epErr != nil {
+		if epErr.Code == entityprovider.ErrorCodeEntityNotFound {
+			return nil, nil
+		}
+		s.logger.Error(ctx, "Failed to load the entity of a client",
+			log.String("clientID", entityID), log.Error(epErr))
+		return nil, &tidcommon.InternalServerError
+	}
+	return e, nil
 }
 
 // BuildOAuthClient assembles an OAuthClient from a stored OAuthProfile and entity context.
@@ -714,11 +819,11 @@ func BuildOAuthClient(
 	return client
 }
 
-// resolveFlowDefaults fills AuthFlowID, RegistrationFlowID, RecoveryFlowID, and SignOutFlowID
-// using a uniform chain: explicit override → OU default → server default (only auth has a
-// server-level default configured; registration/recovery/signout server defaults are intentionally
-// left empty to prevent CALL-node mismatches across independently configured flows).
-func (s *inboundClientService) resolveFlowDefaults(ctx context.Context, c *inboundmodel.InboundClient) error {
+// resolveFlowDefaults fills the configured inbound flow IDs. Authentication may use its configured
+// defaults. Device Grant requires an explicit flow assignment when the OAuth profile enables it.
+func (s *inboundClientService) resolveFlowDefaults(
+	ctx context.Context, c *inboundmodel.InboundClient, oauthProfile *providers.OAuthProfile,
+) error {
 	if c == nil {
 		return nil
 	}
@@ -732,6 +837,12 @@ func (s *inboundClientService) resolveFlowDefaults(ctx context.Context, c *inbou
 	if !c.IsRecoveryFlowEnabled {
 		c.RecoveryFlowID = ""
 	}
+	deviceGrantEnabled := oauthProfileAllowsDeviceGrant(oauthProfile)
+	if !deviceGrantEnabled {
+		c.DeviceGrantFlowID = ""
+	} else if c.DeviceGrantFlowID == "" {
+		return ErrFKDeviceGrantFlowRequired
+	}
 
 	if s.flowMgt == nil {
 		return nil
@@ -739,7 +850,7 @@ func (s *inboundClientService) resolveFlowDefaults(ctx context.Context, c *inbou
 
 	ouID := ""
 	if s.entityProvider != nil && c.ID != "" {
-		if e, epErr := s.entityProvider.GetEntityProfile(c.ID); epErr == nil && e != nil {
+		if e, epErr := s.entityProvider.GetEntityProfile(ctx, c.ID); epErr == nil && e != nil {
 			ouID = e.OUID
 		}
 	}
@@ -797,8 +908,19 @@ func (s *inboundClientService) resolveFlowDefaults(ctx context.Context, c *inbou
 		return err
 	}
 	c.SignOutFlowID = signOutID
-
 	return nil
+}
+
+func oauthProfileAllowsDeviceGrant(profile *providers.OAuthProfile) bool {
+	if profile == nil {
+		return false
+	}
+	for _, grantType := range profile.GrantTypes {
+		if grantType == string(providers.GrantTypeDeviceCode) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsDeclarative reports whether the entity's inbound profile was loaded from a declarative resource file.
@@ -1192,6 +1314,10 @@ func validateIDTokenConfig(ctx context.Context, p *providers.OAuthProfile,
 	return nil
 }
 
+// disallowedRedirectURISchemes are schemes that execute or embed content in the browser and so
+// can never be a legitimate redirect target.
+var disallowedRedirectURISchemes = []string{"javascript", "data", "vbscript"}
+
 // validateRedirectURIs validates redirect URIs and authorization_code grant requirements.
 func validateRedirectURIs(p *providers.OAuthProfile) error {
 	for _, redirectURI := range p.RedirectURIs {
@@ -1203,6 +1329,9 @@ func validateRedirectURIs(p *providers.OAuthProfile) error {
 		}
 		parsedURI, err := sysutils.ParseURL(redirectURI)
 		if err != nil {
+			return ErrOAuthInvalidRedirectURI
+		}
+		if slices.Contains(disallowedRedirectURISchemes, parsedURI.Scheme) {
 			return ErrOAuthInvalidRedirectURI
 		}
 		// Custom URI schemes (RFC 8252 §7.1) don't require a host; path-only like "myapp:/callback" is valid.
@@ -1306,6 +1435,23 @@ func validateGrantAndResponseTypes(p *providers.OAuthProfile) error {
 		return ErrOAuthResponseTypesRequireAuthCode
 	}
 	return nil
+}
+
+// UsesClientSecret reports whether an OAuth client authenticates with a client secret. Public clients
+// and clients using private_key_jwt or none cannot hold one.
+func UsesClientSecret(c *providers.OAuthConfigWithSecret) bool {
+	if c == nil {
+		return false
+	}
+	return AuthMethodUsesClientSecret(c.PublicClient, c.TokenEndpointAuthMethod)
+}
+
+// AuthMethodUsesClientSecret reports whether a client authenticating this way holds a client secret.
+// An unset method counts as holding one: the write path defaults it to client_secret_basic.
+func AuthMethodUsesClientSecret(publicClient bool, method providers.TokenEndpointAuthMethod) bool {
+	return !publicClient &&
+		method != providers.TokenEndpointAuthMethodPrivateKeyJWT &&
+		method != providers.TokenEndpointAuthMethodNone
 }
 
 // validateTokenEndpointAuthMethod validates the token endpoint auth method against cert and secret state.
@@ -1421,6 +1567,9 @@ func (s *inboundClientService) validateFKs(ctx context.Context, c *inboundmodel.
 	if err := s.validateSignOutFlowID(ctx, c.SignOutFlowID); err != nil {
 		return err
 	}
+	if err := s.validateDeviceGrantFlowID(ctx, c.DeviceGrantFlowID); err != nil {
+		return err
+	}
 	if err := s.validateReferencedFlows(ctx, c); err != nil {
 		return err
 	}
@@ -1499,6 +1648,20 @@ func (s *inboundClientService) validateSignOutFlowID(ctx context.Context, flowID
 	return nil
 }
 
+func (s *inboundClientService) validateDeviceGrantFlowID(ctx context.Context, flowID string) error {
+	if flowID == "" || s.flowMgt == nil {
+		return nil
+	}
+	valid, svcErr := s.flowMgt.IsValidFlow(ctx, flowID, providers.FlowTypeDeviceGrant)
+	if svcErr != nil {
+		return ErrFKFlowServerError
+	}
+	if !valid {
+		return ErrFKInvalidDeviceGrantFlow
+	}
+	return nil
+}
+
 // validateThemeID validates that the theme ID exists.
 func (s *inboundClientService) validateThemeID(ctx context.Context, themeID string) error {
 	if themeID == "" || s.themeMgt == nil {
@@ -1532,9 +1695,16 @@ func (s *inboundClientService) validateAllowedUserTypes(
 }
 
 // validateAllowedAgentTypes validates that each allowed agent type corresponds to an existing agent type.
+// providers.AnyAgentType is accepted only as the sole entry, where it admits every agent type.
 func (s *inboundClientService) validateAllowedAgentTypes(
 	ctx context.Context, allowedAgentTypes []string,
 ) error {
+	if slices.Equal(allowedAgentTypes, []string{providers.AnyAgentType}) {
+		return nil
+	}
+	if slices.Contains(allowedAgentTypes, providers.AnyAgentType) {
+		return ErrFKAnyAgentTypeNotAlone
+	}
 	return s.validateAllowedEntityTypes(ctx, entitytype.TypeCategoryAgent, allowedAgentTypes,
 		ErrFKInvalidAgentType, ErrAgentSchemaLookupFailed)
 }
@@ -1727,8 +1897,9 @@ func seedIDTokenUserAttributes(oauthProfile *providers.OAuthProfile, validAttrs 
 }
 
 // resolveValidUserAttributes returns the union of non-credential attribute names declared in the
-// schemas of the given allowed user types. Returns (nil, nil) when there are no allowed types or the
-// entity-type service is unavailable, signaling callers to skip attribute reconciliation.
+// schemas of the given allowed user types, with the verification claim of each email or mobile
+// attribute. Returns (nil, nil) when there are no allowed types or the entity-type service is
+// unavailable, signaling callers to skip attribute reconciliation.
 func (s *inboundClientService) resolveValidUserAttributes(
 	ctx context.Context,
 	allowedEntityTypes []string,
@@ -1749,6 +1920,9 @@ func (s *inboundClientService) resolveValidUserAttributes(
 		}
 		for _, info := range attrInfos {
 			validAttrs[info.Attribute] = true
+		}
+		for claim := range entitytypemodel.VerificationClaims(attrInfos) {
+			validAttrs[claim] = true
 		}
 	}
 	return validAttrs, nil
@@ -2097,6 +2271,7 @@ func (s *inboundClientService) walkReferencedFlows(
 		{c.RegistrationFlowID, providers.FlowTypeRegistration},
 		{c.RecoveryFlowID, providers.FlowTypeRecovery},
 		{c.SignOutFlowID, providers.FlowTypeSignOut},
+		{c.DeviceGrantFlowID, providers.FlowTypeDeviceGrant},
 	}
 	for _, start := range starts {
 		if start.id == "" {
@@ -2115,9 +2290,16 @@ func (s *inboundClientService) walkReferencedFlows(
 					return ErrFKInvalidRecoveryFlow
 				case providers.FlowTypeSignOut:
 					return ErrFKInvalidSignOutFlow
+				case providers.FlowTypeDeviceGrant:
+					return ErrFKInvalidDeviceGrantFlow
 				}
 			}
 			return ErrFKFlowServerError
+		}
+		if start.flowType == providers.FlowTypeDeviceGrant {
+			if !containsFlowType(targets, providers.FlowTypeAuthentication) {
+				return ErrFKInvalidDeviceGrantFlow
+			}
 		}
 
 		for _, t := range targets {
@@ -2137,6 +2319,8 @@ func (s *inboundClientService) walkReferencedFlows(
 				expected = c.RecoveryFlowID
 			case providers.FlowTypeSignOut:
 				expected = c.SignOutFlowID
+			case providers.FlowTypeDeviceGrant:
+				expected = c.DeviceGrantFlowID
 			default:
 				continue
 			}
@@ -2170,4 +2354,13 @@ func (s *inboundClientService) walkReferencedFlows(
 	}
 
 	return nil
+}
+
+func containsFlowType(targets []flowmgt.CallTarget, flowType providers.FlowType) bool {
+	for _, target := range targets {
+		if target.FlowType == flowType {
+			return true
+		}
+	}
+	return false
 }

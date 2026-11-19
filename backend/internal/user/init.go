@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/thunder-id/thunderid/internal/attributeverification"
 	"github.com/thunder-id/thunderid/internal/entity"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/identitygovernance"
@@ -16,6 +17,8 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
+	"github.com/thunder-id/thunderid/internal/system/eventbus"
+	"github.com/thunder-id/thunderid/internal/system/managedresource"
 	"github.com/thunder-id/thunderid/internal/system/middleware"
 	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -24,7 +27,8 @@ import (
 // Initialize initializes the user service and registers its routes.
 //
 // valueCapturer is optional. Given one, the service hands it every credential it sets on a user, so
-// the values the user's export refers to are kept where a reference finds them.
+// the values the user's export refers to are kept where a reference finds them. bus is required: the
+// service publishes the audit event of every user it creates, updates or deletes on it.
 func Initialize(
 	mux *http.ServeMux,
 	entityService entity.EntityServiceInterface,
@@ -32,13 +36,21 @@ func Initialize(
 	entityTypeService entitytype.EntityTypeServiceInterface,
 	authzService sysauthz.SystemAuthorizationServiceInterface,
 	governance identitygovernance.IdentityGovernanceServiceInterface,
+	verification attributeverification.AttributeVerificationServiceInterface,
 	sharingService sharing.SharingServiceInterface,
 	valueCapturer declarativeresource.ValueCapturer,
-) (UserServiceInterface, oupkg.OUUserResolver, declarativeresource.ResourceExporter, error) {
+	bus eventbus.EventBusInterface,
+	projectValidator projectOUValidator,
+) (ConfigurableUserService, oupkg.OUUserResolver, declarativeresource.ResourceExporter, error) {
+	if bus == nil {
+		return nil, nil, nil, errNilEventBus
+	}
+
 	// Step 1: Create service with entity service
 	userService := newUserService(authzService, entityService, ouService, entityTypeService, governance,
-		valueCapturer, sharingService)
-	sharingService.RegisterResourceType(newUserSharingDeclaration(userService))
+		verification, valueCapturer, sharingService, bus, projectValidator)
+	userService.managed = managedresource.GetStore()
+	sharingService.RegisterResourceType(userService.sharingDeclaration)
 	entityService.RegisterSharedCategory(providers.EntityCategoryUser, UserSharingType)
 
 	// Step 2: Load user-specific indexed attributes into the entity store.
@@ -52,7 +64,8 @@ func Initialize(
 		if err := entityService.LoadDeclarativeResources(makeUserDeclarativeConfig(userService)); err != nil {
 			return nil, nil, nil, err
 		}
-		// After the users, since a declared policy names a user that must already be there.
+		// After the users, since a declared policy names a user that must already be there. The roles a declared
+		// policy mandates are applied once SetRoleAssignmentService injects roles, which load after users.
 		if err := sharingService.LoadDeclarativeResources(
 			context.Background(), makeUserSharingConfig(userService)); err != nil {
 			return nil, nil, nil, err
@@ -66,7 +79,7 @@ func Initialize(
 	ouUserResolver := newOUUserResolver(entityService, entityTypeService)
 
 	// Create and return exporter
-	exporter := newUserExporter(userService, entityService, entityTypeService, sharingService)
+	exporter := newUserExporter(userService, entityService, sharingService)
 	return userService, ouUserResolver, exporter, nil
 }
 
@@ -125,6 +138,8 @@ func registerRoutes(mux *http.ServeMux, userHandler *userHandler) {
 				userHandler.HandleUserGroupsGetRequest(w, r)
 			} else if len(segments) == 2 && segments[1] == "usages" {
 				userHandler.HandleUserUsagesGetRequest(w, r)
+			} else if len(segments) == 2 && segments[1] == "ous" {
+				userHandler.HandleUserOrganizationUnitsGetRequest(w, r)
 			} else if len(segments) == 2 && segments[1] == sharingPoliciesSegment {
 				userHandler.HandleSharingPolicyListRequest(w, r)
 			} else if isSharingPolicyPath(segments) {

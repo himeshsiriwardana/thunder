@@ -25,19 +25,42 @@ import (
 
 const (
 	TargetDir                   = "../../target/dist"
-	ExtractedDir                = "../../target/out/.test"
 	TestDeploymentYamlPath      = "./resources/deployment.yaml"
 	DefaultConfigJSONPath       = "../../backend/cmd/server/config/default.json"
 	TestDatabaseSchemaDirectory = "resources/dbscripts"
 	DatabaseFileBasePath        = "database/"
 
 	// GoogleMockBaseURL and GitHubMockBaseURL point the /connections/google and
-	// /connections/github vendors at the local mock OAuth servers (mock_google_oidc_server.go,
-	// mock_github_oauth_server.go) instead of the real accounts.google.com/github.com endpoints.
-	// Must match the mock port constants used by the flow/authn integration suites.
+	// /connections/github vendors at the Google and GitHub mock services the test runner hosts
+	// instead of the real accounts.google.com/github.com endpoints. They must match
+	// mockservices.Ports.
 	GoogleMockBaseURL = "http://localhost:8093"
 	GitHubMockBaseURL = "http://localhost:8092"
 )
+
+// ExtractedDir is where the product is unzipped. Each test group unzips its own copy.
+var ExtractedDir = extractedDir()
+
+func extractedDir() string {
+	if group := TestGroup(); group != "" {
+		return filepath.Join("../../target/out/.test/groups", group)
+	}
+	return "../../target/out/.test"
+}
+
+// DefaultServerPort is the port the server runs on when the runner sets no SERVER_PORT.
+const DefaultServerPort = "8095"
+
+// ServerPort returns the port of the server under test. The runner sets SERVER_PORT for the process
+// of each test group and for the test packages it runs, so a SERVER_PORT set anywhere else is ignored.
+func ServerPort() string {
+	if TestGroup() != "" || os.Getenv("SERVER_EXTRACTED_HOME") != "" {
+		if port := os.Getenv("SERVER_PORT"); port != "" {
+			return port
+		}
+	}
+	return DefaultServerPort
+}
 
 // ServerBinary is the name of the server binary, platform-dependent.
 var ServerBinary string
@@ -255,15 +278,15 @@ func findMatchingZipFile(zipFilePattern string) ([]string, error) {
 		return nil, err
 	}
 
-	// Filter the files to only include those that have a version number or 'v' after 'thunderid-'
+	// Filter the files to only include those that have a version number or 'v' after 'thunderid-gateway-'
 	var matchingFiles []string
 	for _, file := range files {
 		baseName := filepath.Base(file)
 		parts := strings.Split(baseName, "-")
-		if len(parts) >= 3 {
-			// Check if the second part starts with a number or 'v'
-			secondPart := parts[1]
-			if len(secondPart) > 0 && (secondPart[0] == 'v' || (secondPart[0] >= '0' && secondPart[0] <= '9')) {
+		if len(parts) >= 4 {
+			// Check if the third part starts with a number or 'v'
+			thirdPart := parts[2]
+			if len(thirdPart) > 0 && (thirdPart[0] == 'v' || (thirdPart[0] >= '0' && thirdPart[0] <= '9')) {
 				matchingFiles = append(matchingFiles, file)
 			}
 		}
@@ -293,10 +316,10 @@ func findMatchingZipFile(zipFilePattern string) ([]string, error) {
 
 func extractVersionFromZipName(zipName string) string {
 	parts := strings.Split(zipName, "-")
-	if len(parts) < 3 {
+	if len(parts) < 4 {
 		return ""
 	}
-	return strings.TrimPrefix(parts[1], "v")
+	return strings.TrimPrefix(parts[2], "v")
 }
 
 // parseVersionSegment splits a segment like "0-rc1" into its numeric value and optional
@@ -585,8 +608,11 @@ func copyDirectory(src, dest string) error {
 func RunInitScript(zipFilePattern string) error {
 	log.Println("Running init script...")
 
-	// Skip database initialization for PostgreSQL
+	// The workflow creates the PostgreSQL databases a single server uses. A test group creates its own.
 	if dbType == "postgres" {
+		if TestGroup() != "" {
+			return createPostgresDatabases()
+		}
 		log.Println("Skipping database initialization for PostgreSQL (already initialized in workflow)")
 		return nil
 	}
@@ -706,6 +732,13 @@ func initSQLiteDB(name, schemaPath, dbPath string) error {
 	return nil
 }
 
+// ServerLogPath is the file a server started by a test subprocess writes its standard output and
+// standard error to. It is only ever appended to, so a reader records an offset before the action it
+// checks.
+func ServerLogPath() string {
+	return filepath.Join(GetExtractedProductHome(), "thunderid-restart.log")
+}
+
 // pidFilePath returns the path to the well-known PID file that always reflects the
 // PID of the currently running the server process, even after subprocess restarts.
 // Returns an empty string when extractedProductHome is not yet set, so callers
@@ -783,7 +816,7 @@ func startServerInternal(port string, extraArgs ...string) error {
 		// drain before declaring the test done, and the long-lived server process
 		// would keep those pipes open indefinitely, causing a 60s WaitDelay timeout.
 		// Redirect to a log file in the extracted product home so output is not lost.
-		logPath := filepath.Join(extractedProductHome, "thunderid-restart.log")
+		logPath := ServerLogPath()
 		var openErr error
 		logFile, openErr = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if openErr != nil {
@@ -831,15 +864,16 @@ func startServerInternal(port string, extraArgs ...string) error {
 
 // StartServerExpectingExit stops the running server and starts one that is expected to refuse its
 // configuration and exit. It returns nil once the process has exited, and an error if the server
-// stays up for the timeout, in which case it is stopped. Call RestartServer to run normally again.
-func StartServerExpectingExit(timeout time.Duration) error {
+// stays up for the timeout, in which case it is stopped. Any extraArgs are passed to the server.
+// Call RestartServer to run normally again.
+func StartServerExpectingExit(timeout time.Duration, extraArgs ...string) error {
 	ensureInitialized()
 	StopServer()
 	if err := waitForPortClosed(serverPort, 30*time.Second); err != nil {
 		return err
 	}
 
-	if err := startServerInternal(serverPort); err != nil {
+	if err := startServerInternal(serverPort, extraArgs...); err != nil {
 		return err
 	}
 	cmd := serverCmd
@@ -866,7 +900,7 @@ func StartServerExpectingExit(timeout time.Duration) error {
 	}
 	select {
 	case <-exited:
-	case <-time.After(3 * time.Second):
+	case <-time.After(serverStopGracePeriod):
 		_ = cmd.Process.Kill()
 		<-exited
 	}
@@ -897,21 +931,34 @@ func RestartServerWithResourcesFile(resourcesFilePath string) error {
 	log.Printf("Restarting server with resources file: %s", resourcesFilePath)
 
 	StopServer()
-	time.Sleep(3 * time.Second)
+	if err := waitForPortClosed(serverPort, 10*time.Second); err != nil {
+		return err
+	}
 
 	if err := startServerInternal(serverPort, "-resources="+resourcesFilePath); err != nil {
 		return fmt.Errorf("failed to start server with resources file: %w", err)
 	}
 
-	if err := waitForServerReady(30 * time.Second); err != nil {
+	if err := WaitForServerReady(30 * time.Second); err != nil {
 		return fmt.Errorf("server did not become ready after restart: %w", err)
 	}
 
 	return nil
 }
 
+const (
+	// serverStopGracePeriod is how long a stopped server has to shut down before it is killed. The
+	// server's graceful shutdown takes up to five seconds, and a killed server writes no coverage data.
+	serverStopGracePeriod = 10 * time.Second
+	// serverKillWait is how long a killed server has to exit.
+	serverKillWait = 5 * time.Second
+)
+
+// StopServer stops the server, waiting for every server process it stopped to exit and for the server
+// port to stop accepting connections. It logs a warning when either does not happen in time.
 func StopServer() {
 	log.Println("Stopping server...")
+	stopping := serverCmd != nil || serverPid != 0
 
 	if serverCmd != nil {
 		// Normal case: we started this process and hold its Cmd handle.
@@ -931,7 +978,7 @@ func StopServer() {
 				// Process exited gracefully
 				// Give a brief moment for coverage files to be fully flushed to disk
 				time.Sleep(100 * time.Millisecond)
-			case <-time.After(3 * time.Second):
+			case <-time.After(serverStopGracePeriod):
 				// Timeout - force kill
 				log.Println("Server did not stop gracefully, forcing kill...")
 				serverCmd.Process.Kill()
@@ -941,27 +988,10 @@ func StopServer() {
 		serverCmd = nil
 	} else if serverPid != 0 {
 		// Subprocess case: we know the PID but did not start the process via Cmd.
-		// os.FindProcess always succeeds on Unix; use the handle only for signalling.
-		proc, err := os.FindProcess(serverPid)
-		if err == nil && proc != nil {
-			if err := sendStopSignal(proc); err != nil {
-				log.Printf("Failed to send stop signal to PID %d: %v, forcing kill...", serverPid, err)
-				proc.Kill()
-			} else {
-				// We cannot call proc.Wait() for a process we did not fork,
-				// so we give the server a grace period and then ensure it is dead.
-				// Check liveness before killing to avoid hitting a recycled PID.
-				time.Sleep(3 * time.Second)
-				if isProcessAlive(proc) {
-					proc.Kill()
-				}
-			}
-			time.Sleep(100 * time.Millisecond)
-		} else {
-			log.Printf("Could not find process with PID %d: %v", serverPid, err)
-		}
+		stopProcess(serverPid)
 	}
 
+	stoppedPid := serverPid
 	serverCmd = nil
 	serverPid = 0
 
@@ -970,27 +1000,83 @@ func StopServer() {
 	// we just killed. The PID file is always updated by StartServer regardless of
 	// which process (parent or subprocess) called it.
 	if residualPid := readPidFile(); residualPid != 0 {
-		if proc, err := os.FindProcess(residualPid); err == nil && proc != nil {
-			_ = sendStopSignal(proc)
-			time.Sleep(2 * time.Second)
-			if isProcessAlive(proc) {
-				_ = proc.Kill()
-			}
+		if residualPid != stoppedPid {
+			stopProcess(residualPid)
+			stopping = true
 		}
 		removePidFile()
 	}
+
+	// Callers start a new server or run the setup script next, and both need the port free.
+	if stopping {
+		if err := waitForPortClosed(serverPort, 10*time.Second); err != nil {
+			log.Printf("Warning: %v", err)
+		}
+	}
+}
+
+// stopProcess stops a server process known only by its PID and returns once it has exited. A server
+// closes its listener as soon as it starts shutting down, then keeps its connections and database
+// files open until the shutdown completes, so a closed port does not mean the process is gone.
+func stopProcess(pid int) {
+	// os.FindProcess always succeeds on Unix; use the handle only for signalling.
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		log.Printf("Could not find process with PID %d: %v", pid, err)
+		return
+	}
+
+	err = sendStopSignal(proc)
+	if err == nil && waitForProcessExit(proc, serverStopGracePeriod) {
+		return
+	}
+	// A process that has already exited needs no kill.
+	if !isProcessAlive(proc) {
+		return
+	}
+
+	if err != nil {
+		log.Printf("Failed to send stop signal to PID %d: %v", pid, err)
+	}
+	log.Printf("Server process %d did not stop gracefully, forcing kill...", pid)
+	if err := proc.Kill(); err != nil {
+		log.Printf("Failed to kill server process %d: %v", pid, err)
+	}
+	if !waitForProcessExit(proc, serverKillWait) {
+		log.Printf("Warning: server process %d was still running %s after it was killed", pid, serverKillWait)
+	}
+}
+
+// waitForProcessExit polls until the process has exited, and reports whether it did within the timeout.
+func waitForProcessExit(proc *os.Process, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for isProcessAlive(proc) {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return true
 }
 
 // RestartServer stops the current server and starts a new one with the same configuration.
 func RestartServer() error {
+	return RestartServerWithTimeout(30 * time.Second)
+}
+
+// RestartServerWithTimeout stops the current server and starts a new one, waiting up to timeout
+// for its health endpoint to become ready.
+func RestartServerWithTimeout(timeout time.Duration) error {
 	ensureInitialized()
 	log.Println("Restarting server...")
 
 	// Stop the current server if it exists
 	StopServer()
 
-	// Wait a moment for the port to be released
-	time.Sleep(3 * time.Second)
+	// Wait for the port to be released
+	if err := waitForPortClosed(serverPort, 10*time.Second); err != nil {
+		return fmt.Errorf("failed to restart server: %w", err)
+	}
 
 	// Start a new server instance
 	err := StartServer(serverPort, zipFilePattern)
@@ -998,18 +1084,23 @@ func RestartServer() error {
 		return fmt.Errorf("failed to restart server: %v", err)
 	}
 
-	if err := waitForServerReady(30 * time.Second); err != nil {
+	if err := WaitForServerReady(timeout); err != nil {
 		return fmt.Errorf("server did not become ready after restart: %w", err)
 	}
 
 	return nil
 }
 
-// waitForServerReady polls the server's health endpoint until it responds with a 2xx
+// readinessRequestTimeout bounds each health check WaitForServerReady makes.
+const readinessRequestTimeout = 5 * time.Second
+
+// WaitForServerReady polls the server's health endpoint until it responds with a 2xx
 // status or the timeout is exceeded. A polling interval of 500ms is used.
-func waitForServerReady(timeout time.Duration) error {
+func WaitForServerReady(timeout time.Duration) error {
 	healthURL := "https://localhost:" + serverPort + "/health/liveness"
 	client := GetHTTPClient()
+	// A server that accepts the connection but never answers must not hold the wait past its deadline.
+	client.Timeout = readinessRequestTimeout
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
@@ -1040,6 +1131,12 @@ func UpdateDeploymentConfig(srcPath string) error {
 
 	if err := copyFile(srcPath, destPath); err != nil {
 		return fmt.Errorf("failed to update deployment.yaml from %s: %w", srcPath, err)
+	}
+	// The pristine deployment.yaml names the default port and databases, not the test group's.
+	if group := TestGroup(); group != "" {
+		if err := ConfigureTestGroup(group, serverPort); err != nil {
+			return err
+		}
 	}
 
 	log.Printf("Deployment config updated from %s", srcPath)
@@ -1128,6 +1225,34 @@ func copyConfigSection(section interface{}) map[string]interface{} {
 		copied[key] = value
 	}
 	return copied
+}
+
+// PatchServerConfig sets one key of the server section in the live deployment.yaml, keeping the rest
+// of the section. A nil value removes the key. Restart the server for the change to take effect.
+func PatchServerConfig(key string, value interface{}) error {
+	current, err := ReadDeploymentConfigKey("server")
+	if err != nil {
+		return err
+	}
+	server := copyConfigSection(current)
+	if value == nil {
+		delete(server, key)
+	} else {
+		server[key] = value
+	}
+	return PatchDeploymentConfig(map[string]interface{}{"server": server})
+}
+
+// ReadServerLog returns the output of the servers started from this test package. Servers started
+// before the package ran write elsewhere, so call it after RestartServer or StartServerExpectingExit.
+func ReadServerLog() (string, error) {
+	ensureInitialized()
+
+	data, err := os.ReadFile(ServerLogPath())
+	if err != nil {
+		return "", fmt.Errorf("failed to read the server log: %w", err)
+	}
+	return string(data), nil
 }
 
 // ensureDirectAuthSecretInDeploymentConfig guarantees server.security.direct_auth_secret is set to the
@@ -1253,6 +1378,10 @@ func RunSetupScript() error {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
+	if err := waitForSetupPortFree(10 * time.Second); err != nil {
+		return err
+	}
+
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		log.Println("Running setup.ps1 from extracted product...")
@@ -1281,10 +1410,41 @@ func RunSetupScript() error {
 	return cmd.Run()
 }
 
+// waitForSetupPortFree waits until the server port in the product's deployment.yaml is free for the
+// setup script. setup.sh refuses to run while any process holds a TCP socket on the port, listening or
+// not, and checks nothing without lsof. setup.ps1 does not check it, so there, and without lsof, only
+// a listener would stop the setup script's server from starting.
+func waitForSetupPortFree(timeout time.Duration) error {
+	server, err := ReadDeploymentConfigKey("server")
+	if err != nil {
+		return err
+	}
+	section, _ := server.(map[string]interface{})
+	port := fmt.Sprint(section["port"])
+
+	if _, err := exec.LookPath("lsof"); err != nil || runtime.GOOS == "windows" {
+		return waitForPortClosed(port, timeout)
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		// lsof exits non-zero when nothing matches, so the listing alone tells whether the port is held.
+		holders, _ := exec.Command("lsof", "-nP", "-i", "tcp:"+port).Output()
+		if len(strings.TrimSpace(string(holders))) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("port %s was still in use %s later, so setup.sh would refuse to run:\n%s",
+				port, timeout, holders)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 func GetZipFilePattern() string {
 	goos, goarch := detectOSAndArchitecture()
 	// Use a more general pattern, the filtering will happen in findMatchingZipFile
-	return fmt.Sprintf("thunderid-*-%s-%s.zip", goos, goarch)
+	return fmt.Sprintf("thunderid-gateway-*-%s-%s.zip", goos, goarch)
 }
 
 // GetDBType returns the configured database type ("sqlite" or "postgres").
@@ -1312,9 +1472,19 @@ func QueryConfigDB(sqlQuery string) (string, error) {
 func QueryRuntimeDB(sqlQuery string) (string, error) {
 	ensureInitialized()
 	if dbType == "postgres" {
-		return queryPostgresRuntimeDB(sqlQuery)
+		return queryPostgresDB("runtime_persistent", sqlQuery)
 	}
 	return querySQLiteDB("runtime_persistent.db", sqlQuery)
+}
+
+// QueryEntityDB runs one SQL statement against the entity database and returns the trimmed CLI
+// output, for tests that must see what the server stores outside its APIs, as QueryRuntimeDB does.
+func QueryEntityDB(sqlQuery string) (string, error) {
+	ensureInitialized()
+	if dbType == "postgres" {
+		return queryPostgresDB("entity", sqlQuery)
+	}
+	return querySQLiteDB("entitydb.db", sqlQuery)
 }
 
 // DeleteRuntimeRow removes an entity's runtime row, so the entity reads as one governance has never
@@ -1343,24 +1513,29 @@ func querySQLiteDB(fileName, sqlQuery string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// queryPostgresRuntimeDB runs one SQL statement with psql against the runtime persistent database the
-// deployment's database.runtime_persistent.postgres section names, and returns the trimmed output.
-func queryPostgresRuntimeDB(sqlQuery string) (string, error) {
+// queryPostgresDB runs one SQL statement with psql against the database the deployment's
+// database.<name>.postgres section names, and returns the trimmed output.
+func queryPostgresDB(name, sqlQuery string) (string, error) {
 	section, err := ReadDeploymentConfigKey("database")
 	if err != nil {
 		return "", err
 	}
 	database, _ := section.(map[string]interface{})
-	persistent, _ := database["runtime_persistent"].(map[string]interface{})
-	conn, _ := persistent["postgres"].(map[string]interface{})
+	named, _ := database[name].(map[string]interface{})
+	conn, _ := named["postgres"].(map[string]interface{})
 	if conn == nil {
-		return "", fmt.Errorf("deployment.yaml has no database.runtime_persistent.postgres section")
+		return "", fmt.Errorf("deployment.yaml has no database.%s.postgres section", name)
 	}
+	return runPsql(conn, fmt.Sprint(conn["name"]), "-c", sqlQuery)
+}
+
+// runPsql runs psql against the named database on the server a deployment.yaml postgres section
+// names, and returns the trimmed output.
+func runPsql(conn map[string]interface{}, database string, args ...string) (string, error) {
 	value := func(key string) string { return fmt.Sprint(conn[key]) }
 
-	cmd := exec.Command("psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1",
-		"-h", value("hostname"), "-p", value("port"), "-U", value("username"), "-d", value("name"),
-		"-c", sqlQuery)
+	cmd := exec.Command("psql", append([]string{"-X", "-q", "-At", "-v", "ON_ERROR_STOP=1",
+		"-h", value("hostname"), "-p", value("port"), "-U", value("username"), "-d", database}, args...)...)
 	cmd.Env = append(os.Environ(), "PGPASSWORD="+value("password"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -36,6 +36,7 @@ paths:
         - $ref: '#/components/parameters/limitQueryParam'
         - $ref: '#/components/parameters/offsetQueryParam'
         - $ref: '#/components/parameters/groupFilterQueryParam'
+        - $ref: '#/components/parameters/groupProjectIdQueryParam'
         - $ref: '#/components/parameters/includeGroupQueryParam'
       responses:
         "200":
@@ -195,6 +196,16 @@ paths:
                     description:
                       key: "error.groupservice.invalid_group_member_id_description"
                       defaultValue: "One or more group member IDs in the request do not exist"
+                member-ou-mismatch:
+                  summary: Member not available in the group's organization unit
+                  value:
+                    code: "GRP-1019"
+                    message:
+                      key: "error.groupservice.member_ou_mismatch"
+                      defaultValue: "Member not available in the group's organization unit"
+                    description:
+                      key: "error.groupservice.member_ou_mismatch_description"
+                      defaultValue: "One or more members are neither owned by the group's organization unit nor shared with it"
                 ou-not-found:
                   summary: Organization unit not found
                   value:
@@ -205,6 +216,26 @@ paths:
                     description:
                       key: "error.groupservice.invalid_ou_id_description"
                       defaultValue: "Organization unit does not exists"
+                invalid-project:
+                  summary: The project does not exist
+                  value:
+                    code: "GRP-1021"
+                    message:
+                      key: "error.groupservice.invalid_project"
+                      defaultValue: "Invalid project"
+                    description:
+                      key: "error.groupservice.invalid_project_description"
+                      defaultValue: "No project exists with the given project ID"
+                ou-not-in-project:
+                  summary: The organization unit is outside the project
+                  value:
+                    code: "GRP-1022"
+                    message:
+                      key: "error.groupservice.ou_not_in_project"
+                      defaultValue: "Organization unit not in project"
+                    description:
+                      key: "error.groupservice.ou_not_in_project_description"
+                      defaultValue: "A group in a project must be in the system organization unit or in an organization unit of the project"
         "409":
           description: Conflict
           content:
@@ -292,6 +323,10 @@ paths:
       tags:
         - Groups
       summary: Update a group by id
+      description: |
+        Updates a group's name, description, and organization unit. A group can be moved to another
+        organization unit only when it has no members, no other group contains it, and it is assigned
+        no roles.
       parameters:
         - in: path
           name: id
@@ -358,6 +393,36 @@ paths:
                     description:
                       key: "error.groupservice.invalid_ou_id_description"
                       defaultValue: "Organization unit does not exists"
+                invalid-project:
+                  summary: The project does not exist
+                  value:
+                    code: "GRP-1021"
+                    message:
+                      key: "error.groupservice.invalid_project"
+                      defaultValue: "Invalid project"
+                    description:
+                      key: "error.groupservice.invalid_project_description"
+                      defaultValue: "No project exists with the given project ID"
+                ou-not-in-project:
+                  summary: The organization unit is outside the project
+                  value:
+                    code: "GRP-1022"
+                    message:
+                      key: "error.groupservice.ou_not_in_project"
+                      defaultValue: "Organization unit not in project"
+                    description:
+                      key: "error.groupservice.ou_not_in_project_description"
+                      defaultValue: "A group in a project must be in the system organization unit or in an organization unit of the project"
+                group-ou-change-not-allowed:
+                  summary: Group has members, belongs to other groups, or is assigned roles
+                  value:
+                    code: "GRP-1020"
+                    message:
+                      key: "error.groupservice.group_ou_change_not_allowed"
+                      defaultValue: "Cannot change the group's organization unit"
+                    description:
+                      key: "error.groupservice.group_ou_change_not_allowed_description"
+                      defaultValue: "The group has members, belongs to other groups, or is assigned roles. Remove its members, its memberships in other groups and its role assignments before moving it"
         "404":
           description: Group not found
           content:
@@ -400,8 +465,14 @@ paths:
       summary: Delete a group by id
       description: |
         Deletes a group using its ID. Its role assignments and its memberships in other groups are
-        automatically removed by cascade. The delete is fail-closed and retriable: if dependency
-        cleanup fails, the group is left intact and the operation can be retried.
+        automatically removed by cascade. Before anything is removed, the server revokes the tokens
+        that hold scopes the group's roles granted its members, and refuses a group whose members
+        are nested too deep to reach with `GRP-1017`, and one whose members times scopes exceed
+        `oauth.revocation.criteria.max_entries_per_change` with `RVS-1001`. Once the role assignments
+        and memberships are removed, the server revokes what was issued while that ran, then deletes
+        the group. If any step fails, the group is left in place and the delete can be retried; tokens
+        already revoked stay revoked. When the step that failed is the one after the role assignments
+        were removed, a token issued while they were being removed stays valid until it expires.
       parameters:
         - in: path
           name: id
@@ -429,6 +500,26 @@ paths:
                     description:
                       key: "error.groupservice.missing_group_id_description"
                       defaultValue: "Group ID is required"
+                group-nesting-too-deep:
+                  summary: Members nested too deep to revoke
+                  value:
+                    code: "GRP-1017"
+                    message:
+                      key: "error.groupservice.group_nesting_too_deep"
+                      defaultValue: "Group nesting is too deep"
+                    description:
+                      key: "error.groupservice.group_nesting_too_deep_description"
+                      defaultValue: "The group's members are nested more than 32 levels deep, which cannot be expanded"
+                revocation-entry-limit:
+                  summary: Too many members and scopes to revoke in one change
+                  value:
+                    code: "RVS-1001"
+                    message:
+                      key: "error.revocationservice.entry_limit_exceeded"
+                      defaultValue: "Too many revocation entries"
+                    description:
+                      key: "error.revocationservice.entry_limit_exceeded_description"
+                      defaultValue: "The change would record 11000 revocation entries, more than the 10000 allowed for one change"
         "404":
           description: Group not found
           content:
@@ -539,6 +630,9 @@ paths:
       tags:
         - Groups
       summary: Add members to a group
+      description: |
+        Adds members to a group. Every member must be owned by the group's organization unit or shared
+        with it. Only users and applications can be shared.
       parameters:
         - in: path
           name: id
@@ -627,6 +721,16 @@ paths:
                     description:
                       key: "error.groupservice.invalid_group_member_id_description"
                       defaultValue: "One or more group member IDs in the request do not exist"
+                member-ou-mismatch:
+                  summary: Member not available in the group's organization unit
+                  value:
+                    code: "GRP-1019"
+                    message:
+                      key: "error.groupservice.member_ou_mismatch"
+                      defaultValue: "Member not available in the group's organization unit"
+                    description:
+                      key: "error.groupservice.member_ou_mismatch_description"
+                      defaultValue: "One or more members are neither owned by the group's organization unit nor shared with it"
         "403":
           description: Forbidden
           content:
@@ -988,6 +1092,16 @@ paths:
                     description:
                       key: "error.groupservice.invalid_group_member_id_description"
                       defaultValue: "One or more group member IDs in the request do not exist"
+                member-ou-mismatch:
+                  summary: Member not available in the group's organization unit
+                  value:
+                    code: "GRP-1019"
+                    message:
+                      key: "error.groupservice.member_ou_mismatch"
+                      defaultValue: "Member not available in the group's organization unit"
+                    description:
+                      key: "error.groupservice.member_ou_mismatch_description"
+                      defaultValue: "One or more members are neither owned by the group's organization unit nor shared with it"
         "404":
           description: Organization unit not found
           content:
@@ -1061,14 +1175,24 @@ components:
         type: integer
         minimum: 0
         default: 0
+    groupProjectIdQueryParam:
+      in: query
+      name: projectId
+      required: false
+      description: |
+        Lists the groups of the project. A project that does not exist has no groups.
+      schema:
+        type: string
+      example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
     groupFilterQueryParam:
       in: query
       name: filter
       required: false
       description: |
         Filter groups by organization unit. The only supported expression is `ouId eq "<id>"`,
-        which lists the groups the organization unit owns. A caller that cannot list the
-        organization unit's groups gets an empty list.
+        which lists the groups the organization unit owns. With `projectId`, lists only the
+        project's groups that organization unit owns. A caller that cannot list the organization
+        unit's groups gets an empty list.
       schema:
         type: string
       examples:
@@ -1122,6 +1246,13 @@ components:
       type: object
       required: [id, name, ouId]
       properties:
+        isReadOnly:
+          type: boolean
+          readOnly: true
+          description: |
+            Whether the group is read only: declared in a resource file, or deployed by a control
+            plane, which only a later deploy from the control plane changes.
+          example: false
         id:
           type: string
           format: uuid
@@ -1137,6 +1268,9 @@ components:
           type: string
           readOnly: true
           description: "Human-readable handle of the organization unit (only included when include=display query parameter is used)."
+        projectId:
+          type: string
+          description: "ID of the project this group belongs to. Absent when the group belongs to the organization."
         members:
           type: array
           items:
@@ -1144,7 +1278,7 @@ components:
 
     CreateGroupRequest:
       type: object
-      required: [name, ouId]
+      required: [name]
       properties:
         name:
           type: string
@@ -1153,8 +1287,13 @@ components:
         ouId:
           type: string
           format: uuid
+          description: "Required unless projectId is given, which places the group in the system organization unit when ouId is left out."
+        projectId:
+          type: string
+          description: "ID of the project the group belongs to. Leave it out for a group of the organization. A group in a project must be in the system organization unit or in an organization unit of the project."
         members:
           type: array
+          description: "Members of the group. Every member must be owned by the organization unit given in `ouId` or shared with it."
           items:
             $ref: '#/components/schemas/Member'
 
@@ -1169,6 +1308,9 @@ components:
         ouId:
           type: string
           format: uuid
+        projectId:
+          type: string
+          description: "ID of the project the group belongs to. An update that leaves it out keeps the group's project."
 
     GroupListResponse:
       type: object
@@ -1232,7 +1374,7 @@ components:
           example: "Group for sports activities and events"
         members:
           type: array
-          description: "Optional list of initial members (users and groups)"
+          description: "Optional list of initial members. Every member must be owned by the organization unit at the given path or shared with it."
           items:
             $ref: '#/components/schemas/Member'
 

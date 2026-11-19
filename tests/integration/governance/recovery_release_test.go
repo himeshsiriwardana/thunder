@@ -26,8 +26,9 @@ const recoveryWrongCodeErrorCode = "FET-1008"
 const (
 	recoveryPasskeyRPID   = "localhost"
 	recoveryPasskeyRPName = "ThunderID Test"
-	recoveryPasskeyOrigin = "https://localhost:8095"
 )
+
+var recoveryPasskeyOrigin = testutils.TestServerURL
 
 // RecoveryReleaseTestSuite checks that a completed recovery flow releases every lock and the
 // ladder with it, only for the identity it proved, and a credential write outside recovery releases
@@ -103,7 +104,7 @@ func (ts *RecoveryReleaseTestSuite) TestAManagementCredentialWriteReleasesNothin
 // write path; its token is obtained before the lock, which a lock does not revoke.
 func (ts *RecoveryReleaseTestSuite) TestASelfServiceCredentialUpdateReleasesNothing() {
 	userID, username, password, _ := ts.newUser("self_write")
-	holder, err := testutils.GetHTTPClientForUser(username, password)
+	holder, err := testutils.GetHTTPClientForOUUser(ts.users.signInClientID, username, password)
 	ts.Require().NoError(err, "the holder must sign in before the lock")
 	expiry := ts.lockCredential(userID, username)
 
@@ -389,8 +390,9 @@ func (ts *RecoveryReleaseTestSuite) TestTheShippedRecoveryFlowsReleaseTheLock() 
 
 	for _, handle := range []string{defaultFlowHandle, "console-app-flow"} {
 		ts.Run(handle, func() {
-			recoveryFlowID, _ := copyShippedFlowWithSender(ts.T(), handle, "RECOVERY", "send_recovery_email",
-				emailSenderID, map[string]string{"call_authentication": ts.authFlowID})
+			recoveryFlowID, _ := copyShippedFlowWithSenders(ts.T(), handle, "RECOVERY",
+				map[string]string{"send_recovery_email": emailSenderID},
+				map[string]string{"call_authentication": ts.authFlowID})
 			appID := ts.newApp(handle, "Governance Shipped Recovery "+handle+" Test App",
 				"governance_shipped_"+strings.ReplaceAll(handle, "-", "_"),
 				"Application that recovers through a copy of a shipped recovery flow", ts.authFlowID, recoveryFlowID)

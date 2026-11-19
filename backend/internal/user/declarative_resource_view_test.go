@@ -5,6 +5,7 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,13 +26,13 @@ func viewDocument(t *testing.T, content string) *yaml.Node {
 // credentials the export carries.
 func TestViewResourceShowsAnExportedUserAsItsRead(t *testing.T) {
 	exported, err := yaml.Marshal(&userDeclarativeResource{
-		ID: "user-1", Type: "employee", OUID: "ou-1",
+		ID: "user-1", Type: "employee", OUID: "ou-1", ProjectID: "project-1",
 		Attributes:  map[string]interface{}{"username": "alice", "email": "var:USER_ALICE_EMAIL"},
 		Credentials: map[string]interface{}{"password": "sec:USER_ALICE_PASSWORD"},
 	})
 	require.NoError(t, err)
 
-	view, err := newUserExporter(nil, nil, nil, nil).ViewResource(context.Background(),
+	view, err := newUserExporter(nil, nil, nil).ViewResource(context.Background(),
 		viewDocument(t, "resource_type: user\n"+string(exported)))
 
 	require.NoError(t, err)
@@ -40,13 +41,17 @@ func TestViewResourceShowsAnExportedUserAsItsRead(t *testing.T) {
 	assert.Equal(t, "user-1", u.ID)
 	assert.Equal(t, "employee", u.Type)
 	assert.Equal(t, "ou-1", u.OUID)
+	assert.Equal(t, "project-1", u.ProjectID)
 	assert.JSONEq(t, `{"username":"alice","email":"var:USER_ALICE_EMAIL"}`, string(u.Attributes))
 	assert.NotContains(t, string(u.Attributes), "USER_ALICE_PASSWORD")
+	encoded, err := json.Marshal(u)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"verifiedAttributes":{}`)
 }
 
 // A document that is not a user is refused.
 func TestViewResourceRefusesAnUnreadableDocument(t *testing.T) {
-	exporter := newUserExporter(nil, nil, nil, nil)
+	exporter := newUserExporter(nil, nil, nil)
 
 	_, err := exporter.ViewResource(context.Background(), viewDocument(t, "id: [not, an, id]"))
 	assert.Error(t, err)

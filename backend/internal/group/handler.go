@@ -54,7 +54,13 @@ func (gh *groupHandler) HandleGroupListRequest(w http.ResponseWriter, r *http.Re
 
 	includeDisplay := r.URL.Query().Get(sysutils.QueryParamInclude) == sysutils.IncludeValueDisplay
 
-	groupListResponse, svcErr := gh.groupService.GetGroupList(ctx, limit, offset, filters, includeDisplay)
+	var groupListResponse *GroupListResponse
+	if query := r.URL.Query(); query.Has(projectIDQueryParam) {
+		groupListResponse, svcErr = gh.groupService.GetGroupListByProject(ctx,
+			sysutils.SanitizeString(query.Get(projectIDQueryParam)), limit, offset, filters, includeDisplay)
+	} else {
+		groupListResponse, svcErr = gh.groupService.GetGroupList(ctx, limit, offset, filters, includeDisplay)
+	}
 	if svcErr != nil {
 		gh.handleError(ctx, w, svcErr)
 		return
@@ -412,7 +418,9 @@ func (gh *groupHandler) handleError(ctx context.Context, w http.ResponseWriter, 
 			ErrorInvalidRequestFormat.Code, ErrorMissingGroupID.Code,
 			ErrorInvalidLimit.Code, ErrorInvalidOffset.Code, ErrorInvalidFilter.Code,
 			ErrorEmptyMembers.Code, ErrorInvalidMemberType.Code,
-			ErrorInvalidMemberID.Code, ErrorInvalidGroupMemberID.Code:
+			ErrorInvalidMemberID.Code, ErrorInvalidGroupMemberID.Code,
+			ErrorMemberOUMismatch.Code, ErrorGroupOUChangeNotAllowed.Code,
+			ErrorInvalidProject.Code, ErrorOUNotInProject.Code:
 			statusCode = http.StatusBadRequest
 		case tidcommon.ErrorUnauthorized.Code, sysauthz.ErrorGrantNotPermitted.Code:
 			statusCode = http.StatusForbidden
@@ -437,6 +445,7 @@ func (gh *groupHandler) sanitizeCreateGroupRequest(request *CreateGroupRequest) 
 		Name:        sysutils.SanitizeString(request.Name),
 		Description: sysutils.SanitizeString(request.Description),
 		OUID:        sysutils.SanitizeString(request.OUID),
+		ProjectID:   sysutils.SanitizeString(request.ProjectID),
 	}
 
 	if request.Members != nil {
@@ -458,6 +467,7 @@ func (gh *groupHandler) sanitizeUpdateGroupRequest(request *UpdateGroupRequest) 
 		Name:        sysutils.SanitizeString(request.Name),
 		Description: sysutils.SanitizeString(request.Description),
 		OUID:        sysutils.SanitizeString(request.OUID),
+		ProjectID:   sysutils.SanitizeString(request.ProjectID),
 	}
 }
 

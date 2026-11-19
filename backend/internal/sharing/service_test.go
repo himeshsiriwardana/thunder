@@ -385,16 +385,21 @@ func (f *storeState) DeleteField(_ context.Context, rt ResourceType, resourceID,
 }
 
 // cleanerDeclaration keeps its organization units' values somewhere of its own, which is what
-// OverlayCleaner exists for, and records what it was asked to delete.
+// OverlayCleaner exists for, and records what it was asked to delete. answer, when set, is what it
+// returns for a unit.
 type cleanerDeclaration struct {
 	testDeclaration
 	cleaned []string
+	answer  func(ouID string) error
 }
 
 // DeleteOverlayValues makes the declaration an OverlayCleaner.
 func (d *cleanerDeclaration) DeleteOverlayValues(_ context.Context, _, ouID string) error {
 	d.cleaned = append(d.cleaned, ouID)
-	return nil
+	if d.answer == nil {
+		return nil
+	}
+	return d.answer(ouID)
 }
 
 // unresolvedOwnerDeclaration resolves no owner until resolvable is set, which is the window the
@@ -492,6 +497,9 @@ func inlineTx(t interface {
 	return tx
 }
 
+// txMarker is the context key rollbackTx sets on the context of a transaction, so a test can tell a call ran in it.
+type txMarker struct{}
+
 // rollbackTx is inlineTx with the half that matters for a multi-write operation: the database
 // transactioner joins a call made inside another and rolls back to where the outermost one
 // started, so a fake that only ran the function would let a test pass on writes the real one would
@@ -507,6 +515,7 @@ func rollbackTx(t interface {
 		func(ctx context.Context, fn func(context.Context) error) error {
 			if depth == 0 {
 				snapshot = st.clone()
+				ctx = context.WithValue(ctx, txMarker{}, true)
 			}
 			depth++
 			err := fn(ctx)
@@ -5269,9 +5278,7 @@ func (s *ServiceTestSuite) TestARefusedReplayLeavesNoStaleVisibility() {
 	s.True(visible, "the rolled-back replay took nothing away")
 }
 
-// A document cannot switch a section between naming units and reaching a whole group: the replay
-// edits the policy under the API's rules. The refusal says how to get there, since an import cannot
-// delete the policy itself.
+// Without an authoritative replay, a change the edit rules refuse stays refused and says how to make it.
 func (s *ServiceTestSuite) TestReplayRefusingASectionChangeSaysHowToMakeIt() {
 	ctx := context.Background()
 	s.withRollback()
@@ -5285,6 +5292,216 @@ func (s *ServiceTestSuite) TestReplayRefusingASectionChangeSaysHowToMakeIt() {
 	s.Equal(ErrorScopeFamilyChange.Code, replayErr.Err.Code)
 	s.Contains(replayErr.Err.ErrorDescription.DefaultValue,
 		"delete the policy through the sharing policies API, then import again")
+}
+
+// A replay never removes a policy for being left out of the document, with forced edits or without: removals are
+// named, through RemovePolicies.
+func (s *ServiceTestSuite) TestReplayKeepsWhatTheDocumentDoesNotName() {
+	ctx := WithForcedEdits(context.Background())
+	s.withRollback()
+	_, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+
+	replay, replayErr := s.svc.ReplacePoliciesForResource(ctx, testType, testResource, rootOU, nil)
+
+	s.Require().Nil(replayErr)
+	s.Empty(replay.Removed)
+	all, _ := s.svc.ListPolicies(ctx, testType, testResource)
+	s.Len(all, 1)
+}
+
+// A change the edit rules of the API refuse, here a different reach, is applied by a replay as a
+// rewrite of the policy the owner issued, since the document is the source of truth for it.
+func (s *ServiceTestSuite) TestReplayAppliesASectionChangeTheEditRulesRefuse() {
+	ctx := WithForcedEdits(context.Background())
+	s.withRollback()
+	first, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+
+	_, replayErr := s.svc.ReplacePoliciesForResource(ctx, testType, testResource, rootOU,
+		[]PolicyRequest{{InitiatingOUID: rootOU, ChildUnits: allChildren()}})
+
+	s.Require().Nil(replayErr)
+	all, _ := s.svc.ListPolicies(ctx, testType, testResource)
+	s.Require().Len(all, 1)
+	s.Equal(first.ID, all[0].ID)
+	s.Equal(ChildUnitsAll, all[0].ChildUnits.Mode)
+}
+
+// Naming the owner removes the policy it issued, and an unknown or absent one is left.
+func (s *ServiceTestSuite) TestRemovePoliciesRemovesTheNamedPolicy() {
+	ctx := context.Background()
+	s.withRollback()
+	_, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+
+	replay, replayErr := s.svc.RemovePolicies(ctx, testType, testResource, []string{rootOU, otherOU}, nil)
+
+	s.Require().Nil(replayErr)
+	s.Require().Len(replay.Removed, 1)
+	s.False(replay.Removed[0].Reshare)
+	all, _ := s.svc.ListPolicies(ctx, testType, testResource)
+	s.Empty(all)
+}
+
+// A policy a removal leaves alone stays: only the named unit's policy goes.
+func (s *ServiceTestSuite) TestRemovePoliciesLeavesWhatItIsNotToldToRemove() {
+	ctx := context.Background()
+	s.withRollback()
+	_, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+
+	replay, replayErr := s.svc.RemovePolicies(ctx, testType, testResource, []string{otherOU}, nil)
+
+	s.Require().Nil(replayErr)
+	s.Empty(replay.Removed)
+	all, _ := s.svc.ListPolicies(ctx, testType, testResource)
+	s.Len(all, 1)
+}
+
+// A removal comes from comparing how two versions write each unit, so the owner written as an explicit id in one and
+// left blank in the other reads as dropped. The owner is resolved on both lists, and a unit the document still names is
+// kept whichever way it is written.
+func (s *ServiceTestSuite) TestRemovePoliciesKeepsAUnitTheDocumentStillNamesWhateverTheSpelling() {
+	cases := map[string]struct{ removal, stillNamed string }{
+		"blank removed, the owner named by id":   {removal: "", stillNamed: rootOU},
+		"owner id removed, the owner left blank": {removal: rootOU, stillNamed: ""},
+		"blank removed, blank still named":       {removal: "", stillNamed: ""},
+	}
+	for name, c := range cases {
+		s.Run(name, func() {
+			ctx := context.Background()
+			s.SetupTest()
+			s.withRollback()
+			s.decl.owner = rootOU
+			_, svcErr := s.importCreate(ctx, testResource, rootOU,
+				PolicyRequest{ChildUnits: children(unit(childOU))})
+			s.Require().Nil(svcErr)
+
+			replay, replayErr := s.svc.RemovePolicies(ctx, testType, testResource,
+				[]string{c.removal}, []string{c.stillNamed})
+
+			s.Require().Nil(replayErr)
+			s.Empty(replay.Removed, "the policy the document still carries was removed")
+			all, _ := s.svc.ListPolicies(ctx, testType, testResource)
+			s.Len(all, 1)
+		})
+	}
+}
+
+// A unit the document does not name any more is still removed when another unit is named.
+func (s *ServiceTestSuite) TestRemovePoliciesStillRemovesAUnitTheDocumentDoesNotName() {
+	ctx := context.Background()
+	s.withRollback()
+	s.decl.owner = rootOU
+	_, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+
+	replay, replayErr := s.svc.RemovePolicies(ctx, testType, testResource, []string{""}, []string{childOU})
+
+	s.Require().Nil(replayErr)
+	s.Len(replay.Removed, 1)
+}
+
+// A reshare goes with the policy that made its issuer see the resource, and is reported as removed.
+func (s *ServiceTestSuite) TestRemovePoliciesRemovesTheResharesOfARemovedPolicy() {
+	ctx := context.Background()
+	s.withRollback()
+	_, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+	_, svcErr = s.importCreate(ctx, testResource, rootOU,
+		PolicyRequest{InitiatingOUID: childOU, ChildUnits: entry(grandOU)})
+	s.Require().Nil(svcErr)
+
+	replay, replayErr := s.svc.RemovePolicies(ctx, testType, testResource, []string{rootOU}, nil)
+
+	s.Require().Nil(replayErr)
+	s.Len(replay.Removed, 2)
+	s.Equal(1, countReshares(replay.Removed))
+	all, _ := s.svc.ListPolicies(ctx, testType, testResource)
+	s.Empty(all)
+}
+
+// What a replay took away through a rewrite is recorded to the report a caller put on the context, so a caller that
+// replays through another service can still say what the change cost.
+func (s *ServiceTestSuite) TestReplayRecordsWhatItRemovedToTheReport() {
+	ctx, report := WithReplayReport(WithForcedEdits(context.Background()))
+	s.withRollback()
+	_, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+	_, svcErr = s.importCreate(ctx, testResource, rootOU,
+		PolicyRequest{InitiatingOUID: childOU, ChildUnits: entry(grandOU)})
+	s.Require().Nil(svcErr)
+
+	replay, replayErr := s.svc.ReplacePoliciesForResource(ctx, testType, testResource, rootOU,
+		[]PolicyRequest{{InitiatingOUID: rootOU, ChildUnits: allChildren(childOU)}})
+
+	s.Require().Nil(replayErr)
+	s.Equal(replay.Removed, report.Removed())
+	s.Equal(1, countReshares(report.Removed()))
+}
+
+// A removal reports what it took away through the replay it returns and not through the report, so a caller that reads
+// both is never told of one policy twice.
+func (s *ServiceTestSuite) TestRemovePoliciesDoesNotRecordToTheReport() {
+	ctx, report := WithReplayReport(context.Background())
+	s.withRollback()
+	_, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+
+	replay, replayErr := s.svc.RemovePolicies(ctx, testType, testResource, []string{rootOU}, nil)
+
+	s.Require().Nil(replayErr)
+	s.Len(replay.Removed, 1)
+	s.Empty(report.Removed())
+}
+
+func countReshares(removed []RemovedPolicy) int {
+	n := 0
+	for _, r := range removed {
+		if r.Reshare {
+			n++
+		}
+	}
+	return n
+}
+
+// A reshare the new policy still covers is kept when the policy changes.
+func (s *ServiceTestSuite) TestReplayKeepsTheResharesTheNewPolicyStillCovers() {
+	ctx := WithForcedEdits(context.Background())
+	s.withRollback()
+	_, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+	_, svcErr = s.importCreate(ctx, testResource, rootOU,
+		PolicyRequest{InitiatingOUID: childOU, ChildUnits: entry(grandOU)})
+	s.Require().Nil(svcErr)
+
+	replay, replayErr := s.svc.ReplacePoliciesForResource(ctx, testType, testResource, rootOU,
+		[]PolicyRequest{{InitiatingOUID: rootOU, ChildUnits: allChildren()}})
+
+	s.Require().Nil(replayErr)
+	s.Empty(replay.Removed)
+	all, _ := s.svc.ListPolicies(ctx, testType, testResource)
+	s.Len(all, 2)
+}
+
+// A reshare whose issuer the new policy no longer reaches is removed and reported.
+func (s *ServiceTestSuite) TestReplayRemovesTheResharesTheNewPolicyNoLongerCovers() {
+	ctx := WithForcedEdits(context.Background())
+	s.withRollback()
+	_, svcErr := s.importCreate(ctx, testResource, rootOU, PolicyRequest{ChildUnits: children(unit(childOU))})
+	s.Require().Nil(svcErr)
+	_, svcErr = s.importCreate(ctx, testResource, rootOU,
+		PolicyRequest{InitiatingOUID: childOU, ChildUnits: entry(grandOU)})
+	s.Require().Nil(svcErr)
+
+	replay, replayErr := s.svc.ReplacePoliciesForResource(ctx, testType, testResource, rootOU,
+		[]PolicyRequest{{InitiatingOUID: rootOU, ChildUnits: allChildren(childOU)}})
+
+	s.Require().Nil(replayErr)
+	s.Require().Len(replay.Removed, 1)
+	s.True(replay.Removed[0].Reshare)
+	s.Equal(childOU, replay.Removed[0].InitiatingOUID)
 }
 
 // requireReachMatchesVisibility checks ListResourceSharedOUIDs against the chain walk: every unit it lists
@@ -5572,4 +5789,731 @@ func (s *ServiceTestSuite) TestResolveFieldRuleVisibilityAndUnknownKey() {
 	_, svcErr = s.svc.ResolveFieldRule(context.Background(), testType, testResource, rootOU, "nope")
 	s.Require().NotNil(svcErr)
 	s.Equal(ErrorUnknownFieldKey.Code, svcErr.Code)
+}
+
+// writeHookDeclaration is testDeclaration with PolicyWriteHooks, recording every call and asserting each runs in the
+// transaction of the change it reports. answer, when set, decides what each call returns.
+type writeHookDeclaration struct {
+	*testDeclaration
+	assert  *assert.Assertions
+	written []Policy
+	removed []Policy
+	answer  func(p Policy, removal bool) *tidcommon.ServiceError
+}
+
+// OnPolicyWritten records the policy written.
+func (d *writeHookDeclaration) OnPolicyWritten(ctx context.Context, p Policy) *tidcommon.ServiceError {
+	d.assert.NotNil(ctx.Value(txMarker{}), "the hook for %s is handed the transaction's context", p.ID)
+	d.written = append(d.written, p)
+	if d.answer == nil {
+		return nil
+	}
+	return d.answer(p, false)
+}
+
+// OnPolicyRemoved records the policy removed.
+func (d *writeHookDeclaration) OnPolicyRemoved(ctx context.Context, p Policy) *tidcommon.ServiceError {
+	d.assert.NotNil(ctx.Value(txMarker{}), "the hook for %s is handed the transaction's context", p.ID)
+	d.removed = append(d.removed, p)
+	if d.answer == nil {
+		return nil
+	}
+	return d.answer(p, true)
+}
+
+// withWriteHooks rebuilds the suite's service over the same stores with a rolling-back transactioner, registering the
+// test type through a declaration that implements PolicyWriteHooks.
+func (s *ServiceTestSuite) withWriteHooks() *writeHookDeclaration {
+	hooks := &writeHookDeclaration{testDeclaration: s.decl, assert: s.Assert()}
+	hierarchy, enumerator := testResolver(s.T())
+	s.svc = newSharingService(s.storeMock, s.declStore, hierarchy, enumerator,
+		rollbackTx(s.T(), s.store), nil, nil, false)
+	s.svc.RegisterResourceType(hooks)
+	s.svc.RegisterResourceType(&fieldlessDeclaration{})
+	s.svc.RegisterResourceType(&editableOnlyDeclaration{})
+	return hooks
+}
+
+// policyIDs lists the ids of the policies a hook was called with, in call order.
+func policyIDs(policies []Policy) []string {
+	out := make([]string, 0, len(policies))
+	for _, p := range policies {
+		out = append(out, p.ID)
+	}
+	return out
+}
+
+func (s *ServiceTestSuite) TestWriteHooksAreToldOfEachPolicyWritten() {
+	ctx := context.Background()
+	hooks := s.withWriteHooks()
+
+	owner := s.share(map[string]OverlayRule{"assignments": {Editable: true, AllowedValues: members("a", "b")}})
+	reshare, svcErr := s.svc.CreatePolicy(ctx, testType, testResource, ownerOU,
+		PolicyRequest{InitiatingOUID: rootOU, ChildUnits: entry(childOU)})
+	s.Require().Nil(svcErr)
+	s.Equal([]Policy{owner, reshare}, hooks.written, "each create is reported with the policy it stored")
+
+	updated, svcErr := s.svc.UpdatePolicy(ctx, owner.ID, PolicyRequest{
+		OtherTreeRoots: roots(rootWith(rootOU, map[string]OverlayRule{
+			"assignments": {Editable: true, AllowedValues: members("a", "b", "c")},
+		})),
+		Version: owner.Version,
+	})
+	s.Require().Nil(svcErr)
+
+	s.Equal([]string{owner.ID, reshare.ID, owner.ID}, policyIDs(hooks.written),
+		"the reshare carries no rule, so the edit above it leaves it unwritten")
+	stored, svcErr := s.svc.GetPolicy(ctx, owner.ID)
+	s.Require().Nil(svcErr)
+	s.Equal(stored, hooks.written[2], "an edit is reported with the contents and version it stored")
+	s.Equal(updated, hooks.written[2])
+	s.Empty(hooks.removed)
+}
+
+func (s *ServiceTestSuite) TestWriteHooksAreToldOfEachReshareAnEditRewrites() {
+	ctx := context.Background()
+	hooks := s.withWriteHooks()
+	upper, mid, reshare := s.buildFrontierChain()
+	hooks.written = nil
+
+	narrowed := PolicyRequest{
+		InitiatingOUID: rootOU,
+		ChildUnits: entryWith(childOU, map[string]OverlayRule{
+			"assignments": {Editable: true, AllowedValues: members("a")},
+		}),
+		Version: upper.Version,
+	}
+	updated, svcErr := s.svc.UpdatePolicy(ctx, upper.ID, narrowed)
+	s.Require().Nil(svcErr)
+
+	s.Equal([]string{upper.ID, mid.ID, reshare.ID}, policyIDs(hooks.written),
+		"the edited policy, then each reshare re-narrowed beneath it, shallowest first")
+	for _, written := range hooks.written {
+		stored, svcErr := s.svc.GetPolicy(ctx, written.ID)
+		s.Require().Nil(svcErr)
+		s.Equal(stored, written, "each is reported as stored")
+	}
+
+	// The same edit again moves no ceiling, so nothing beneath it is written.
+	hooks.written = nil
+	narrowed.Version = updated.Version
+	_, svcErr = s.svc.UpdatePolicy(ctx, upper.ID, narrowed)
+	s.Require().Nil(svcErr)
+	s.Equal([]string{upper.ID}, policyIDs(hooks.written))
+	s.Empty(hooks.removed)
+}
+
+func (s *ServiceTestSuite) TestWriteHooksAreToldOfEachPolicyADeleteRemoves() {
+	ctx := context.Background()
+	hooks := s.withWriteHooks()
+	upper, mid, reshare := s.buildFrontierChain()
+	ids := []string{upper.ID, mid.ID, reshare.ID}
+	before := make([]Policy, 0, len(ids))
+	for _, id := range ids {
+		p, svcErr := s.svc.GetPolicy(ctx, id)
+		s.Require().Nil(svcErr)
+		before = append(before, p)
+	}
+	hooks.written = nil
+
+	s.Require().Nil(s.svc.DeletePolicy(ctx, upper.ID))
+
+	s.Equal(before, hooks.removed,
+		"the deleted policy, then each reshare whose issuer lost the resource, as each stood before")
+	s.Empty(hooks.written)
+}
+
+func (s *ServiceTestSuite) TestWriteHooksAreToldOfAReshareAnEditTakesAway() {
+	ctx := context.Background()
+	hooks := s.withWriteHooks()
+	owner := s.share(nil)
+	reshare, svcErr := s.svc.CreatePolicy(ctx, testType, testResource, ownerOU,
+		PolicyRequest{InitiatingOUID: rootOU, ChildUnits: entry(childOU)})
+	s.Require().Nil(svcErr)
+	before, svcErr := s.svc.GetPolicy(ctx, reshare.ID)
+	s.Require().Nil(svcErr)
+	hooks.written = nil
+
+	_, svcErr = s.svc.UpdatePolicy(ctx, owner.ID,
+		PolicyRequest{OtherTreeRoots: roots(root(otherOU)), Version: owner.Version})
+	s.Require().Nil(svcErr)
+
+	s.Equal([]string{owner.ID}, policyIDs(hooks.written))
+	s.Equal([]Policy{before}, hooks.removed, "rootOU lost the resource, and the policy it issued went with it")
+}
+
+func (s *ServiceTestSuite) TestWriteHooksAreToldOfADeclaredPolicy() {
+	hooks := s.withWriteHooks()
+
+	declared := s.declaredBlanket(PolicyRequest{AllUnits: allUnits()})
+
+	s.Equal([]Policy{declared}, hooks.written)
+}
+
+// A hook refusing any one policy a change touches undoes the whole change, its own writes included, and the caller
+// is answered with the refusal itself.
+func (s *ServiceTestSuite) TestAWriteHookRefusalRollsTheChangeBack() {
+	var owner, upper Policy
+	narrowUpper := func(ctx context.Context) *tidcommon.ServiceError {
+		_, svcErr := s.svc.UpdatePolicy(ctx, upper.ID, PolicyRequest{
+			InitiatingOUID: rootOU,
+			ChildUnits: entryWith(childOU, map[string]OverlayRule{
+				"assignments": {Editable: true, AllowedValues: members("a")},
+			}),
+			Version: upper.Version,
+		})
+		return svcErr
+	}
+	moveOwnerAway := func(ctx context.Context) *tidcommon.ServiceError {
+		_, svcErr := s.svc.UpdatePolicy(ctx, owner.ID,
+			PolicyRequest{OtherTreeRoots: roots(root(otherOU)), Version: owner.Version})
+		return svcErr
+	}
+	shareWithReshare := func() string {
+		owner = s.share(nil)
+		reshare, svcErr := s.svc.CreatePolicy(context.Background(), testType, testResource, ownerOU,
+			PolicyRequest{InitiatingOUID: rootOU, ChildUnits: entry(childOU)})
+		s.Require().Nil(svcErr)
+		return reshare.ID
+	}
+	frontierChain := func() string {
+		var reshare Policy
+		upper, _, reshare = s.buildFrontierChain()
+		return reshare.ID
+	}
+
+	tests := []struct {
+		name    string
+		removal bool
+		// arrange writes what the change needs and returns the id of the policy the hook refuses; empty refuses any.
+		arrange func() string
+		change  func(ctx context.Context) *tidcommon.ServiceError
+	}{
+		{
+			name:    "create",
+			arrange: func() string { return "" },
+			change: func(ctx context.Context) *tidcommon.ServiceError {
+				_, svcErr := s.svc.CreatePolicy(ctx, testType, testResource, ownerOU,
+					PolicyRequest{OtherTreeRoots: roots(root(rootOU))})
+				return svcErr
+			},
+		},
+		{
+			name:    "update",
+			arrange: func() string { owner = s.share(nil); return owner.ID },
+			change:  moveOwnerAway,
+		},
+		{
+			name:    "delete",
+			removal: true,
+			arrange: func() string { owner = s.share(nil); return owner.ID },
+			change:  func(ctx context.Context) *tidcommon.ServiceError { return s.svc.DeletePolicy(ctx, owner.ID) },
+		},
+		{
+			name:    "a reshare an edit rewrites",
+			arrange: frontierChain,
+			change:  narrowUpper,
+		},
+		{
+			name:    "a reshare an edit takes away",
+			removal: true,
+			arrange: shareWithReshare,
+			change:  moveOwnerAway,
+		},
+		{
+			name:    "a reshare a delete takes with it",
+			removal: true,
+			arrange: frontierChain,
+			change:  func(ctx context.Context) *tidcommon.ServiceError { return s.svc.DeletePolicy(ctx, upper.ID) },
+		},
+		{
+			name:    "an import",
+			arrange: func() string { return "" },
+			change: func(ctx context.Context) *tidcommon.ServiceError {
+				_, replayErr := s.svc.ReplacePoliciesForResource(ctx, testType, testResource, ownerOU,
+					[]PolicyRequest{{OtherTreeRoots: roots(root(rootOU))}})
+				if replayErr == nil {
+					return nil
+				}
+				return replayErr.Err
+			},
+		},
+		{
+			name:    "a resource's purge",
+			removal: true,
+			arrange: shareWithReshare,
+			change: func(ctx context.Context) *tidcommon.ServiceError {
+				return s.svc.DeletePoliciesForResource(ctx, testType, testResource)
+			},
+		},
+		{
+			name:    "a declaration",
+			arrange: func() string { return "" },
+			change: func(ctx context.Context) *tidcommon.ServiceError {
+				_, svcErr := s.svc.CreateDeclarativePolicy(ctx, testType, testResource, ownerOU,
+					PolicyRequest{ID: declaredID, AllUnits: allUnits()})
+				return svcErr
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			ctx := context.Background()
+			hooks := s.withWriteHooks()
+			target := tt.arrange()
+			before := s.store.clone()
+			refusal := &tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "TST-1001"}
+			hooks.answer = func(p Policy, removal bool) *tidcommon.ServiceError {
+				// The hook writes before it refuses, the way a resource type acting on the change would.
+				s.Require().NoError(s.store.SetOverlayValue(ctx, testType, "hook-state", otherOU, "assignments",
+					[]string{p.ID}))
+				if removal != tt.removal || (target != "" && p.ID != target) {
+					return nil
+				}
+				return refusal
+			}
+
+			svcErr := tt.change(ctx)
+
+			s.Same(refusal, svcErr, "the caller is answered with the hook's refusal as it was given")
+			s.Equal(before, s.store.clone(), "nothing the change or the hook wrote is left behind")
+			s.Empty(s.declStore.listForType(testType), "and nothing is declared")
+		})
+	}
+}
+
+// A purge skips a policy it no longer finds, because an earlier delete took it with a cascade. A hook's refusal is not
+// that, even carrying the same code, so it still stops the purge rather than letting the rest commit.
+func (s *ServiceTestSuite) TestAPurgeStopsOnAHookRefusalCarryingTheNotFoundCode() {
+	ctx := context.Background()
+	hooks := s.withWriteHooks()
+	s.share(nil)
+	reshare, svcErr := s.svc.CreatePolicy(ctx, testType, testResource, ownerOU,
+		PolicyRequest{InitiatingOUID: rootOU, ChildUnits: entry(childOU)})
+	s.Require().Nil(svcErr)
+	before := s.store.clone()
+	refusal := &tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: ErrorPolicyNotFound.Code}
+	hooks.answer = func(p Policy, removal bool) *tidcommon.ServiceError {
+		if removal && p.ID == reshare.ID {
+			return refusal
+		}
+		return nil
+	}
+
+	svcErr = s.svc.DeletePoliciesForResource(ctx, testType, testResource)
+
+	s.Same(refusal, svcErr)
+	s.Equal(before, s.store.clone(), "the purge rolled back whole")
+}
+
+// withCleaner rebuilds the suite's service over the same stores with a rolling-back transactioner, registering the
+// test type through a declaration that implements OverlayCleaner.
+func (s *ServiceTestSuite) withCleaner() *cleanerDeclaration {
+	cleaner := &cleanerDeclaration{}
+	hierarchy, enumerator := testResolver(s.T())
+	s.svc = newSharingService(s.storeMock, s.declStore, hierarchy, enumerator,
+		rollbackTx(s.T(), s.store), nil, nil, false)
+	s.svc.RegisterResourceType(cleaner)
+	s.svc.RegisterResourceType(&fieldlessDeclaration{})
+	s.svc.RegisterResourceType(&editableOnlyDeclaration{})
+	return cleaner
+}
+
+// A resource type refusing to give up a unit's values, through an error wrapped with NewResourceTypeError, refuses
+// the change that took the resource from the unit: everything rolls back, the cleaner's own writes included, and the
+// caller is answered with the refusal itself.
+func (s *ServiceTestSuite) TestACleanerRefusalRollsTheChangeBack() {
+	var owner Policy
+	tests := []struct {
+		name   string
+		change func(ctx context.Context) *tidcommon.ServiceError
+	}{
+		{
+			name: "an edit narrowing the unit away",
+			change: func(ctx context.Context) *tidcommon.ServiceError {
+				_, svcErr := s.svc.UpdatePolicy(ctx, owner.ID,
+					PolicyRequest{OtherTreeRoots: roots(root(otherOU)), Version: owner.Version})
+				return svcErr
+			},
+		},
+		{
+			name:   "a delete",
+			change: func(ctx context.Context) *tidcommon.ServiceError { return s.svc.DeletePolicy(ctx, owner.ID) },
+		},
+		{
+			name: "an import narrowing the unit away",
+			change: func(ctx context.Context) *tidcommon.ServiceError {
+				_, replayErr := s.svc.ReplacePoliciesForResource(ctx, testType, testResource, ownerOU,
+					[]PolicyRequest{{OtherTreeRoots: roots(root(otherOU))}})
+				if replayErr == nil {
+					return nil
+				}
+				return replayErr.Err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			ctx := context.Background()
+			cleaner := s.withCleaner()
+			owner = s.share(nil)
+			before := s.store.clone()
+			refusal := &tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "TST-1002"}
+			cleaner.answer = func(ouID string) error {
+				s.Require().NoError(s.store.SetOverlayValue(ctx, testType, "cleaner-state", otherOU, "assignments",
+					[]string{ouID}))
+				if ouID != rootOU {
+					return nil
+				}
+				return NewResourceTypeError(refusal)
+			}
+
+			svcErr := tt.change(ctx)
+
+			s.Same(refusal, svcErr, "the caller is answered with the cleaner's refusal as it was given")
+			s.Contains(cleaner.cleaned, rootOU)
+			s.Equal(before, s.store.clone(), "nothing the change or the cleaner wrote is left behind")
+		})
+	}
+}
+
+// A cleaner that fails rather than refuses, or returns an error it did not wrap, rolls the change back as an internal
+// error.
+func (s *ServiceTestSuite) TestACleanerFailureIsAnInternalError() {
+	for name, failure := range map[string]error{
+		"a wrapped server error": NewResourceTypeError(
+			&tidcommon.ServiceError{Type: tidcommon.ServerErrorType, Code: "TST-5001"}),
+		"a plain error": errors.New("store down"),
+	} {
+		s.Run(name, func() {
+			s.SetupTest()
+			cleaner := s.withCleaner()
+			owner := s.share(nil)
+			before := s.store.clone()
+			cleaner.answer = func(string) error { return failure }
+
+			svcErr := s.svc.DeletePolicy(context.Background(), owner.ID)
+
+			s.Require().NotNil(svcErr)
+			s.Equal(tidcommon.InternalServerError.Code, svcErr.Code)
+			s.Equal(before, s.store.clone())
+		})
+	}
+}
+
+// A cleaner that does not refuse is called for the unit an edit narrows away, and the edit goes ahead.
+func (s *ServiceTestSuite) TestACleanerThatDoesNotRefuseLetsTheNarrowingThrough() {
+	cleaner := s.withCleaner()
+	owner := s.share(nil)
+
+	updated, svcErr := s.svc.UpdatePolicy(context.Background(), owner.ID,
+		PolicyRequest{OtherTreeRoots: roots(root(otherOU)), Version: owner.Version})
+
+	s.Require().Nil(svcErr)
+	s.Contains(cleaner.cleaned, rootOU, "the unit the edit took the resource from is cleaned")
+	s.NotContains(cleaner.cleaned, otherOU, "and the unit it now reaches is not")
+	stored, svcErr := s.svc.GetPolicy(context.Background(), owner.ID)
+	s.Require().Nil(svcErr)
+	s.Equal(updated, stored)
+}
+
+// A hook that fails rather than refuses rolls the change back as an internal error.
+func (s *ServiceTestSuite) TestAWriteHookFailureIsAnInternalError() {
+	ctx := context.Background()
+	hooks := s.withWriteHooks()
+	owner := s.share(nil)
+	before := s.store.clone()
+	hooks.answer = func(Policy, bool) *tidcommon.ServiceError { return &tidcommon.InternalServerError }
+
+	_, svcErr := s.svc.UpdatePolicy(ctx, owner.ID,
+		PolicyRequest{OtherTreeRoots: roots(root(otherOU)), Version: owner.Version})
+	s.Require().NotNil(svcErr)
+	s.Equal(tidcommon.InternalServerError.Code, svcErr.Code)
+
+	svcErr = s.svc.DeletePolicy(ctx, owner.ID)
+	s.Require().NotNil(svcErr)
+	s.Equal(tidcommon.InternalServerError.Code, svcErr.Code)
+
+	_, svcErr = s.svc.CreateDeclarativePolicy(ctx, testType, "resource-2", ownerOU,
+		PolicyRequest{ID: declaredID, AllUnits: allUnits()})
+	s.Require().NotNil(svcErr)
+	s.Equal(tidcommon.InternalServerError.Code, svcErr.Code)
+
+	s.Equal(before, s.store.clone())
+	s.Empty(s.declStore.listForType(testType))
+}
+
+// A type without PolicyWriteHooks is written as before: another type's hooks hear nothing of its policies, and its
+// declarations open no transaction.
+func (s *ServiceTestSuite) TestATypeWithoutWriteHooksIsUnaffected() {
+	ctx := context.Background()
+	hooks := s.withWriteHooks()
+
+	p, svcErr := s.svc.CreatePolicy(ctx, fieldlessType, testResource, ownerOU,
+		PolicyRequest{OtherTreeRoots: roots(root(rootOU))})
+	s.Require().Nil(svcErr)
+	_, svcErr = s.svc.UpdatePolicy(ctx, p.ID,
+		PolicyRequest{OtherTreeRoots: roots(root(otherOU)), Version: p.Version})
+	s.Require().Nil(svcErr)
+	s.Require().Nil(s.svc.DeletePolicy(ctx, p.ID))
+	s.Empty(hooks.written)
+	s.Empty(hooks.removed)
+
+	// The transactioner expects no call, so a declaration opening a transaction fails the test.
+	hierarchy, enumerator := testResolver(s.T())
+	svc := newSharingService(s.storeMock, newFileBasedStore(), hierarchy, enumerator,
+		transactionmock.NewTransactionerMock(s.T()), nil, nil, false)
+	svc.RegisterResourceType(&testDeclaration{})
+	_, svcErr = svc.CreateDeclarativePolicy(ctx, testType, testResource, ownerOU,
+		PolicyRequest{ID: declaredID, AllUnits: allUnits()})
+	s.Require().Nil(svcErr)
+}
+
+// shareableType is the resource type of shareableDeclaration.
+const shareableType = ResourceType("shareable")
+
+// shareableDeclaration is testDeclaration for a type that may be shared into a child unit.
+type shareableDeclaration struct {
+	testDeclaration
+	refusal    *tidcommon.ServiceError
+	ownerErr   *tidcommon.ServiceError
+	noOwner    bool
+	authorized []string
+}
+
+// OwningOUID answers with the configured lookup failure, no owner, or the owner testDeclaration names.
+func (d *shareableDeclaration) OwningOUID(ctx context.Context, resourceID string) (string, *tidcommon.ServiceError) {
+	if d.ownerErr != nil || d.noOwner {
+		return "", d.ownerErr
+	}
+	return d.testDeclaration.OwningOUID(ctx, resourceID)
+}
+
+// ResourceType identifies the shareable type.
+func (d *shareableDeclaration) ResourceType() ResourceType { return shareableType }
+
+// AuthorizeShareInto records each check and answers with the configured refusal.
+func (d *shareableDeclaration) AuthorizeShareInto(
+	_ context.Context, resourceID, targetOUID string,
+) *tidcommon.ServiceError {
+	d.authorized = append(d.authorized, resourceID+"→"+targetOUID)
+	return d.refusal
+}
+
+// shareable registers a shareable type whose resources the root owns.
+func (s *ServiceTestSuite) shareable() *shareableDeclaration {
+	decl := &shareableDeclaration{testDeclaration: testDeclaration{owner: rootOU}}
+	s.svc.RegisterResourceType(decl)
+	return decl
+}
+
+func (s *ServiceTestSuite) TestShareIntoChildOU_TypeThatCannotBeShared() {
+	ctx := context.Background()
+	for _, rt := range []ResourceType{testType, ResourceType("unregistered")} {
+		svcErr := s.svc.ValidateShareIntoChildOU(ctx, rt, testResource, "", childOU)
+		s.Require().NotNil(svcErr, string(rt))
+		s.Equal(ErrorResourceTypeNotShareable.Code, svcErr.Code, string(rt))
+		svcErr = s.svc.ShareIntoChildOU(ctx, rt, testResource, childOU)
+		s.Require().NotNil(svcErr, string(rt))
+		s.Equal(ErrorResourceTypeNotShareable.Code, svcErr.Code, string(rt))
+	}
+}
+
+func (s *ServiceTestSuite) TestValidateShareIntoChildOU_AuthorizesAndWritesNothing() {
+	decl := s.shareable()
+
+	s.Require().Nil(s.svc.ValidateShareIntoChildOU(context.Background(), shareableType, testResource, "", childOU))
+
+	s.Equal([]string{testResource + "→" + childOU}, decl.authorized)
+	policies, svcErr := s.svc.ListPolicies(context.Background(), shareableType, testResource)
+	s.Require().Nil(svcErr)
+	s.Empty(policies)
+}
+
+func (s *ServiceTestSuite) TestValidateShareIntoChildOU_ANewResourceNamesItsOwner() {
+	decl := s.shareable()
+	decl.owner = ownerOU
+
+	s.Require().Nil(s.svc.ValidateShareIntoChildOU(context.Background(), shareableType, "", rootOU, childOU))
+	s.Equal([]string{"→" + childOU}, decl.authorized)
+}
+
+func (s *ServiceTestSuite) TestValidateShareIntoChildOU_AuthorizerRefusal() {
+	decl := s.shareable()
+	decl.refusal = &tidcommon.ErrorUnauthorized
+
+	svcErr := s.svc.ValidateShareIntoChildOU(context.Background(), shareableType, testResource, "", childOU)
+
+	s.Require().NotNil(svcErr)
+	s.Equal(tidcommon.ErrorUnauthorized.Code, svcErr.Code)
+}
+
+func (s *ServiceTestSuite) TestShareIntoChildOU_OnlyIntoADirectChild() {
+	s.shareable()
+	ctx := context.Background()
+
+	svcErr := s.svc.ValidateShareIntoChildOU(ctx, shareableType, testResource, "", grandOU)
+	s.Require().NotNil(svcErr)
+	s.Equal(ErrorTargetNotDirectChild.Code, svcErr.Code)
+	svcErr = s.svc.ShareIntoChildOU(ctx, shareableType, testResource, grandOU)
+	s.Require().NotNil(svcErr)
+	s.Equal(ErrorTargetNotDirectChild.Code, svcErr.Code)
+
+	policies, listErr := s.svc.ListPolicies(ctx, shareableType, testResource)
+	s.Require().Nil(listErr)
+	s.Empty(policies)
+}
+
+func (s *ServiceTestSuite) TestShareIntoChildOU_CreatesTheOwnersPolicyWithoutAuthorizing() {
+	decl := s.shareable()
+	ctx := context.Background()
+
+	s.Require().Nil(s.svc.ShareIntoChildOU(ctx, shareableType, testResource, childOU))
+
+	s.Empty(decl.authorized, "the write trusts the validation the caller ran earlier")
+	policies, svcErr := s.svc.ListPolicies(ctx, shareableType, testResource)
+	s.Require().Nil(svcErr)
+	s.Require().Len(policies, 1)
+	s.Equal(rootOU, policies[0].InitiatingOUID)
+	s.Equal(&ChildUnits{Mode: ChildUnitsSelected, Units: []ChildUnit{{OUID: childOU, Reach: ReachUnit}}},
+		policies[0].ChildUnits)
+	visible, svcErr := s.svc.IsVisible(ctx, shareableType, testResource, childOU)
+	s.Require().Nil(svcErr)
+	s.True(visible)
+}
+
+func (s *ServiceTestSuite) TestShareIntoChildOU_AddsToTheOwnersPolicy() {
+	s.shareable()
+	ctx := context.Background()
+	existing, svcErr := s.svc.CreatePolicy(ctx, shareableType, testResource, rootOU, PolicyRequest{
+		ChildUnits: &ChildUnitsRequest{Mode: ChildUnitsSelected,
+			Units: []ChildUnitRequest{{OUID: nestedOwnerOU, Reach: ReachUnit}}},
+	})
+	s.Require().Nil(svcErr)
+
+	s.Require().Nil(s.svc.ShareIntoChildOU(ctx, shareableType, testResource, childOU))
+
+	updated, svcErr := s.svc.GetPolicy(ctx, existing.ID)
+	s.Require().Nil(svcErr)
+	s.Equal(existing.Version+1, updated.Version)
+	s.Equal([]ChildUnit{{OUID: nestedOwnerOU, Reach: ReachUnit}, {OUID: childOU, Reach: ReachUnit}},
+		updated.ChildUnits.Units)
+}
+
+func (s *ServiceTestSuite) TestShareIntoChildOU_AlreadyVisibleWritesNothing() {
+	s.shareable()
+	ctx := context.Background()
+	s.Require().Nil(s.svc.ShareIntoChildOU(ctx, shareableType, testResource, childOU))
+	policies, _ := s.svc.ListPolicies(ctx, shareableType, testResource)
+	s.Require().Len(policies, 1)
+
+	s.Require().Nil(s.svc.ShareIntoChildOU(ctx, shareableType, testResource, childOU))
+
+	again, svcErr := s.svc.GetPolicy(ctx, policies[0].ID)
+	s.Require().Nil(svcErr)
+	s.Equal(policies[0].Version, again.Version)
+}
+
+func (s *ServiceTestSuite) TestShareIntoChildOU_WithheldByTheOwnersBlanketPolicy() {
+	s.shareable()
+	ctx := context.Background()
+	_, svcErr := s.svc.CreatePolicy(ctx, shareableType, testResource, rootOU, PolicyRequest{
+		ChildUnits: &ChildUnitsRequest{Mode: ChildUnitsAll, ExcludedOUIDs: []string{childOU}},
+	})
+	s.Require().Nil(svcErr)
+
+	svcErr = s.svc.ShareIntoChildOU(ctx, shareableType, testResource, childOU)
+
+	s.Require().NotNil(svcErr)
+	s.Equal(ErrorChildUnitWithheld.Code, svcErr.Code)
+}
+
+// concurrentEdits makes the next n reads of the policy find it edited by another writer since the share read it.
+func (s *ServiceTestSuite) concurrentEdits(policyID string, n int) {
+	edits := 0
+	s.storeMock.EXPECT().GetPolicy(mock.Anything, policyID).RunAndReturn(
+		func(ctx context.Context, id string) (Policy, error) {
+			if edits < n {
+				edits++
+				p := s.store.policies[id]
+				p.Version++
+				s.store.policies[id] = p
+			}
+			return s.store.GetPolicy(ctx, id)
+		})
+	// The suite wires every store method as Maybe; the newest expectation goes first so it is the one matched.
+	calls := s.storeMock.ExpectedCalls
+	s.storeMock.ExpectedCalls = append([]*mock.Call{calls[len(calls)-1]}, calls[:len(calls)-1]...)
+}
+
+func (s *ServiceTestSuite) ownersPolicy() Policy {
+	s.shareable()
+	existing, svcErr := s.svc.CreatePolicy(context.Background(), shareableType, testResource, rootOU, PolicyRequest{
+		ChildUnits: &ChildUnitsRequest{Mode: ChildUnitsSelected,
+			Units: []ChildUnitRequest{{OUID: nestedOwnerOU, Reach: ReachUnit}}},
+	})
+	s.Require().Nil(svcErr)
+	return existing
+}
+
+// An edit of the owner's policy that lands between the share's read and its write is worked out again, once.
+func (s *ServiceTestSuite) TestShareIntoChildOU_RetriesOnceAfterAConcurrentEdit() {
+	existing := s.ownersPolicy()
+	s.concurrentEdits(existing.ID, 1)
+
+	s.Require().Nil(s.svc.ShareIntoChildOU(context.Background(), shareableType, testResource, childOU))
+
+	updated, svcErr := s.svc.GetPolicy(context.Background(), existing.ID)
+	s.Require().Nil(svcErr)
+	s.Equal([]ChildUnit{{OUID: nestedOwnerOU, Reach: ReachUnit}, {OUID: childOU, Reach: ReachUnit}},
+		updated.ChildUnits.Units)
+}
+
+func (s *ServiceTestSuite) TestShareIntoChildOU_ASecondConcurrentEditIsReported() {
+	existing := s.ownersPolicy()
+	s.concurrentEdits(existing.ID, 2)
+
+	svcErr := s.svc.ShareIntoChildOU(context.Background(), shareableType, testResource, childOU)
+
+	s.Require().NotNil(svcErr)
+	s.Equal(ErrorVersionMismatch.Code, svcErr.Code)
+	visible, visErr := s.svc.IsVisible(context.Background(), shareableType, testResource, childOU)
+	s.Require().Nil(visErr)
+	s.False(visible)
+}
+
+// A failed or empty answer to who owns the resource stops the share before anything is checked or written.
+func (s *ServiceTestSuite) TestShareIntoChildOU_OwnerLookupFailures() {
+	cases := map[string]struct {
+		ownerErr *tidcommon.ServiceError
+		noOwner  bool
+		want     string
+	}{
+		"lookup fails":  {ownerErr: &tidcommon.InternalServerError, want: tidcommon.InternalServerError.Code},
+		"owner unknown": {noOwner: true, want: ErrorInvalidRequestFormat.Code},
+	}
+	for name, tc := range cases {
+		s.Run(name, func() {
+			s.SetupTest()
+			decl := s.shareable()
+			decl.ownerErr, decl.noOwner = tc.ownerErr, tc.noOwner
+			ctx := context.Background()
+
+			svcErr := s.svc.ValidateShareIntoChildOU(ctx, shareableType, testResource, "", childOU)
+			s.Require().NotNil(svcErr)
+			s.Equal(tc.want, svcErr.Code)
+			svcErr = s.svc.ShareIntoChildOU(ctx, shareableType, testResource, childOU)
+			s.Require().NotNil(svcErr)
+			s.Equal(tc.want, svcErr.Code)
+
+			s.Empty(decl.authorized)
+			policies, listErr := s.svc.ListPolicies(ctx, shareableType, testResource)
+			s.Require().Nil(listErr)
+			s.Empty(policies)
+		})
+	}
 }

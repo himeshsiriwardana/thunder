@@ -71,12 +71,14 @@ func (suite *GrantHandlerProviderTestSuite) newProvider(cfg oauthconfig.Config) 
 		suite.mockEntityProvider,
 		suite.mockResourceService,
 		suite.mockCIBAService,
+		nil,
 		revocationmock.NewRefreshTokenRevokerInterfaceMock(suite.T()),
 		revocationmock.NewCriteriaRevokerInterfaceMock(suite.T()),
 		revocationmock.NewEnforcementServiceInterfaceMock(suite.T()),
 		nil,
 		nil,
 		0,
+		nil,
 		cfg,
 	)
 }
@@ -93,12 +95,14 @@ func (suite *GrantHandlerProviderTestSuite) TestNewGrantHandlerProvider() {
 		suite.mockEntityProvider,
 		suite.mockResourceService,
 		suite.mockCIBAService,
+		nil,
 		revocationmock.NewRefreshTokenRevokerInterfaceMock(suite.T()),
 		revocationmock.NewCriteriaRevokerInterfaceMock(suite.T()),
 		revocationmock.NewEnforcementServiceInterfaceMock(suite.T()),
 		nil,
 		nil,
 		0,
+		nil,
 		testhelpers.OAuthConfig(),
 	)
 	assert.NotNil(suite.T(), provider)
@@ -140,6 +144,14 @@ func (suite *GrantHandlerProviderTestSuite) TestGetGrantHandler_TokenExchange() 
 
 func (suite *GrantHandlerProviderTestSuite) TestGetGrantHandler_CIBA() {
 	handler, err := suite.provider.GetGrantHandler(providers.GrantTypeCIBA)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), handler)
+	assert.Implements(suite.T(), (*GrantHandlerInterface)(nil), handler)
+}
+
+func (suite *GrantHandlerProviderTestSuite) TestGetGrantHandler_DeviceCode() {
+	handler, err := suite.provider.GetGrantHandler(providers.GrantTypeDeviceCode)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), handler)
@@ -230,6 +242,7 @@ func (suite *GrantHandlerProviderTestSuite) TestGetGrantHandler_AllSupportedType
 		providers.GrantTypeRefreshToken,
 		providers.GrantTypeTokenExchange,
 		providers.GrantTypeCIBA,
+		providers.GrantTypeDeviceCode,
 		providers.GrantTypeJWTBearer,
 	}
 

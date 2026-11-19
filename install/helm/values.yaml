@@ -24,7 +24,7 @@ deployment:
     # -- Container image registry host name
     registry: "ghcr.io/thunder-id"
     # -- Container image repository name
-    repository: "thunderid"
+    repository: "thunderid-gateway"
     # -- Container image digest
     digest: ""
     # -- Container image tag. Either "tag" or "digest" should be defined
@@ -140,6 +140,12 @@ configuration:
     # Logical deployment identifier. Every record is scoped to it, so give each
     # deployment sharing a database its own value. Defaults to "default-deployment".
     identifier: ""
+    # Product name the server presents to clients. Defaults to "ThunderID".
+    productName: ""
+    # The organization unit that resources in a project are placed in, and that applications and
+    # agents created without one go to. It is the organization unit the bootstrap creates. Don't
+    # change it once resources are placed in it.
+    systemOuId: "01900000-0000-7000-8000-000000000001"
     # The URL where users reach ThunderID in their browser.
     # ThunderID uses it to build the login and error redirect links.
     publicUrl: "https://thunderid.local"
@@ -150,6 +156,14 @@ configuration:
       readHeaderSeconds: 10
       writeSeconds: 10
       idleSeconds: 120
+    # Reverse proxies allowed to report the client IP recorded on SSO sessions and in the access log.
+    # Each entry is the range a proxy connects from and the header it sets the client IP in; header
+    # defaults to x-forwarded-for. Keep the ranges narrow: any caller inside one can report any IP.
+    # Empty by default, so the client IP is the connecting address.
+    # trustedProxies:
+    #   - cidr: "10.0.1.0/24"
+    #     header: "x-real-ip"
+    trustedProxies: []
     # Security configuration.
     # jwksCacheTtl controls how long fetched JWKS responses are cached in-process for
     # every JWKS consumer in the server (trusted issuer validation, federated OIDC
@@ -216,17 +230,33 @@ configuration:
   # productName: Display name shown in the browser tab and UI.
   # favicon: Path or URL to the favicon icons. Use an object with `light` and `dark`
   #          keys for color-scheme-aware icons (both keys are required).
+  # slogan: Content shown beside the Gate sign-in card when no application design applies
+  #         (for example a direct visit to the Gate page). Empty keeps the built-in ThunderID
+  #         items. A string is a single title, a map is a single item and a list is several
+  #         items. An item has `title`, an optional `description` and an optional `icon`, a
+  #         path under the Gate base path such as `assets/images/icon.svg`. The icon files
+  #         themselves must be present in the Gate assets of the image.
   brand:
     productName: "ThunderID"
     favicon:
       light: "assets/images/favicon.ico"
       dark: "assets/images/favicon-inverted.ico"
+    slogan: []
+    # slogan: "Sign in to Acme"
+    # slogan:
+    #   title: "Title"
+    #   description: "Description."
+    #   icon: "assets/images/icon.svg"
+    # slogan:
+    #   - title: "Title"
+    #     description: "Description."
+    #     icon: "assets/images/icon.svg"
 
   # Console client configuration
   consoleClient:
     path: "/console"
     clientId: "CONSOLE"
-    scopes: "['openid', 'profile', 'email', 'group', 'ou', 'system']"
+    scopes: "['openid', 'profile', 'email', 'group', 'ou', 'system', 'org']"
     # Resource indicator (audience) the console sends on token requests. Must match the
     # identifier of the System resource server seeded by the bootstrap defaults, which is
     # "<server.publicUrl>/mcp". Leave empty to derive it from server.publicUrl (default);
@@ -362,6 +392,15 @@ configuration:
           key: ""
         db: 0             # Redis logical database index (0-15)
         key_prefix: ""   # Prefix for all Redis keys, e.g. "thunderid:"
+        # TLS settings for the Redis connection. Required for TLS-only Redis endpoints.
+        tls:
+          enabled: false
+          # Existing Secret holding ca.crt (and tls.crt / tls.key when clientAuth is true).
+          # It is mounted into the server and setup pods. Leave empty to trust the system CA pool.
+          secretName: ""
+          clientAuth: false          # Present tls.crt / tls.key from the Secret (mutual TLS)
+          serverName: ""             # Expected server name; defaults to the host in address
+          insecureSkipVerify: false  # Skip server certificate verification (not for production)
     entity:
       # WARNING: Use sqlite only if you are running a single pod.
       type: "postgres" # postgres or sqlite
@@ -434,6 +473,15 @@ configuration:
       password: ""
       db: 0
       keyPrefix: "thunderid"
+      # TLS settings for the Redis connection. Required for TLS-only Redis endpoints.
+      tls:
+        enabled: false
+        # Existing Secret holding ca.crt (and tls.crt / tls.key when clientAuth is true).
+        # It is mounted into the server and setup pods. Leave empty to trust the system CA pool.
+        secretName: ""
+        clientAuth: false          # Present tls.crt / tls.key from the Secret (mutual TLS)
+        serverName: ""             # Expected server name; defaults to the host in address
+        insecureSkipVerify: false  # Skip server certificate verification (not for production)
 
   # Token Configuration
   jwt:
@@ -572,9 +620,6 @@ configuration:
     enforceKeyBinding: true
     # Optional verifier registration certificate (EUDI) file path. Empty to disable.
     registrationCertFile: ""
-    # Trusted issuer anchors (root CAs) used to validate credential issuer chains.
-    # Each entry: { name, certFile }.
-    trustedAnchors: []
     # Storage mode for presentation definitions: "mutable", "declarative", or "composite".
     # Leave empty to inherit the global declarativeResources.enabled setting.
     store: ""
@@ -593,11 +638,6 @@ configuration:
     # Storage mode for credential configurations: "mutable", "declarative", or "composite".
     # Leave empty to inherit the global declarativeResources.enabled setting.
     store: ""
-
-  # SCIM 2.0 provisioning configuration.
-  scim:
-    # URN prefix of the per-user-type SCIM extension schemas. A trailing colon is added if missing.
-    urnPrefix: "urn:thunderid:params:scim:schemas:"
 
   # Account access (automatic lock) policy for the user and agent categories, the deployment base of
   # the accountAccess server-config section. The values are the product defaults; a key removed here
@@ -681,6 +721,11 @@ configuration:
     #   excludePaths:
     #     - /health
 
+  # Audit events. Each is written to stdout as one JSON line that starts with "log_type":"AUDIT",
+  # whatever the log level or format. Omitted, audit stays on.
+  # audit:
+  #   enabled: true
+
   # Storage mode per resource type: "mutable", "declarative", or "composite".
   # Only set these when declarativeResources.enabled=true and the resource should be
   # sourced from mounted files. An unset key inherits the global setting.
@@ -692,6 +737,14 @@ configuration:
   # organization_unit, identity_provider, application, server_config, resource,
   # authorization_detail_type, http_connection, notification_template.
   stores: {}
+
+  # Notification template content-length limits (in characters). Unset keys use the server defaults
+  # (subject 1000, email body 50000, SMS body 4096). A negative value fails startup.
+  # notification:
+  #   template:
+  #     maxSubjectLength: 1000
+  #     maxEmailBodyLength: 50000
+  #     maxSmsBodyLength: 4096
 
 
 # Persistence configuration for SQLite databases
